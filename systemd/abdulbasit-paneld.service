@@ -1,0 +1,36 @@
+[Unit]
+Description=Abdul Basit privileged panel command daemon
+After=network.target
+Before=abdulbasit-bot.service
+
+[Service]
+Type=simple
+User=root
+Group=abdulbasit
+ExecStart=/usr/bin/python3 /usr/local/lib/abdulbasit/paneld.py
+Restart=on-failure
+RestartSec=3s
+RuntimeDirectory=abdulbasit
+RuntimeDirectoryMode=0750
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=full
+ReadWritePaths=/etc/abdulbasit /etc/nginx/conf.d /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /var/www/letsencrypt /etc/passwd /etc/shadow /etc/group -/etc/gshadow -/etc/subuid -/etc/subgid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
