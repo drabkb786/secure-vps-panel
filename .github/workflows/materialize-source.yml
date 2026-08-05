@@ -1,0 +1,40 @@
+name: Materialize secure source
+
+on:
+  push:
+    paths:
+      - '.sync/**'
+      - '.github/workflows/materialize-source.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct verified source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .sync/source.part-* | tr -d '\r\n' | base64 --decode > /tmp/abdul-basit-source.tar.gz
+          tar -tzf /tmp/abdul-basit-source.tar.gz > /tmp/source-files.txt
+          if grep -E '(^|/)\.git(/|$)|(^|/)README\.md$' /tmp/source-files.txt; then
+            echo 'Unsafe or README-overwriting path found in source bundle' >&2
+            exit 1
+          fi
+          tar -xzf /tmp/abdul-basit-source.tar.gz -C .
+          rm -rf .sync .github/workflows/materialize-source.yml
+      - name: Commit complete source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Abdul Basit'
+          git config user.email 'drabkb786@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m 'feat: sync complete Abdul Basit Secure VPS Panel v2.1.0'
+          git push origin HEAD:main
