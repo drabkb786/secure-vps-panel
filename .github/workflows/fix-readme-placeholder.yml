@@ -1,0 +1,37 @@
+name: Fix README token placeholder
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-readme-placeholder.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Replace token-shaped documentation example
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('README.md')
+          text = path.read_text(encoding='utf-8')
+          old = '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_example'
+          new = 'BOT_TOKEN_FROM_BOTFATHER'
+          if old not in text:
+              raise SystemExit('Expected README placeholder was not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          git config user.name 'Abdul Basit'
+          git config user.email 'drabkb786@users.noreply.github.com'
+          git add README.md
+          git commit -m 'docs: use non-secret Telegram token placeholder'
+          git push origin HEAD:main
