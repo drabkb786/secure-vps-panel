@@ -744,7 +744,7 @@ Bot name aur username select karein. BotFather aapko token dega.
 Token example format:
 
 ```text
-123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_example
+BOT_TOKEN_FROM_BOTFATHER
 ```
 
 Real token ko GitHub, chat screenshot, public message, README, ya source code mein share na karein.
