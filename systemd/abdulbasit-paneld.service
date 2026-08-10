@@ -6,7 +6,7 @@ Before=abdulbasit-bot.service
 [Service]
 Type=simple
 User=root
-Group=abdulbasit
+Group=abdulbasit-clients
 ExecStart=/usr/bin/python3 /usr/local/lib/abdulbasit/paneld.py
 Restart=on-failure
 RestartSec=3s
@@ -19,7 +19,8 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectHome=yes
 ProtectSystem=full
-ReadWritePaths=/etc/abdulbasit /etc/nginx/conf.d /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /var/www/letsencrypt /etc/passwd /etc/shadow /etc/group -/etc/gshadow -/etc/subuid -/etc/subgid
+# Shadow/account tools create transient lock files beside /etc/passwd and friends.
+ReadWritePaths=/etc /var/lib/letsencrypt /var/log/letsencrypt /var/www/letsencrypt
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

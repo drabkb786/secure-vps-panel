@@ -11,6 +11,7 @@ LEGACY_CONFIG_DIR="/etc/raretriccks"
 DOMAIN=""
 EMAIL=""
 NON_INTERACTIVE=0
+INSTALL_DNSTT=1
 DEFAULT_SUPER_ADMIN_ID="6408975845"
 
 log() { printf '\033[0;34m[INFO]\033[0m %s\n' "$*"; }
@@ -21,7 +22,7 @@ trap 'die "Installation failed near line $LINENO. Existing SSH port 22 was not i
 
 usage() {
   cat <<'EOF'
-Usage: sudo bash install.sh [--domain vpn.example.com] [--email admin@example.com] [--non-interactive]
+Usage: sudo bash install.sh [--domain vpn.example.com] [--email admin@example.com] [--non-interactive] [--skip-dnstt]
 EOF
 }
 
@@ -30,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     --domain) DOMAIN="${2:-}"; shift 2 ;;
     --email) EMAIL="${2:-}"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;
+    --skip-dnstt) INSTALL_DNSTT=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
@@ -60,7 +62,7 @@ fi
 log "Installing required packages without performing an unattended full system upgrade"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates nginx dropbear certbot python3 procps passwd iproute2 fail2ban
+apt-get install -y --no-install-recommends ca-certificates curl unzip git nginx dropbear certbot python3 procps passwd iproute2 fail2ban
 python3 - <<'PY' || die "Python 3.10 or newer is required (use Ubuntu 22.04+/Debian 12+ or install a supported Python)"
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
@@ -72,15 +74,45 @@ for protected_path in "$CONFIG_DIR" "$INSTALL_DIR"; do
   fi
 done
 
-log "Creating dedicated group and unprivileged Telegram bot account"
+log "Creating isolated groups and unprivileged service accounts"
 getent group abdulbasit >/dev/null || groupadd --system abdulbasit
+getent group abdulbasit-clients >/dev/null || groupadd --system abdulbasit-clients
 if ! id abdulbasit-bot >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit abdulbasit-bot
 fi
+getent group abdulbasit-dashboard >/dev/null || groupadd --system abdulbasit-dashboard
+if ! id abdulbasit-dashboard >/dev/null 2>&1; then
+  useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit-dashboard abdulbasit-dashboard
+fi
+getent group abdulbasit-xray >/dev/null || groupadd --system abdulbasit-xray
+if ! id abdulbasit-xray >/dev/null 2>&1; then
+  useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit-xray abdulbasit-xray
+fi
+getent group abdulbasit-dnstt >/dev/null || groupadd --system abdulbasit-dnstt
+if ! id abdulbasit-dnstt >/dev/null 2>&1; then
+  useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit-dnstt abdulbasit-dnstt
+fi
+usermod -a -G abdulbasit-clients abdulbasit-bot
+usermod -a -G abdulbasit-clients abdulbasit-dashboard
+usermod -a -G abdulbasit abdulbasit-xray
+usermod -a -G abdulbasit abdulbasit-dnstt
+usermod -g abdulbasit-dashboard -a -G abdulbasit abdulbasit-dashboard
 
 install -d -m 0750 -o root -g abdulbasit "$CONFIG_DIR" "$CONFIG_DIR/users"
+install -d -m 0750 -o root -g abdulbasit-xray "$CONFIG_DIR/xray"
+install -d -m 0750 -o root -g abdulbasit-dnstt "$CONFIG_DIR/dnstt"
+install -d -m 0750 -o root -g abdulbasit "$CONFIG_DIR/exports"
 install -d -m 0700 -o root -g root "$BACKUP_DIR"
 install -d -m 0755 -o root -g root "$INSTALL_DIR" /var/www/letsencrypt
+install -d -m 0755 -o root -g root /usr/local/share/abdulbasit-dashboard
+if [[ -f "$CONFIG_DIR/dashboard_auth.json" && ! -L "$CONFIG_DIR/dashboard_auth.json" ]]; then
+  chown root:abdulbasit-dashboard "$CONFIG_DIR/dashboard_auth.json"
+  chmod 0640 "$CONFIG_DIR/dashboard_auth.json"
+fi
+if [[ -f "$CONFIG_DIR/cdn.json" && ! -L "$CONFIG_DIR/cdn.json" ]]; then
+  chown root:root "$CONFIG_DIR/cdn.json"
+  chmod 0600 "$CONFIG_DIR/cdn.json"
+fi
 
 # Personalized owner bootstrap. The numeric Telegram ID is not a bot token or password.
 if [[ -L "$CONFIG_DIR/super_admin.conf" || ( -e "$CONFIG_DIR/super_admin.conf" && ! -f "$CONFIG_DIR/super_admin.conf" ) ]]; then
@@ -135,15 +167,36 @@ if command -v crontab >/dev/null 2>&1; then
   fi
 fi
 find "$CONFIG_DIR" -type f -exec chmod go-rwx {} + 2>/dev/null || true
-chown root:abdulbasit "$CONFIG_DIR/super_admin.conf"
-chmod 0640 "$CONFIG_DIR/super_admin.conf"
-install -m 0755 -o root -g root "$PROJECT_DIR/src/common.py" "$INSTALL_DIR/common.py"
-install -m 0755 -o root -g root "$PROJECT_DIR/src/panel_client.py" "$INSTALL_DIR/panel_client.py"
-install -m 0755 -o root -g root "$PROJECT_DIR/src/paneld.py" "$INSTALL_DIR/paneld.py"
-install -m 0755 -o root -g root "$PROJECT_DIR/src/panelctl.py" "$INSTALL_DIR/panelctl.py"
-install -m 0755 -o root -g root "$PROJECT_DIR/src/tgbot.py" "$INSTALL_DIR/tgbot.py"
-install -m 0755 -o root -g root "$PROJECT_DIR/src/ws_proxy.py" "$INSTALL_DIR/ws_proxy.py"
-install -m 0755 -o root -g root "$PROJECT_DIR/src/session_enforcer.py" "$INSTALL_DIR/session_enforcer.py"
+for shared_config in super_admin.conf domain.conf bot_token.conf admin_ids.conf certbot_email.conf; do
+  if [[ -f "$CONFIG_DIR/$shared_config" && ! -L "$CONFIG_DIR/$shared_config" ]]; then
+    chown root:abdulbasit "$CONFIG_DIR/$shared_config"
+    chmod 0640 "$CONFIG_DIR/$shared_config"
+  fi
+done
+if [[ -f "$CONFIG_DIR/dashboard_auth.json" && ! -L "$CONFIG_DIR/dashboard_auth.json" ]]; then
+  chown root:abdulbasit-dashboard "$CONFIG_DIR/dashboard_auth.json"
+  chmod 0640 "$CONFIG_DIR/dashboard_auth.json"
+fi
+if [[ -f "$CONFIG_DIR/dnstt.json" && ! -L "$CONFIG_DIR/dnstt.json" ]]; then
+  chown root:abdulbasit-dnstt "$CONFIG_DIR/dnstt.json"
+  chmod 0640 "$CONFIG_DIR/dnstt.json"
+fi
+for dnstt_key in "$CONFIG_DIR/dnstt/server.key" "$CONFIG_DIR/dnstt/server.pub"; do
+  if [[ -f "$dnstt_key" && ! -L "$dnstt_key" ]]; then
+    chown root:abdulbasit-dnstt "$dnstt_key"
+    chmod 0640 "$dnstt_key"
+  fi
+done
+if [[ -f "$CONFIG_DIR/cdn.json" && ! -L "$CONFIG_DIR/cdn.json" ]]; then
+  chown root:root "$CONFIG_DIR/cdn.json"
+  chmod 0600 "$CONFIG_DIR/cdn.json"
+fi
+for source_file in "$PROJECT_DIR"/src/*.py; do
+  install -m 0755 -o root -g root "$source_file" "$INSTALL_DIR/$(basename "$source_file")"
+done
+for asset in "$PROJECT_DIR"/web/*; do
+  install -m 0644 -o root -g root "$asset" "/usr/local/share/abdulbasit-dashboard/$(basename "$asset")"
+done
 install -m 0755 -o root -g root "$PROJECT_DIR/menu.sh" /usr/local/sbin/abdulbasit-menu
 ln -sfn /usr/local/sbin/abdulbasit-menu /usr/local/bin/menu
 ln -sfn /usr/local/sbin/abdulbasit-menu /usr/bin/menu
@@ -153,6 +206,22 @@ exec /usr/bin/python3 /usr/local/lib/abdulbasit/panelctl.py "$@"
 EOF
 chmod 0755 /usr/local/sbin/abdulbasit-panelctl
 install -m 0755 -o root -g root "$PROJECT_DIR/scripts/security-check.sh" /usr/local/sbin/abdulbasit-security-check
+
+log "Installing pinned, checksum-verified Xray core"
+bash "$PROJECT_DIR/scripts/install-xray.sh"
+if [[ $INSTALL_DNSTT -eq 1 ]]; then
+  log "Building pinned DNSTT server source"
+  bash "$PROJECT_DIR/scripts/install-dnstt.sh"
+else
+  warn "DNSTT binary installation skipped; run scripts/install-dnstt.sh before configuring DNSTT"
+fi
+
+PYTHONPATH="$INSTALL_DIR" /usr/bin/python3 - <<'PY'
+from xray_runtime import deploy_config
+deploy_config(restart=False)
+PY
+chown root:abdulbasit-xray "$CONFIG_DIR/xray/config.json"
+chmod 0640 "$CONFIG_DIR/xray/config.json"
 
 if [[ -n "$EMAIL" ]]; then
   printf '%s\n' "$EMAIL" > "$CONFIG_DIR/certbot_email.conf"
@@ -215,11 +284,12 @@ rm -f /etc/fail2ban/jail.d/raretriccks-dropbear.local
 systemctl daemon-reload
 
 log "Installing hardened systemd services"
-for unit in "$PROJECT_DIR"/systemd/*.service; do
+for unit in "$PROJECT_DIR"/systemd/*.service "$PROJECT_DIR"/systemd/*.timer; do
   install -m 0644 -o root -g root "$unit" "/etc/systemd/system/$(basename "$unit")"
 done
 systemctl daemon-reload
-systemctl enable --now abdulbasit-paneld abdulbasit-ws abdulbasit-session-enforcer
+systemctl enable --now abdulbasit-paneld abdulbasit-ws abdulbasit-session-enforcer abdulbasit-xray
+systemctl enable --now abdulbasit-usage.timer
 
 log "Installing Certbot deploy hook (reloads Nginx only after a successful renewal)"
 install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
@@ -246,7 +316,7 @@ if [[ -n "$DOMAIN" ]]; then
   fi
 fi
 
-systemctl enable abdulbasit-bot >/dev/null 2>&1 || true
+systemctl enable abdulbasit-bot abdulbasit-dashboard abdulbasit-dnstt >/dev/null 2>&1 || true
 
 log "Running local syntax and security checks"
 python3 -m py_compile "$INSTALL_DIR"/*.py
@@ -262,7 +332,9 @@ Open the panel with:
 
 Public/provider firewall ports required:
   22/tcp (server administration), 80/tcp, 443/tcp, 109/tcp, 447/tcp
+  53/udp only when DNSTT is configured
 
-Port 2082 is intentionally bound only to 127.0.0.1 and must NOT be opened publicly.
+Ports 2082, 9080, 21001-21003 and 21085 are loopback-only and must NOT be opened publicly.
+Configure the TLS dashboard from: menu → Configure secure web dashboard
 Configure Telegram from: menu → Telegram bot → Configure token and Super Admin
 EOF

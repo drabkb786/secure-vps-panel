@@ -16,7 +16,9 @@ from common import (  # noqa: E402
     validate_bot_token,
     validate_days,
     validate_domain,
+    validate_http_path,
     validate_password,
+    validate_protocols,
     validate_quota,
     validate_sessions,
     validate_telegram_id,
@@ -28,7 +30,18 @@ def test_valid_username() -> None:
     assert validate_username("vpn_user-1") == "vpn_user-1"
 
 
-@pytest.mark.parametrize("value", ["Root", "bad user", "a;id", "../etc/passwd", "x" * 32, "root"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Root",
+        "bad user",
+        "a;id",
+        "../etc/passwd",
+        "x" * 32,
+        "root",
+        "abdulbasit-xray",
+    ],
+)
 def test_invalid_username(value: str) -> None:
     with pytest.raises(ValidationError):
         validate_username(value)
@@ -42,12 +55,23 @@ def test_password_rules() -> None:
         validate_password("valid-length\nmalicious")
 
 
-@pytest.mark.parametrize("value", ["vpn.example.com", "a-b.example.co.uk", "xn--bcher-kva.example"])
+@pytest.mark.parametrize(
+    "value", ["vpn.example.com", "a-b.example.co.uk", "xn--bcher-kva.example"]
+)
 def test_valid_domain(value: str) -> None:
     assert validate_domain(value) == value
 
 
-@pytest.mark.parametrize("value", ["example", "-bad.example.com", "bad_.example.com", "example.com;reboot", "http://example.com"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "example",
+        "-bad.example.com",
+        "bad_.example.com",
+        "example.com;reboot",
+        "http://example.com",
+    ],
+)
 def test_invalid_domain(value: str) -> None:
     with pytest.raises(ValidationError):
         validate_domain(value)
@@ -60,6 +84,19 @@ def test_numeric_limits() -> None:
     assert validate_quota("1.5") == 1.5
     with pytest.raises(ValidationError):
         validate_sessions("0")
+
+
+def test_protocol_validation() -> None:
+    assert validate_protocols("ssh,vless,vmess,vless") == ["ssh", "vless", "vmess"]
+    with pytest.raises(ValidationError):
+        validate_protocols("vless;reboot")
+
+
+def test_nginx_http_path_rejects_directive_characters() -> None:
+    assert validate_http_path("/cloudfront/vless") == "/cloudfront/vless"
+    for value in ("/vless;return", "/vless$uri", "/vless'bad"):
+        with pytest.raises(ValidationError):
+            validate_http_path(value)
 
 
 def test_telegram_values() -> None:

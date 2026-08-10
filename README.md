@@ -1,1269 +1,645 @@
-# Abdul Basit Secure VPS Panel v2.1.0
+# Abdul Basit Secure VPS Panel v3.0.0
 
-> Secure SSH/Dropbear, HTTP WebSocket, TLS WebSocket, user-management, session-limit, SSL and Telegram administration panel for Ubuntu/Debian VPS servers.
+A security-focused Ubuntu/Debian control panel for SSH, VMess, VLESS, Trojan, Amazon CloudFront, Cloudflare, DNSTT + SSH, a TLS web dashboard, Telegram administration, real Xray traffic limits, and downloadable client profiles.
 
-## Project information
+Repository: `drabkb786/secure-vps-panel`
 
-| Item | Value |
+## What v3 includes
+
+| Area | Implementation |
 |---|---|
-| Owner and Maintainer | **Abdul Basit** |
-| GitHub Account | `drabkb786` |
-| Repository | `drabkb786/secure-vps-panel` |
-| Version | `2.1.0` |
-| Default Telegram Super Admin ID | `6408975845` |
-| Supported OS | Ubuntu 22.04/24.04 and Debian 12+ |
-| Required Python | Python 3.10 or newer |
+| Protocols | SSH/Dropbear, VMess, VLESS and Trojan |
+| Client access | Xray JSON with a local SOCKS5 listener, standard share links and WebSocket payloads |
+| CDN | CloudFront CloudFormation template with an origin-verification secret; Cloudflare orange-cloud mode |
+| Dashboard | TLS-only admin UI for users, limits, protocols, CDN, DNSTT and generated files |
+| Limits | Account expiry for SSH/Xray; Xray per-user byte accounting and enforcement; SSH concurrent-session limits |
+| DNSTT | Pinned upstream server, delegated DNS zone, encrypted DNSTT transport to loopback Dropbear |
+| App exports | Open NetMod JSON, open DarkTunnel JSON, Xray JSON, share-link text and payload text |
+| Telegram | Authorized admins can manage accounts and receive generated files directly |
+| Safety | Root-owned state, unprivileged network services, loopback-only internals, atomic updates and rollback |
 
-> **Authorized use only:** Is panel ko sirf apne VPS, apne network, ya us server par use karein jahan aapko proper permission hasil ho. Yeh project telecom billing bypass, unauthorized access, credential theft, ya kisi third-party service ko abuse karne ke liye nahi hai.
+### Important scope and compatibility notes
 
----
+- VLESS is the recommended default. Xray v26 still runs VMess, Trojan and WebSocket, but emits upstream deprecation warnings for them. They are present because this panel explicitly supports them.
+- The data limit is real and enforced from Xray's per-user uplink/downlink counters. It covers VMess, VLESS and Trojan together.
+- SSH and DNSTT use Linux account expiry and SSH session limits, but their bytes are **not** added to the Xray quota. The panel does not pretend that process I/O is network usage.
+- NetMod and DarkTunnel do not publish a stable, open specification for their locked proprietary formats. The panel therefore creates auditable `.nm.json` and `.dark.json` profiles containing the Xray config, link and payload. It does not claim to create a proprietary encrypted/locked `.nm` or `.dark` file.
+- For current NetMod releases, import the generated `*.xray.json` or standard link; NetMod's release notes document Xray JSON/link parsing. The `.nm.json` file is an inspectable companion profile, not a locked native `.nm` export. DarkTunnel's native `.dark` encoding is undocumented, so use the standard protocol link/manual import rather than treating `.dark.json` as a native encrypted file.
+- Use this project only on servers and networks you own or are authorized to administer.
 
-## Panel kya karta hai?
+## Requirements
 
-Yeh terminal-based VPS management panel hai. Browser dashboard nahi hai. Installation ke baad VPS terminal mein `menu` command se khulta hai.
+### Server
 
-Panel automatically:
+- Ubuntu 22.04/24.04+ or Debian 12+
+- Python 3.10 or newer
+- `x86_64`, `arm64`, or `armv7`
+- Root access
+- Recommended minimum: 1 vCPU, 1 GB RAM, 2 GB free disk
+- A clean public VPS is strongly recommended
+- Accurate UTC time, especially for VMess
 
-- Dropbear SSH ko ports `109` aur `447` par configure karta hai.
-- Existing OpenSSH administration access ko normally port `22` par untouched rakhta hai.
-- Nginx par HTTP WebSocket port `80` configure karta hai.
-- Valid SSL certificate milne ke baad WSS/TLS port `443` configure karta hai.
-- Internal WebSocket proxy ko sirf `127.0.0.1:2082` par bind karta hai.
-- Linux tunnel users create, renew aur delete karta hai.
-- Per-user concurrent Dropbear session limit enforce karta hai.
-- Let's Encrypt SSL issue aur renew karta hai.
-- Optional Telegram bot ke through users aur services manage karta hai.
-- Fail2ban ke through direct Dropbear login brute-force protection enable karne ki koshish karta hai.
-- Nginx configuration ko apply karne se pehle test karta hai aur failure par rollback karta hai.
+The installer installs Nginx, Dropbear, Certbot, Fail2ban and other OS dependencies. It installs a checksum-pinned Xray release and builds a pinned DNSTT release with a checksum-verified Go toolchain.
 
-## Architecture
+### Domain and DNS
+
+For normal TLS use, create an `A` record—and an `AAAA` record only if the VPS has working IPv6—pointing the panel hostname to the VPS. Example:
 
 ```text
-Internet client
-   |
-   |-- Direct SSH/Dropbear: VPS-IP:109 or VPS-IP:447
-   |
-   |-- HTTP WebSocket: domain:80
-   |        |
-   |        v
-   |      Nginx
-   |        |
-   |        v
-   |   127.0.0.1:2082
-   |        |
-   |        v
-   |   Dropbear 127.0.0.1:109
-   |
-   `-- TLS WebSocket/WSS: domain:443
-            |
-            v
-          Nginx SSL
-            |
-            v
-       127.0.0.1:2082
-            |
-            v
-       Dropbear 127.0.0.1:109
+vpn.example.com  A  203.0.113.10
 ```
 
-Internal port `2082` public internet par open nahi hona chahiye.
+DNS must resolve to the VPS before requesting a Let's Encrypt certificate.
 
----
+### Firewall and provider security group
 
-# 1. VPS requirements
+| Port | Protocol | Required for |
+|---|---|---|
+| 22 | TCP | VPS administration; keep this available during installation |
+| 80 | TCP | ACME HTTP challenge and legacy SSH WebSocket route |
+| 443 | TCP | TLS dashboard, direct Xray, Cloudflare and CloudFront origin |
+| 109 | TCP | Direct Dropbear and DNSTT's loopback SSH target |
+| 447 | TCP | Additional direct Dropbear port |
+| 53 | UDP | DNSTT only |
 
-## Recommended VPS
-
-- Fresh Ubuntu `22.04` ya `24.04`
-- Ya Debian `12` or newer
-- Minimum `1 CPU`, `512 MB RAM`, `5 GB` storage
-- Public IPv4 recommended
-- Root ya sudo access
-- Clean/fresh VPS strongly recommended
-
-Purane production server, shared hosting, cPanel server, ya important website wale VPS par direct install na karein. Installer Nginx aur Dropbear configuration manage karta hai.
-
-## Required public ports
-
-Provider firewall/security group mein yeh TCP ports allow hon:
+Do **not** expose these internal ports publicly:
 
 | Port | Purpose |
-|---:|---|
-| `22` | Normal OpenSSH server administration |
-| `80` | HTTP WebSocket and Let's Encrypt verification |
-| `443` | TLS WebSocket/WSS |
-| `109` | Direct Dropbear SSH |
-| `447` | Alternate direct Dropbear SSH |
-| `2082` | **Publicly open na karein**; loopback-only internal service |
+|---|---|
+| 2082/TCP | Internal SSH WebSocket bridge |
+| 9080/TCP | Internal dashboard HTTP server |
+| 21001-21003/TCP | Loopback Xray WebSocket inbounds |
+| 21085/TCP | Loopback Xray Stats API |
 
-Agar aapke VPS ka normal SSH port `22` nahi hai, apne real administration port ko firewall mein open rakhein. Installer OpenSSH configuration ko intentionally rewrite nahi karta.
+## Fresh installation
 
----
-
-# 2. Domain aur DNS setup
-
-Domain optional hai, lekin port `443` par valid TLS/WSS use karne ke liye domain zaroori hai.
-
-Example:
-
-```text
-vpn.example.com
-```
-
-DNS provider mein A record banayein:
-
-```text
-Type: A
-Name/Host: vpn
-Value/Target: YOUR_VPS_PUBLIC_IP
-TTL: Auto or 300
-```
-
-Agar IPv6 properly configured hai to optional AAAA record bhi add kiya ja sakta hai.
-
-## DNS verify karein
-
-Apne computer ya VPS se:
+Keep an existing root/console session open while installing.
 
 ```bash
-getent ahostsv4 vpn.example.com
-```
-
-Ya:
-
-```bash
-nslookup vpn.example.com
-```
-
-Result mein VPS ka public IP aana chahiye.
-
-### Cloudflare users
-
-Initial SSL installation ke waqt record ko **DNS only** rakhna easiest hai. Pehle certificate issue aur direct connection verify karein. Kisi proxy/CDN ki terms aur traffic policies ko follow karna aapki responsibility hai.
-
----
-
-# 3. VPS se connect hona
-
-Windows PowerShell, Windows Terminal, Linux ya macOS terminal se:
-
-```bash
-ssh root@YOUR_VPS_IP
-```
-
-Example:
-
-```bash
-ssh root@203.0.113.10
-```
-
-Agar VPS root login ke bajaye sudo user deta hai:
-
-```bash
-ssh ubuntu@YOUR_VPS_IP
 sudo -i
-```
-
-Installation start karne se pehle confirm karein:
-
-```bash
-whoami
-```
-
-Expected result:
-
-```text
-root
-```
-
----
-
-# 4. GitHub repository clone karna
-
-Repository private ho to authenticated GitHub access required hoga.
-
-## Method A — GitHub CLI, recommended for private repository
-
-GitHub CLI install karein:
-
-```bash
-apt-get update
-apt-get install -y git gh
-```
-
-Login:
-
-```bash
-gh auth login
-```
-
-Prompts mein:
-
-```text
-GitHub.com
-HTTPS
-Login with a web browser
-```
-
-Phir repository clone karein:
-
-```bash
-cd /root
-gh repo clone drabkb786/secure-vps-panel
-cd secure-vps-panel
-```
-
-## Method B — normal Git clone
-
-Public repository ke liye:
-
-```bash
-apt-get update
-apt-get install -y git
 git clone https://github.com/drabkb786/secure-vps-panel.git
 cd secure-vps-panel
+bash install.sh --domain vpn.example.com --email admin@example.com
 ```
 
-Private repository mein GitHub password accept nahi hota. Password prompt par Personal Access Token ya authenticated credential manager required hoga. Token ko command, README, screenshot, Telegram, ya source file mein paste/commit na karein.
-
-## Files verify karein
-
-Installation se pehle:
+Then open the root menu:
 
 ```bash
-ls -la
+menu
 ```
 
-Kam az kam yeh items hone chahiye:
-
-```text
-install.sh
-menu.sh
-src/
-systemd/
-scripts/
-tests/
-README.md
-SECURITY.md
-```
-
-Agar sirf `README.md` nazar aaye aur `install.sh` na ho, full source abhi repository mein upload nahi hua. Us state mein installation run nahi ho sakti.
-
----
-
-# 5. Pre-install checks
-
-Project folder ke andar:
+Non-interactive installation:
 
 ```bash
-cd /root/secure-vps-panel
-```
-
-Installer syntax check:
-
-```bash
-bash -n install.sh
-```
-
-Python files compile test:
-
-```bash
-python3 -m py_compile src/*.py
-```
-
-Optional automated tests:
-
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-Installer permissions:
-
-```bash
-chmod +x install.sh menu.sh scripts/*.sh
-```
-
----
-
-# 6. Installation methods
-
-## Method 1 — Interactive installation
-
-Recommended for first installation:
-
-```bash
-sudo bash install.sh
-```
-
-Installer poochega:
-
-```text
-Domain: vpn.example.com
-Certbot email: your-email@example.com
-```
-
-Domain abhi ready na ho to blank Enter kar sakte hain. Baad mein `menu` se domain configure ho jayega.
-
-## Method 2 — Non-interactive installation with domain
-
-```bash
-sudo bash install.sh \
+bash install.sh \
+  --non-interactive \
   --domain vpn.example.com \
-  --email admin@example.com \
-  --non-interactive
+  --email admin@example.com
 ```
 
-Apna real domain aur email use karein.
-
-## Method 3 — Install now, domain later
+To omit the optional DNSTT build:
 
 ```bash
-sudo bash install.sh --non-interactive
+bash install.sh --domain vpn.example.com --email admin@example.com --skip-dnstt
 ```
 
-Installation ke baad:
+The installer does not perform an unattended full OS upgrade and does not replace the administration service on port 22. It configures Dropbear separately on ports 109 and 447.
+
+### Upgrade from v2
+
+Back up `/etc/abdulbasit`, pull the new branch/release, and run the installer again. Existing SSH users remain SSH users. Enable VMess/VLESS/Trojan explicitly for accounts that need them.
 
 ```bash
-menu
+sudo tar -C /etc -czf /root/abdulbasit-before-v3.tar.gz abdulbasit
+git pull --ff-only
+sudo bash install.sh --domain vpn.example.com --email admin@example.com
 ```
 
-Phir option:
+The backup contains credentials and must remain root-only.
 
-```text
-2) Set/change domain
-3) Issue/renew SSL
-```
+## Initial setup
 
-## Installer kya install/change karega?
-
-Packages:
-
-```text
-ca-certificates
-nginx
-dropbear
-certbot
-python3
-procps
-passwd
-iproute2
-fail2ban
-```
-
-Installer:
-
-- Unattended full `apt upgrade -y` nahi chalata.
-- OpenSSH port `22` ko intentionally change nahi karta.
-- Dropbear ko `109` aur `447` par configure karta hai.
-- Purane insecure panel services ko disable/quarantine karta hai.
-- Secure services install karta hai.
-- Default Telegram Super Admin ID `6408975845` save karta hai.
-- Bot token khud generate nahi karta; aapko BotFather token manually configure karna hota hai.
-
----
-
-# 7. Installation verify karna
-
-Installation complete hone ke baad:
-
-```bash
-menu
-```
-
-Panel open na ho to:
-
-```bash
-/usr/local/sbin/abdulbasit-menu
-```
-
-## Service status
-
-```bash
-abdulbasit-panelctl status
-```
-
-Ya individually:
-
-```bash
-systemctl status dropbear --no-pager
-systemctl status nginx --no-pager
-systemctl status abdulbasit-paneld --no-pager
-systemctl status abdulbasit-ws --no-pager
-systemctl status abdulbasit-session-enforcer --no-pager
-```
-
-Telegram token configure hone ke baad:
-
-```bash
-systemctl status abdulbasit-bot --no-pager
-```
-
-## Listening ports verify karein
-
-```bash
-ss -lntp | grep -E ':(22|80|109|443|447|2082)\b'
-```
-
-Expected:
-
-- `109` and `447` Dropbear
-- `80` Nginx
-- `443` Nginx, only after SSL certificate/config is available
-- `2082` only on `127.0.0.1`
-
-Security requirement:
-
-```text
-127.0.0.1:2082   correct
-0.0.0.0:2082     wrong/insecure
-[::]:2082        wrong/insecure
-```
-
-## Built-in security check
-
-```bash
-abdulbasit-security-check
-```
-
-Successful checks normally show `PASS`.
-
-## Nginx check
-
-```bash
-nginx -t
-```
-
-## Fail2ban check
-
-```bash
-systemctl status fail2ban --no-pager
-fail2ban-client status dropbear
-```
-
----
-
-# 8. Panel menu use karna
-
-Root shell mein:
-
-```bash
-menu
-```
-
-Main menu:
-
-```text
-1) User management
-2) Set/change domain
-3) Issue/renew SSL
-4) Telegram bot
-5) Service status
-6) Restart core services
-7) View recent logs
-8) Exit
-```
-
----
-
-# 9. SSH/Dropbear user create karna
-
-## Menu method
-
-```bash
-menu
-```
-
-Choose:
-
-```text
-1) User management
-1) Create user
-```
-
-Required fields:
-
-```text
-Username: lowercase username
-Validity days: 1 to 3650
-Concurrent sessions: 1 to 20
-Quota metadata: number in GB or Unlimited
-Password: minimum 12 characters
-```
-
-Example:
-
-```text
-Username: testuser
-Validity days: 30
-Concurrent sessions: 2
-Quota metadata: Unlimited
-Password: use-a-strong-private-password
-```
-
-## CLI method
-
-```bash
-abdulbasit-panelctl create-user testuser \
-  --days 30 \
-  --sessions 2 \
-  --quota Unlimited
-```
-
-Password terminal mein hidden prompt par enter hoga. Password source file ya shell command argument mein nahi jata.
-
-## User list
-
-```bash
-abdulbasit-panelctl list-users
-```
-
-## Active sessions
-
-```bash
-abdulbasit-panelctl list-sessions
-```
-
-## Renew user
-
-30 days add karne ke liye:
-
-```bash
-abdulbasit-panelctl renew-user testuser --days 30
-```
-
-## Concurrent session limit change
-
-```bash
-abdulbasit-panelctl set-sessions testuser --sessions 3
-```
-
-Allowed range `1` to `20` hai.
-
-## Quota metadata change
-
-```bash
-abdulbasit-panelctl set-quota testuser --quota 50
-```
-
-Ya:
-
-```bash
-abdulbasit-panelctl set-quota testuser --quota Unlimited
-```
-
-> Quota field metadata-only hai. Current version actual network GB usage enforce nahi karta, kyun ke process I/O ko network usage kehna technically inaccurate tha.
-
-## User delete karna
-
-Menu recommended hai, kyun ke confirmation mangta hai:
-
-```bash
-menu
-```
-
-```text
-User management → Delete managed user
-Type DELETE to confirm
-```
-
-CLI:
-
-```bash
-abdulbasit-panelctl delete-user testuser
-```
-
-Sirf panel ke managed/registered users delete kiye ja sakte hain.
-
----
-
-# 10. Domain configure/change karna
-
-Menu:
-
-```bash
-menu
-```
-
-```text
-2) Set/change domain
-```
-
-CLI:
+If installation was performed without a domain:
 
 ```bash
 abdulbasit-panelctl set-domain vpn.example.com
-```
-
-Panel:
-
-- Domain format validate karega.
-- Existing Nginx server-name conflicts check karega.
-- Managed Nginx configuration write karega.
-- `nginx -t` run karega.
-- Error par old configuration restore karega.
-
----
-
-# 11. SSL certificate issue/renew karna
-
-Pehle ensure karein:
-
-- DNS domain VPS IP par point karta ho.
-- Port `80` provider firewall mein open ho.
-- Nginx running ho.
-
-Menu:
-
-```text
-3) Issue/renew SSL
-```
-
-CLI:
-
-```bash
 abdulbasit-panelctl issue-cert --domain vpn.example.com
 ```
 
-Agar domain pehle configured hai:
+Configure the dashboard:
 
 ```bash
-abdulbasit-panelctl issue-cert
+abdulbasit-panelctl configure-dashboard
 ```
 
-Certificate verify:
-
-```bash
-certbot certificates
-```
-
-Renewal test:
-
-```bash
-certbot renew --dry-run
-```
-
-Certbot timer:
-
-```bash
-systemctl status certbot.timer --no-pager
-```
-
-## Common SSL failure causes
-
-- DNS wrong IP par point kar raha hai.
-- DNS propagation complete nahi hui.
-- Port `80` blocked hai.
-- Same domain kisi aur Nginx config mein configured hai.
-- Domain ke A aur AAAA records different servers par point karte hain.
-- Provider ya local firewall incoming HTTP block kar raha hai.
-
-Logs:
-
-```bash
-journalctl -u nginx -n 100 --no-pager
-ls -la /var/log/letsencrypt/
-tail -n 100 /var/log/letsencrypt/letsencrypt.log
-```
-
----
-
-# 12. Client connection information
-
-Created user ke liye basic credentials:
+Open:
 
 ```text
-Host: your VPS IP or configured domain
-Username: panel-created username
-Password: account password
+https://vpn.example.com/panel/
 ```
 
-## Direct Dropbear SSH
+The dashboard service listens only on `127.0.0.1:9080`; Nginx is the only public entry point. Its password is PBKDF2-SHA256 hashed, sessions are signed and time-limited, mutations require CSRF tokens, and login failures are rate-limited.
+
+Create a multi-protocol account from the dashboard, `menu`, Telegram, or the CLI:
+
+```bash
+abdulbasit-panelctl create-user alice \
+  --days 30 \
+  --sessions 2 \
+  --quota 25 \
+  --protocols ssh,vmess,vless,trojan
+```
+
+The CLI asks for the password without echoing it. The password is passed directly to `chpasswd`; it is not stored in panel metadata.
+
+## Amazon CloudFront — priority setup
+
+CloudFront support is implemented as WebSocket-over-HTTPS through a custom origin. The repository template uses:
+
+- CloudFront's managed `CachingDisabled` policy;
+- the managed `AllViewerExceptHostHeader` origin-request policy, which forwards WebSocket headers while replacing the origin `Host` correctly;
+- HTTPS-only origin traffic;
+- a secret custom origin header checked by Nginx on `/cloudfront/*` routes;
+- the default `*.cloudfront.net` viewer certificate.
+
+### CloudFront prerequisites
+
+- An AWS account allowed to create CloudFront distributions and CloudFormation stacks
+- AWS CLI credentials if deploying from a terminal
+- A public, TLS-enabled VPS origin hostname
+- TCP/443 open from the internet to the origin
+
+Use a DNS-only origin hostname when possible. Example: `origin-vpn.example.com` points directly to the VPS and is the panel domain. Do not place Cloudflare in front of this hostname when CloudFront is the intended outer CDN.
+
+### 1. Install and verify origin TLS
+
+```bash
+abdulbasit-panelctl set-domain origin-vpn.example.com
+abdulbasit-panelctl issue-cert --domain origin-vpn.example.com
+curl -fsS https://origin-vpn.example.com/healthz
+```
+
+### 2. Generate an origin secret
+
+The dashboard has a **Generate origin secret** button. From a shell:
+
+```bash
+cf_origin_secret="$(openssl rand -base64 48 | tr -d '\n=' | tr '+/' '-_')"
+```
+
+Keep this value private. The same value must be supplied to CloudFormation and the panel.
+
+### 3. Deploy the distribution
+
+From the repository directory:
+
+```bash
+aws cloudformation deploy \
+  --stack-name abdulbasit-vpn-cloudfront \
+  --template-file infra/cloudfront-websocket.yml \
+  --parameter-overrides \
+    OriginDomain=origin-vpn.example.com \
+    OriginVerifySecret="$cf_origin_secret" \
+    PriceClass=PriceClass_100
+```
+
+Read the generated CloudFront hostname:
+
+```bash
+cf_endpoint="$(aws cloudformation describe-stacks \
+  --stack-name abdulbasit-vpn-cloudfront \
+  --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDomain`].OutputValue' \
+  --output text)"
+printf '%s\n' "$cf_endpoint"
+```
+
+### 4. Connect the panel profile
+
+```bash
+abdulbasit-panelctl configure-cdn cloudfront \
+  --endpoint "$cf_endpoint" \
+  --origin origin-vpn.example.com \
+  --secret "$cf_origin_secret"
+```
+
+Do not omit `--secret` after deploying the stack. If the panel generates a different value, update the CloudFormation stack with that exact new value.
+
+The panel rejects this operation unless `--origin` exactly matches the configured panel domain and that domain already has installed certificate files. This prevents a parser-valid but unusable CloudFront origin profile.
+
+The automated CloudFormation path accepts the generated `*.cloudfront.net` distribution hostname. Custom CloudFront aliases and ACM viewer certificates are not configured by this template.
+
+### 5. Generate CloudFront client files
+
+```bash
+abdulbasit-panelctl generate-exports alice vless --provider cloudfront
+abdulbasit-panelctl list-exports alice
+```
+
+CloudFront paths are deliberately separate:
 
 ```text
-Host: VPS IP or domain
-Port: 109
-Protocol: SSH
+/cloudfront/vmess
+/cloudfront/vless
+/cloudfront/trojan
 ```
 
-Alternate:
+Direct routes remain `/vmess`, `/vless` and `/trojan`. Xray itself stays on loopback.
 
-```text
-Host: VPS IP or domain
-Port: 447
-Protocol: SSH
-```
+### 6. Verify CloudFront
 
-## HTTP WebSocket
-
-```text
-Host/SNI: vpn.example.com
-Port: 80
-TLS/SSL: Off
-WebSocket path: /
-SSH username/password: panel-created credentials
-```
-
-## TLS WebSocket / WSS
-
-Valid SSL issue hone ke baad:
-
-```text
-Host/SNI: vpn.example.com
-Port: 443
-TLS/SSL: On
-WebSocket path: /
-SSH username/password: panel-created credentials
-```
-
-Generic WebSocket upgrade request structure:
-
-```http
-GET / HTTP/1.1
-Host: vpn.example.com
-Upgrade: websocket
-Connection: Upgrade
-
-```
-
-Apna real authorized domain use karein. Kisi third-party host, zero-rated service, billing bypass host, ya unauthorized payload ko use na karein.
-
----
-
-# 13. Telegram bot setup
-
-## Bot create karna
-
-Telegram mein official `@BotFather` open karein:
-
-```text
-/newbot
-```
-
-Bot name aur username select karein. BotFather aapko token dega.
-
-Token example format:
-
-```text
-BOT_TOKEN_FROM_BOTFATHER
-```
-
-Real token ko GitHub, chat screenshot, public message, README, ya source code mein share na karein.
-
-## Panel mein bot configure karna
+CloudFront deployment can take several minutes. When its status is deployed:
 
 ```bash
-menu
+curl -fsS "https://$cf_endpoint/healthz"
 ```
 
-Choose:
+Then import the generated Xray JSON or share link and test its local SOCKS proxy. A `403` on a `/cloudfront/*` path normally means the CloudFormation and panel origin secrets do not match.
 
-```text
-4) Telegram bot
-1) Configure token and Super Admin
-```
+The template uses CloudFront's 60-second origin response timeout. A completely idle WebSocket can therefore be closed by the edge; clients should keep traffic alive or reconnect. Active tunnels continue while packets arrive within that interval.
 
-Enter:
-
-```text
-Bot token: hidden input
-Super Admin ID: 6408975845
-```
-
-CLI alternative:
+To disable the panel's CloudFront profile without deleting the AWS distribution:
 
 ```bash
-abdulbasit-panelctl configure-bot
+abdulbasit-panelctl remove-cdn cloudfront
 ```
 
-Bot token hidden prompt mein enter hoga. Default Super Admin ID already:
+Deleting the AWS stack is a separate AWS action and may stop active clients. It is not performed by the panel.
 
-```text
-6408975845
-```
+## Cloudflare setup
 
-Telegram mein bot ko open karke:
+Cloudflare mode expects the panel hostname itself to be orange-cloud proxied. This keeps viewer and origin certificate names aligned.
 
-```text
-/start
-```
-
-bhejein.
-
-## Bot service check
+1. Point `vpn.example.com` to the VPS.
+2. Issue the origin certificate while DNS is direct if necessary.
+3. Turn the Cloudflare proxy on for the record.
+4. In Cloudflare, use SSL/TLS mode **Full (strict)** and leave WebSockets enabled.
+5. Configure the same hostname as endpoint and origin:
 
 ```bash
-systemctl status abdulbasit-bot --no-pager
+abdulbasit-panelctl configure-cdn cloudflare \
+  --endpoint vpn.example.com \
+  --origin vpn.example.com
 ```
 
-Logs:
+6. Generate a client:
 
 ```bash
-journalctl -u abdulbasit-bot -n 100 --no-pager
+abdulbasit-panelctl generate-exports alice vless --provider cloudflare
 ```
 
-Live logs:
+The panel rejects different Cloudflare endpoint/origin hostnames because the automated certificate and Nginx configuration cover one hostname. Advanced Cloudflare Origin Rules or multi-SAN certificate setups are outside this automated path.
+
+For DNSTT records hosted in Cloudflare, the DNSTT nameserver `A`/`AAAA` record must be **DNS only**, not orange-cloud proxied.
+
+## Protocol and user management
+
+### Enable or disable protocols
 
 ```bash
-journalctl -u abdulbasit-bot -f
+abdulbasit-panelctl enable-protocol alice vless,trojan
+abdulbasit-panelctl disable-protocol alice vmess
 ```
 
-## Extra Telegram admin add karna
+Disabling SSH locks the Linux password and ends managed Dropbear sessions. Enabling SSH unlocks it. Xray changes are rendered to a temporary file, validated by the real Xray binary, atomically installed, and rolled back if restart fails.
+
+### Rotate an Xray credential
 
 ```bash
-abdulbasit-panelctl add-admin TELEGRAM_NUMERIC_ID
+abdulbasit-panelctl rotate-protocol alice vless
+abdulbasit-panelctl rotate-protocol alice trojan
 ```
 
-Example:
+Existing files contain the old credential. Generate new files after rotation.
+
+### Renew time limit
 
 ```bash
-abdulbasit-panelctl add-admin 123456789
+abdulbasit-panelctl renew-user alice --days 30
 ```
 
-Admin list:
+SSH expiry is maintained through the Linux account. The one-minute usage/expiry timer removes expired Xray users from the active config.
+
+### Set or reset data limit
 
 ```bash
-abdulbasit-panelctl list-admins
+abdulbasit-panelctl set-quota alice --quota 50
+abdulbasit-panelctl set-quota alice --quota Unlimited
+abdulbasit-panelctl reset-usage alice
 ```
 
-Admin remove:
+The panel uses decimal gigabytes: `1 GB = 1,000,000,000 bytes`. VMess, VLESS and Trojan traffic for one user is aggregated under one Xray statistics identity. When usage reaches the limit, the user is removed from all Xray inbounds. Resetting usage restores eligible, unexpired profiles.
+
+Counters use an idempotent pending journal while user files are updated. Once a reset result has been journaled, an interruption during persistence is replayed on the next run without counting an already-applied transaction twice.
+
+### SSH session limit
 
 ```bash
-abdulbasit-panelctl remove-admin 123456789
-```
-
-Super Admin ID remove nahi ki ja sakti.
-
-## Token leak ho jaye to
-
-BotFather mein token revoke/regenerate karein aur panel mein new token configure karein:
-
-```bash
-abdulbasit-panelctl configure-bot
-```
-
----
-
-# 14. Services and logs
-
-## Service names
-
-```text
-dropbear.service
-nginx.service
-fail2ban.service
-abdulbasit-paneld.service
-abdulbasit-ws.service
-abdulbasit-session-enforcer.service
-abdulbasit-bot.service
-```
-
-## Restart allowed services
-
-```bash
-abdulbasit-panelctl restart nginx
-abdulbasit-panelctl restart dropbear
-abdulbasit-panelctl restart abdulbasit-ws
-abdulbasit-panelctl restart abdulbasit-session-enforcer
-abdulbasit-panelctl restart abdulbasit-bot
-```
-
-Panel daemon apne API ke through khud ko restart nahi karta. Direct systemd command use karein:
-
-```bash
-systemctl restart abdulbasit-paneld
-```
-
-## Combined logs
-
-```bash
-journalctl --no-pager -n 200 \
-  -u abdulbasit-paneld \
-  -u abdulbasit-ws \
-  -u abdulbasit-session-enforcer \
-  -u abdulbasit-bot
-```
-
-## Live WebSocket logs
-
-```bash
-journalctl -u abdulbasit-ws -f
-```
-
-## Dropbear logs
-
-```bash
-journalctl -u dropbear -n 100 --no-pager
-```
-
-## Nginx logs
-
-```bash
-tail -n 100 /var/log/nginx/error.log
-tail -n 100 /var/log/nginx/access.log
-```
-
----
-
-# 15. Troubleshooting
-
-## `menu: command not found`
-
-```bash
-ls -l /usr/local/bin/menu /usr/bin/menu
-/usr/local/sbin/abdulbasit-menu
-```
-
-Reinstall files:
-
-```bash
-cd /root/secure-vps-panel
-sudo bash install.sh --non-interactive
-```
-
-## Panel daemon socket error
-
-```bash
-systemctl status abdulbasit-paneld --no-pager
-journalctl -u abdulbasit-paneld -n 100 --no-pager
-ls -la /run/abdulbasit/
-```
-
-Restart:
-
-```bash
-systemctl restart abdulbasit-paneld
-```
-
-## Port already occupied
-
-```bash
-ss -lntp | grep -E ':(80|109|443|447|2082)\b'
-```
-
-Conflicting service identify karke carefully resolve karein. Existing production service ko blindly stop/delete na karein.
-
-## WebSocket port 80 works, 443 does not
-
-```bash
-certbot certificates
-nginx -t
-ss -lntp | grep ':443'
-```
-
-Phir:
-
-```bash
-abdulbasit-panelctl issue-cert
-```
-
-## Direct SSH works but WebSocket fails
-
-```bash
-systemctl status nginx abdulbasit-ws dropbear --no-pager
-curl -i -H 'Upgrade: websocket' -H 'Connection: Upgrade' http://vpn.example.com/
-```
-
-Expected response normally `101 Switching Protocols` ho sakta hai. A simple curl connection tunnel mode mein open reh sakti hai; `Ctrl+C` se close karein.
-
-## Telegram bot not responding
-
-```bash
-systemctl status abdulbasit-bot --no-pager
-journalctl -u abdulbasit-bot -n 150 --no-pager
-```
-
-Check:
-
-- Token correct hai.
-- Bot ko `/start` bheja gaya hai.
-- Telegram ID numeric aur correct hai.
-- VPS outbound HTTPS access block nahi hai.
-- `/etc/abdulbasit/bot_token.conf` exists and secure hai.
-
-Permissions:
-
-```bash
-stat -c '%a %U %G %n' \
-  /etc/abdulbasit/bot_token.conf \
-  /etc/abdulbasit/super_admin.conf
-```
-
-Expected mode usually `640`, owner `root`, group `abdulbasit`.
-
-## User login fails
-
-```bash
-getent passwd USERNAME
-chage -l USERNAME
-systemctl status dropbear --no-pager
-journalctl -u dropbear -n 100 --no-pager
-```
-
-Password minimum `12` characters hona chahiye at account creation.
-
-## Too many sessions disconnect ho rahi hain
-
-Current session limit dekhein:
-
-```bash
-abdulbasit-panelctl list-users
+abdulbasit-panelctl set-sessions alice --sessions 2
 abdulbasit-panelctl list-sessions
 ```
 
-Limit increase:
+This is a concurrent managed Dropbear process limit, not a unique-IP limit.
+
+## Generated client files
 
 ```bash
-abdulbasit-panelctl set-sessions USERNAME --sessions 3
+abdulbasit-panelctl generate-exports alice vless --provider direct
+abdulbasit-panelctl generate-exports alice vless --provider cloudfront
+abdulbasit-panelctl list-exports alice
 ```
 
----
+Each bundle contains five files:
 
-# 16. Firewall example
+| File | Purpose |
+|---|---|
+| `*.xray.json` | Complete Xray client with SOCKS5 on `127.0.0.1:10808` |
+| `*.link.txt` | VMess, VLESS or Trojan share link |
+| `*.nm.json` | Open NetMod-oriented profile with link, payload and Xray config |
+| `*.dark.json` | Open DarkTunnel-oriented profile with link, payload and Xray config |
+| `*.payload.txt` | WebSocket HTTP-upgrade payload for the authorized configured endpoint |
 
-Provider firewall/security group pehle configure karein. Local UFW use karte waqt SSH lockout se bachne ke liye current administration port confirm karein.
+The payload is derived from the selected route; it is not a generic third-party host exploit. Example:
 
-Current SSH listeners:
+```text
+GET /cloudfront/vless HTTP/1.1[crlf]Host: d123example.cloudfront.net[crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf][crlf]
+```
+
+Files are root-owned under `/etc/abdulbasit/exports/USER/`. Download/delete them from the dashboard, or let the authorized Telegram bot upload them directly as documents.
+
+CLI file operations:
 
 ```bash
-ss -lntp | grep sshd
+abdulbasit-panelctl get-export alice alice-vless-direct.xray.json
+abdulbasit-panelctl delete-export alice alice-vless-direct.xray.json
 ```
 
-UFW installed ho aur normal SSH port `22` ho to example:
+`get-export` returns base64 in JSON; the dashboard and bot decode it for download.
+
+## DNSTT + SSH
+
+DNSTT needs a delegated subdomain and UDP/53 on a VPS IP. Example:
+
+```text
+tns.example.com  A   203.0.113.10
+t.example.com    NS  tns.example.com
+```
+
+The nameserver hostname must be outside the tunnel zone: `tns.example.com` is valid for `t.example.com`; `ns.t.example.com` is not.
+
+Configure the server:
 
 ```bash
-ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 109/tcp
-ufw allow 447/tcp
-ufw deny 2082/tcp
-ufw enable
-ufw status verbose
+abdulbasit-panelctl configure-dnstt \
+  --zone t.example.com \
+  --nameserver tns.example.com \
+  --listen-ip 203.0.113.10 \
+  --target-port 109
 ```
 
-Agar SSH custom port par hai, `22/tcp` ki jagah real port allow karein **before** enabling UFW.
+The command generates an encrypted DNSTT keypair, starts the unprivileged DNSTT service with only `CAP_NET_BIND_SERVICE`, and prints the required DNS records. It binds only the requested IP. A local resolver on `127.0.0.53:53` may coexist; a wildcard or same-IP UDP/53 listener must be stopped or moved.
 
----
+Generate the user file:
 
-# 17. Configuration files
+```bash
+abdulbasit-panelctl export-dnstt alice
+```
+
+The file includes the public key and client examples. After starting `dnstt-client`, connect an SSH client to `127.0.0.1:7000` using the managed SSH username/password. The DNSTT server forwards only to loopback Dropbear on port 109.
+
+Check or disable:
+
+```bash
+abdulbasit-panelctl list-dnstt
+abdulbasit-panelctl disable-dnstt
+```
+
+DNSTT transports SSH; therefore Linux expiry and the Dropbear session limit apply. DNSTT bytes are not part of the Xray quota.
+
+## Telegram bot
+
+Create a Telegram bot with BotFather, then configure it without putting the token on a command line:
+
+```bash
+abdulbasit-panelctl configure-bot
+```
+
+The CLI asks for the token with hidden input and for the numeric Super Admin ID. The bot runs as `abdulbasit-bot`, not root, and reaches privileged operations only through the panel's allow-listed UNIX socket API.
+
+Telegram features include:
+
+- create/delete/renew users;
+- session and Xray data limits;
+- protocol enable/disable/rotation;
+- service and CDN status;
+- generated Xray/NetMod/DarkTunnel/payload documents;
+- DNSTT user document;
+- Super Admin-managed admin IDs.
+
+CloudFront origin secrets are intentionally configured through the TLS dashboard or root CLI, not sent through Telegram.
+
+## CLI reference
+
+```text
+create-user USER --days N --sessions N --quota GB|Unlimited --protocols LIST
+delete-user USER
+renew-user USER --days N
+set-sessions USER --sessions N
+set-quota USER --quota GB|Unlimited
+reset-usage USER
+enable-protocol USER PROTOCOLS
+disable-protocol USER PROTOCOL
+rotate-protocol USER PROTOCOL
+list-users
+list-sessions
+
+set-domain HOSTNAME
+issue-cert [--domain HOSTNAME]
+configure-cdn cloudfront|cloudflare --endpoint HOST --origin HOST [--secret SECRET]
+list-cdn
+remove-cdn cloudfront|cloudflare
+
+generate-exports USER vmess|vless|trojan --provider direct|cloudfront|cloudflare
+list-exports USER
+get-export USER FILENAME
+delete-export USER FILENAME
+
+configure-dnstt --zone ZONE --nameserver HOST --listen-ip IP [--target-port 109] [--rotate-keys]
+list-dnstt
+export-dnstt USER
+disable-dnstt
+
+configure-dashboard
+configure-bot
+add-admin TELEGRAM_ID
+remove-admin TELEGRAM_ID
+list-admins
+status
+restart SERVICE
+```
+
+## Architecture and security model
+
+```mermaid
+flowchart TD
+    Internet --> Nginx["Nginx :80 / :443"]
+    Internet --> DNSTT["DNSTT UDP/53"]
+    Nginx --> Dashboard["Dashboard 127.0.0.1:9080"]
+    Nginx --> Xray["Xray 127.0.0.1:21001-21003"]
+    Nginx --> SSHWS["SSH WS 127.0.0.1:2082"]
+    DNSTT --> Dropbear["Dropbear 127.0.0.1:109"]
+    Clients["Dashboard / Telegram / root CLI"] --> Socket["Protected UNIX socket"]
+    Socket --> Paneld["Root allow-listed daemon"]
+```
+
+Key controls:
+
+- Xray, dashboard, Telegram and DNSTT have dedicated unprivileged service accounts.
+- Xray protocol/API ports and the dashboard are loopback-only.
+- The CDN origin secret and its generated Nginx config are root-only.
+- Dashboard auth is readable only by the isolated dashboard group.
+- User metadata and export files are root-only.
+- Xray blocks private/reserved destinations and BitTorrent by default.
+- Nginx configuration and Xray configuration are validated before reload/restart.
+- State changes use file locking and atomic replacement.
+- Linux username/domain/protocol/path/filename/CDN/DNSTT inputs are strictly validated.
+- Subprocesses use argument arrays; the code rejects `shell=True`.
+
+## Validation and tests
+
+Repository checks:
+
+```bash
+python3 -m py_compile src/*.py scripts/*.py
+bash -n install.sh menu.sh scripts/*.sh
+node --check web/app.js
+python3 scripts/static-audit.py
+pytest -q
+cfn-lint infra/cloudfront-websocket.yml
+python3 scripts/validate-xray-configs.py
+python3 scripts/live-xray-smoke.py
+```
+
+Runtime checks after installation:
+
+```bash
+xray run -test -config /etc/abdulbasit/xray/config.json
+nginx -t
+abdulbasit-security-check
+systemctl --no-pager --full status \
+  abdulbasit-paneld abdulbasit-xray abdulbasit-usage.timer nginx dropbear
+```
+
+The v3 implementation was also exercised with the pinned real binaries:
+
+- Xray parsed the server config and all three generated client configs;
+- VMess, VLESS and Trojan each carried a live HTTP request through the generated SOCKS client and WebSocket transport;
+- the Xray Stats API query/reset command completed against a running server;
+- the pinned DNSTT client/server carried an 8192-byte encrypted echo stream;
+- the CloudFront template passed `cfn-lint`.
+
+AWS credentials/distribution deployment and public DNS propagation are environment-specific and cannot be simulated by repository tests.
+
+## Upstream references
+
+- [AWS CloudFront WebSocket support](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/distribution-working-with.websockets.html)
+- [AWS CloudFront custom origin headers](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/add-origin-custom-headers.html)
+- [Xray API and statistics configuration](https://xtls.github.io/en/config/api.html)
+- [Xray WebSocket transport](https://xtls.github.io/en/config/transports/websocket.html)
+- [Official DNSTT documentation and source](https://www.bamsoftware.com/software/dnstt/)
+- [NetMod official release files and notes](https://sourceforge.net/projects/netmodhttp/files/Setup/)
+
+## Troubleshooting
+
+### CloudFront returns 403
+
+The origin secret in the panel and CloudFormation stack differs. Update one side so both use the exact same 24-128 character URL-safe value, then wait for the distribution update.
+
+```bash
+abdulbasit-panelctl list-cdn
+journalctl -u nginx --no-pager -n 100
+```
+
+The public `list-cdn` output intentionally redacts the secret. Reconfigure both sides if it has been lost.
+
+### CloudFront returns 502/504
+
+- Verify the origin hostname resolves directly to the VPS.
+- Verify its certificate is valid for the origin hostname.
+- Confirm TCP/443 is open.
+- Run `curl -fsS https://ORIGIN/healthz` outside CloudFront.
+- Run `nginx -t` and inspect Nginx logs.
+
+### Cloudflare 525/526
+
+Use **Full (strict)** and ensure the origin certificate matches the orange-cloud hostname. The panel intentionally requires endpoint and origin hostname to match in automated Cloudflare mode.
+
+### Xray config/restart failure
+
+```bash
+xray run -test -config /etc/abdulbasit/xray/config.json
+journalctl -u abdulbasit-xray -u abdulbasit-paneld --no-pager -n 200
+```
+
+Panel changes roll back if Xray rejects a candidate config or restart fails. A pending marker causes the usage timer to retry synchronization.
+
+### Usage does not increase
+
+```bash
+systemctl is-active abdulbasit-usage.timer
+systemctl start abdulbasit-usage.service
+journalctl -u abdulbasit-usage --no-pager -n 100
+xray api statsquery --server=127.0.0.1:21085 -pattern 'user>>>'
+```
+
+Only Xray protocols count. SSH/DNSTT bytes will not appear.
+
+### Dashboard shows 502
+
+```bash
+systemctl status abdulbasit-dashboard --no-pager
+journalctl -u abdulbasit-dashboard -u abdulbasit-paneld --no-pager -n 100
+abdulbasit-panelctl configure-dashboard
+```
+
+### DNSTT will not start
+
+```bash
+ss -lunp 'sport = :53'
+abdulbasit-panelctl list-dnstt
+journalctl -u abdulbasit-dnstt --no-pager -n 150
+```
+
+Check UDP/53 in both the VPS firewall and provider security group. Verify the `A`/`AAAA` nameserver record and `NS` delegation, and ensure the nameserver record is DNS-only in Cloudflare.
+
+### Full health check
+
+```bash
+abdulbasit-security-check
+abdulbasit-panelctl status
+journalctl --no-pager -n 200 \
+  -u abdulbasit-paneld \
+  -u abdulbasit-xray \
+  -u abdulbasit-usage \
+  -u abdulbasit-dashboard \
+  -u abdulbasit-dnstt \
+  -u nginx
+```
+
+## Main files
 
 | Path | Purpose |
 |---|---|
-| `/etc/abdulbasit/domain.conf` | Active domain |
-| `/etc/abdulbasit/certbot_email.conf` | Certbot email |
-| `/etc/abdulbasit/super_admin.conf` | Telegram Super Admin ID |
-| `/etc/abdulbasit/admin_ids.conf` | Additional Telegram admins |
-| `/etc/abdulbasit/bot_token.conf` | Telegram bot token; secret |
-| `/etc/abdulbasit/users/*.json` | Managed user metadata |
-| `/etc/abdulbasit/backups/` | Installer-created legacy/config backups |
-| `/etc/nginx/conf.d/abdulbasit-vpn.conf` | Managed Nginx config |
-| `/usr/local/lib/abdulbasit/` | Installed Python source |
-| `/run/abdulbasit/paneld.sock` | Local privileged daemon socket |
+| `/etc/abdulbasit/users/*.json` | Root-only user metadata and Xray credentials |
+| `/etc/abdulbasit/xray/config.json` | Generated Xray server config |
+| `/etc/abdulbasit/cdn.json` | Root-only CDN state/origin secret |
+| `/etc/abdulbasit/dashboard_auth.json` | Dashboard password hash/session secret |
+| `/etc/abdulbasit/dnstt.json` | DNSTT state |
+| `/etc/abdulbasit/dnstt/` | DNSTT server keypair |
+| `/etc/abdulbasit/exports/` | Generated client files |
+| `/etc/nginx/conf.d/abdulbasit-vpn.conf` | Root-only generated Nginx config |
+| `/usr/local/lib/abdulbasit/` | Installed Python application |
+| `/usr/local/share/abdulbasit-dashboard/` | Dashboard static assets |
 
-Do not manually make secret files world-readable.
+## Project ownership
 
----
-
-# 18. Backup
-
-## Panel metadata/config backup
-
-```bash
-tar -C / -czf /root/abdulbasit-panel-backup-$(date +%F).tar.gz \
-  etc/abdulbasit \
-  etc/nginx/conf.d/abdulbasit-vpn.conf
-```
-
-Certificates include karne ke liye optional:
-
-```bash
-tar -C / -czf /root/abdulbasit-panel-full-config-$(date +%F).tar.gz \
-  etc/abdulbasit \
-  etc/nginx/conf.d/abdulbasit-vpn.conf \
-  etc/letsencrypt
-```
-
-Backup permissions secure karein:
-
-```bash
-chmod 600 /root/abdulbasit-panel-*.tar.gz
-```
-
-> Managed Linux accounts ka complete restore sirf metadata tar se nahi hota. Reliable disaster recovery ke liye VPS provider snapshot/image recommended hai. `/etc/shadow` ko manually copy/share na karein.
-
----
-
-# 19. Update panel from GitHub
-
-Repository folder:
-
-```bash
-cd /root/secure-vps-panel
-```
-
-Current changes check:
-
-```bash
-git status
-```
-
-Update:
-
-```bash
-git pull --ff-only origin main
-```
-
-Tests:
-
-```bash
-bash -n install.sh
-python3 -m py_compile src/*.py
-python3 -m unittest discover -s tests -v
-```
-
-Re-run installer to deploy updated files:
-
-```bash
-sudo bash install.sh --non-interactive
-```
-
-Agar current domain/email preserve karna ho, files `/etc/abdulbasit/` mein rehti hain. Update se pehle VPS snapshot aur `/etc/abdulbasit` backup recommended hai.
-
----
-
-# 20. Migration from old RareTriccks panel
-
-Secure installer old services/scripts detect karke quarantine karne ki koshish karta hai. Old Telegram state files plaintext passwords contain kar sakti thi, isliye trusted import nahi hota.
-
-Important:
-
-- Old bot token rotate karein.
-- Old `/etc/raretriccks` ko automatically trust/import na karein.
-- Old users ko verify karke manually migrate karein.
-- Production server snapshot pehle banayein.
-- Detailed notes ke liye `MIGRATION.md` read karein.
-
----
-
-# 21. Uninstall
-
-Pehle optional backup lein.
-
-Services stop/disable:
-
-```bash
-systemctl disable --now \
-  abdulbasit-bot \
-  abdulbasit-session-enforcer \
-  abdulbasit-ws \
-  abdulbasit-paneld
-```
-
-Unit files remove:
-
-```bash
-rm -f /etc/systemd/system/abdulbasit-*.service
-systemctl daemon-reload
-```
-
-Installed program remove:
-
-```bash
-rm -rf /usr/local/lib/abdulbasit
-rm -f /usr/local/sbin/abdulbasit-panelctl
-rm -f /usr/local/sbin/abdulbasit-menu
-rm -f /usr/local/sbin/abdulbasit-security-check
-rm -f /usr/local/bin/menu /usr/bin/menu
-```
-
-Nginx managed configuration remove:
-
-```bash
-rm -f /etc/nginx/conf.d/abdulbasit-vpn.conf
-nginx -t && systemctl reload nginx
-```
-
-Optional Certbot deploy hook remove:
-
-```bash
-rm -f /etc/letsencrypt/renewal-hooks/deploy/abdulbasit-nginx-reload
-```
-
-`/etc/abdulbasit`, certificates, Dropbear configuration aur panel-created Linux users ko blindly delete na karein. Pehle contents review aur backup karein.
-
----
-
-# 22. Security notes
-
-- Bot token kabhi GitHub par commit na karein.
-- Passwords screenshots ya Telegram groups mein share na karein.
-- Root SSH ke liye SSH keys preferred hain.
-- VPS OS security updates regularly apply karein.
-- Provider firewall mein sirf required ports expose karein.
-- Port `2082` public expose na karein.
-- Unknown scripts ko root par execute na karein.
-- `nginx -t` ke baghair manual Nginx reload na karein.
-- Bot token leak ho to immediately revoke/rotate karein.
-- GitHub Personal Access Token ko repository files mein save na karein.
-- Panel ka use sirf authorized systems par karein.
-
-Full security model aur known limitations ke liye:
-
-```text
-SECURITY.md
-AUDIT.md
-```
-
----
-
-# Quick command reference
-
-```bash
-# Open panel
-menu
-
-# Service summary
-abdulbasit-panelctl status
-
-# Users
-abdulbasit-panelctl list-users
-abdulbasit-panelctl list-sessions
-
-# Create user
-abdulbasit-panelctl create-user USERNAME --days 30 --sessions 2 --quota Unlimited
-
-# Renew user
-abdulbasit-panelctl renew-user USERNAME --days 30
-
-# Set domain and issue SSL
-abdulbasit-panelctl set-domain vpn.example.com
-abdulbasit-panelctl issue-cert
-
-# Configure Telegram bot
-abdulbasit-panelctl configure-bot
-
-# Security verification
-abdulbasit-security-check
-nginx -t
-
-# Logs
-journalctl -u abdulbasit-paneld -u abdulbasit-ws -u abdulbasit-session-enforcer -u abdulbasit-bot -n 200 --no-pager
-```
-
----
-
-## License and responsibility
-
-The server owner is responsible for:
-
-- local laws and provider terms,
-- user authorization,
-- server billing,
-- domain/DNS ownership,
-- account security,
-- traffic and abuse handling,
-- backups and incident response.
-
-**Maintainer:** Abdul Basit  
-**GitHub:** `drabkb786`  
-**Telegram Super Admin ID:** `6408975845`
+Maintainer: Abdul Basit — GitHub: <https://github.com/drabkb786/secure-vps-panel>

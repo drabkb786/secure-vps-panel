@@ -1,0 +1,30 @@
+[Unit]
+Description=Abdul Basit Xray usage and expiry collector
+After=abdulbasit-xray.service abdulbasit-paneld.service
+Wants=abdulbasit-paneld.service
+ConditionPathExists=/etc/abdulbasit/xray/config.json
+
+[Service]
+Type=oneshot
+User=root
+Group=abdulbasit
+ExecStart=/usr/bin/python3 /usr/local/lib/abdulbasit/usage_collector.py
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=full
+ReadWritePaths=/etc/abdulbasit /run/abdulbasit
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native

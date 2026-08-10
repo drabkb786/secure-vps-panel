@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Abdul Basit Secure VPS Panel</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="noise"></div>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">SECURE NETWORK CONTROL</p>
+        <h1>Abdul Basit <span>VPS Panel</span></h1>
+      </div>
+      <div class="top-actions">
+        <span id="health-pill" class="pill neutral">Connecting</span>
+        <button id="logout" class="button ghost hidden" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <section id="login-view" class="login-grid">
+      <div class="hero-card">
+        <p class="eyebrow">VERSION 3</p>
+        <h2>One control plane.<br>Every authorized tunnel.</h2>
+        <p>Manage SSH, VMess, VLESS, Trojan, CloudFront, Cloudflare and client exports without exposing the privileged daemon.</p>
+        <div class="protocol-strip"><span>SSH</span><span>VMess</span><span>VLESS</span><span>Trojan</span><span>DNSTT</span></div>
+      </div>
+      <form id="login-form" class="card login-card">
+        <p class="eyebrow">ADMIN ACCESS</p>
+        <h2>Sign in</h2>
+        <label>Username<input name="username" autocomplete="username" required></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" minlength="12" required></label>
+        <button class="button primary" type="submit">Open dashboard</button>
+        <p id="login-error" class="error"></p>
+      </form>
+    </section>
+
+    <section id="app-view" class="hidden">
+      <div class="stats" id="stats"></div>
+
+      <div class="grid two">
+        <form id="create-user-form" class="card">
+          <div class="card-title"><div><p class="eyebrow">USER LIFECYCLE</p><h2>Create account</h2></div><span class="badge">Atomic</span></div>
+          <div class="form-grid">
+            <label>Username<input name="username" pattern="[a-z_][a-z0-9_-]{0,30}" required></label>
+            <label>Password<input name="password" type="password" minlength="12" required></label>
+            <label>Validity days<input name="days" type="number" min="1" max="3650" value="30" required></label>
+            <label>Sessions<input name="max_sessions" type="number" min="1" max="20" value="2" required></label>
+            <label>Data limit GB<input name="quota_gb" type="text" value="10" required></label>
+          </div>
+          <fieldset><legend>Protocols</legend><div class="checks">
+            <label><input type="checkbox" name="protocols" value="ssh" checked> SSH</label>
+            <label><input type="checkbox" name="protocols" value="vmess" checked> VMess</label>
+            <label><input type="checkbox" name="protocols" value="vless" checked> VLESS</label>
+            <label><input type="checkbox" name="protocols" value="trojan" checked> Trojan</label>
+          </div></fieldset>
+          <button class="button primary" type="submit">Create secure account</button>
+          <p class="hint">Data limits are enforced for Xray traffic. SSH/DNSTT bytes are not counted.</p>
+        </form>
+
+        <form id="cdn-form" class="card accent-card">
+          <div class="card-title"><div><p class="eyebrow">PRIORITY INTEGRATION</p><h2>CloudFront / Cloudflare</h2></div><span class="badge amber">CDN</span></div>
+          <label>Provider<select name="provider"><option value="cloudfront">Amazon CloudFront</option><option value="cloudflare">Cloudflare</option></select></label>
+          <label>CDN endpoint<input name="endpoint" placeholder="d123example.cloudfront.net" required></label>
+          <label>VPS origin domain<input name="origin" placeholder="vpn.example.com" required></label>
+          <label>Origin verification secret<input id="origin-secret" name="origin_secret" type="password" autocomplete="new-password" placeholder="Use the same value in CloudFormation"></label>
+          <button id="generate-origin-secret" class="button ghost" type="button">Generate origin secret</button>
+          <button class="button amber" type="submit">Configure CDN profile</button>
+          <button id="disable-cdn" class="button ghost" type="button">Disable active CDN profile</button>
+          <p class="hint">For CloudFront deploy <code>infra/cloudfront-websocket.yml</code>, then enter its distribution domain here.</p>
+          <pre id="cdn-result" class="result"></pre>
+        </form>
+      </div>
+
+      <div class="grid two">
+        <form id="dnstt-form" class="card">
+          <div class="card-title"><div><p class="eyebrow">DNS TUNNEL</p><h2>DNSTT + SSH</h2></div><span class="badge">UDP/53</span></div>
+          <label>Tunnel zone<input name="zone" placeholder="t.example.com" required></label>
+          <label>Nameserver hostname<input name="nameserver" placeholder="tns.example.com" required></label>
+          <label>VPS bind IP<input name="listen_ip" placeholder="203.0.113.10" required></label>
+          <label>Local Dropbear target<input name="target_port" type="number" min="1" max="65535" value="109" required></label>
+          <label class="inline-check"><input name="rotate_keys" type="checkbox"> Rotate server keys</label>
+          <div class="actions"><button class="button primary" type="submit">Configure DNSTT</button><button id="disable-dnstt" class="button ghost" type="button">Disable</button></div>
+          <pre id="dnstt-result" class="result"></pre>
+        </form>
+        <article class="card">
+          <p class="eyebrow">LIMIT MODEL</p>
+          <h2>Real, scoped enforcement</h2>
+          <p class="hint">Expiry applies to SSH and every Xray profile. Byte limits use Xray's per-user counters and cover VMess, VLESS and Trojan. SSH/DNSTT byte traffic is deliberately not mixed into an inaccurate counter.</p>
+          <p class="hint">Generated files are open JSON/text: Xray SOCKS client, share link, NetMod profile, DarkTunnel profile and authorized WebSocket payload.</p>
+        </article>
+      </div>
+
+      <section class="card wide">
+        <div class="card-title"><div><p class="eyebrow">ACCOUNTS</p><h2>Users and limits</h2></div><button id="refresh" class="button ghost" type="button">Refresh</button></div>
+        <div class="table-wrap"><table><thead><tr><th>User</th><th>Protocols</th><th>Expiry</th><th>Usage</th><th>State</th><th>Actions</th></tr></thead><tbody id="users-body"></tbody></table></div>
+      </section>
+
+      <section class="card wide">
+        <div class="card-title"><div><p class="eyebrow">GENERATED FILES</p><h2>Xray, links, open app profiles and payloads</h2></div><span class="badge">Root-owned</span></div>
+        <div class="file-controls">
+          <label>User<select id="export-user"></select></label>
+          <label>Protocol<select id="export-protocol"><option>vless</option><option>vmess</option><option>trojan</option></select></label>
+          <label>Route<select id="export-provider"><option>direct</option><option>cloudfront</option><option>cloudflare</option></select></label>
+          <button id="generate-files" class="button primary" type="button">Generate files</button>
+          <button id="list-files" class="button ghost" type="button">Reload files</button>
+        </div>
+        <div id="files" class="files"></div>
+      </section>
+
+      <div id="toast" class="toast hidden"></div>
+    </section>
+  </main>
+  <script src="app.js" defer></script>
+</body>
+</html>

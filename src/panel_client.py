@@ -37,3 +37,4 @@ def request(command: str, **params: Any) -> dict[str, Any]:
     if not response.get("ok"):
         raise RuntimeError(str(response.get("error", "Unknown panel daemon error")))
     return response
+

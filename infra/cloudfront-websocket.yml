@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Abdul Basit Secure VPS Panel - CloudFront WebSocket distribution
+
+Parameters:
+  OriginDomain:
+    Type: String
+    Description: TLS-enabled VPS origin hostname, for example vpn.example.com
+  OriginVerifySecret:
+    Type: String
+    NoEcho: true
+    MinLength: 24
+    MaxLength: 128
+    AllowedPattern: '[A-Za-z0-9_-]+'
+    Description: Must match the secret shown by abdulbasit-panelctl configure-cdn
+  PriceClass:
+    Type: String
+    Default: PriceClass_100
+    AllowedValues: [PriceClass_100, PriceClass_200, PriceClass_All]
+
+Resources:
+  WebSocketDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: Abdul Basit VPS Panel WebSocket CDN
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: !Ref PriceClass
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: VPSOrigin
+            DomainName: !Ref OriginDomain
+            OriginCustomHeaders:
+              - HeaderName: X-AbdulBasit-Origin-Verify
+                HeaderValue: !Ref OriginVerifySecret
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 60
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: VPSOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          Compress: false
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+
+Outputs:
+  DistributionId:
+    Value: !Ref WebSocketDistribution
+  CloudFrontDomain:
+    Value: !GetAtt WebSocketDistribution.DomainName

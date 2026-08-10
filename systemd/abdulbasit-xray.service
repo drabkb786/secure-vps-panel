@@ -1,0 +1,38 @@
+[Unit]
+Description=Abdul Basit managed Xray service
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/abdulbasit/xray/config.json
+
+[Service]
+Type=simple
+User=abdulbasit-xray
+Group=abdulbasit-xray
+SupplementaryGroups=abdulbasit
+ExecStart=/usr/local/bin/xray run -config /etc/abdulbasit/xray/config.json
+Restart=on-failure
+RestartSec=3s
+LimitNOFILE=1048576
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadOnlyPaths=/etc/abdulbasit/xray
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

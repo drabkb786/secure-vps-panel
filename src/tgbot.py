@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Unprivileged Telegram administration bot for Abdul Basit VPS Panel."""
+
 from __future__ import annotations
 
+import base64
 import html
 import json
 import logging
 import os
+import re
+import secrets
 import time
 import urllib.error
 import urllib.request
@@ -13,7 +17,13 @@ from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
 
-from common import ADMIN_IDS_FILE, BOT_TOKEN_FILE, DOMAIN_FILE, SUPER_ADMIN_FILE, read_text
+from common import (
+    ADMIN_IDS_FILE,
+    BOT_TOKEN_FILE,
+    DOMAIN_FILE,
+    SUPER_ADMIN_FILE,
+    read_text,
+)
 from panel_client import request as panel_request
 
 LOG = logging.getLogger("abdulbasit-bot")
@@ -26,23 +36,67 @@ class TelegramAPI:
         self.token = token
         self.base = f"https://api.telegram.org/bot{token}/"
 
-    def call(self, method: str, payload: dict[str, Any], timeout: int = 35) -> dict[str, Any]:
+    def call(
+        self, method: str, payload: dict[str, Any], timeout: int = 35
+    ) -> dict[str, Any]:
         data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         req = urllib.request.Request(
             self.base + method,
             data=data,
-            headers={"Content-Type": "application/json", "User-Agent": "Abdul Basit-SecureBot/2.1.0"},
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Abdul Basit-SecureBot/3.0.0",
+            },
             method="POST",
         )
         try:
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
             if not result.get("ok"):
-                LOG.warning("Telegram API %s failed: %s", method, result.get("description"))
+                LOG.warning(
+                    "Telegram API %s failed: %s", method, result.get("description")
+                )
             return result
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             LOG.warning("Telegram API %s error type=%s", method, type(exc).__name__)
             return {"ok": False, "description": "Telegram API request failed"}
+
+    def send_document(
+        self, chat_id: str, filename: str, content: bytes
+    ) -> dict[str, Any]:
+        if (
+            not re.fullmatch(r"[a-z0-9][A-Za-z0-9_.-]{0,199}", filename)
+            or len(content) > 256 * 1024
+        ):
+            return {"ok": False, "description": "Unsafe export file"}
+        boundary = "----AbdulBasit" + secrets.token_hex(16)
+        body = b"".join(
+            [
+                f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id}\r\n'.encode(
+                    "ascii"
+                ),
+                (
+                    f'--{boundary}\r\nContent-Disposition: form-data; name="document"; '
+                    f'filename="{filename}"\r\nContent-Type: application/octet-stream\r\n\r\n'
+                ).encode("ascii"),
+                content,
+                f"\r\n--{boundary}--\r\n".encode("ascii"),
+            ]
+        )
+        req = urllib.request.Request(
+            self.base + "sendDocument",
+            data=body,
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "User-Agent": "Abdul Basit-SecureBot/3.0.0",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=45) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+            return {"ok": False, "description": "Telegram file upload failed"}
 
 
 class Bot:
@@ -73,7 +127,11 @@ class Bot:
         super_admin = read_text(SUPER_ADMIN_FILE)
         admins: set[str] = set()
         try:
-            admins = {line.strip() for line in ADMIN_IDS_FILE.read_text(encoding="utf-8").splitlines() if line.strip()}
+            admins = {
+                line.strip()
+                for line in ADMIN_IDS_FILE.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            }
         except OSError:
             pass
         if super_admin:
@@ -95,7 +153,6 @@ class Bot:
             return False
         q.append(now)
         return True
-
 
     def prune_ephemeral_data(self) -> None:
         now = time.monotonic()
@@ -127,8 +184,14 @@ class Bot:
     @staticmethod
     def main_keyboard(super_admin: bool) -> dict[str, Any]:
         rows = [
-            [{"text": "👤 Users", "callback_data": "menu_users"}, {"text": "📋 User List", "callback_data": "list_users"}],
-            [{"text": "🟢 Sessions", "callback_data": "list_sessions"}, {"text": "📊 Service Status", "callback_data": "status"}],
+            [
+                {"text": "👤 Users", "callback_data": "menu_users"},
+                {"text": "📋 User List", "callback_data": "list_users"},
+            ],
+            [
+                {"text": "🟢 Sessions", "callback_data": "list_sessions"},
+                {"text": "📊 Service Status", "callback_data": "status"},
+            ],
         ]
         if super_admin:
             rows.append([{"text": "🔐 Super Admin", "callback_data": "menu_super"}])
@@ -136,40 +199,91 @@ class Bot:
 
     @staticmethod
     def users_keyboard() -> dict[str, Any]:
-        return {"inline_keyboard": [
-            [{"text": "➕ Create", "callback_data": "create_start"}, {"text": "🗑 Delete", "callback_data": "delete_start"}],
-            [{"text": "📅 Renew", "callback_data": "renew_start"}, {"text": "🔢 Session Limit", "callback_data": "sessions_start"}],
-            [{"text": "📦 Quota Metadata", "callback_data": "quota_start"}],
-            [{"text": "⬅️ Main", "callback_data": "menu_main"}],
-        ]}
+        return {
+            "inline_keyboard": [
+                [
+                    {"text": "➕ Create", "callback_data": "create_start"},
+                    {"text": "🗑 Delete", "callback_data": "delete_start"},
+                ],
+                [
+                    {"text": "📅 Renew", "callback_data": "renew_start"},
+                    {"text": "🔢 Session Limit", "callback_data": "sessions_start"},
+                ],
+                [
+                    {"text": "📦 Data Limit", "callback_data": "quota_start"},
+                    {"text": "♻️ Reset Data", "callback_data": "usage_reset_start"},
+                ],
+                [
+                    {"text": "🔌 Protocols", "callback_data": "protocol_start"},
+                    {"text": "📁 Generate Files", "callback_data": "export_start"},
+                ],
+                [{"text": "🌐 DNSTT File", "callback_data": "dnstt_export_start"}],
+                [{"text": "⬅️ Main", "callback_data": "menu_main"}],
+            ]
+        }
 
     @staticmethod
     def super_keyboard() -> dict[str, Any]:
-        return {"inline_keyboard": [
-            [{"text": "🌐 Set Domain", "callback_data": "domain_start"}, {"text": "🔒 Issue SSL", "callback_data": "ssl_issue"}],
-            [{"text": "👮 Add Admin", "callback_data": "admin_add_start"}, {"text": "➖ Remove Admin", "callback_data": "admin_remove_start"}],
-            [{"text": "📋 Admin List", "callback_data": "admin_list"}],
-            [{"text": "🔄 Restart Nginx", "callback_data": "restart:nginx"}, {"text": "🔄 Restart WS", "callback_data": "restart:abdulbasit-ws"}],
-            [{"text": "⬅️ Main", "callback_data": "menu_main"}],
-        ]}
+        return {
+            "inline_keyboard": [
+                [
+                    {"text": "🌐 Set Domain", "callback_data": "domain_start"},
+                    {"text": "🔒 Issue SSL", "callback_data": "ssl_issue"},
+                ],
+                [
+                    {"text": "👮 Add Admin", "callback_data": "admin_add_start"},
+                    {"text": "➖ Remove Admin", "callback_data": "admin_remove_start"},
+                ],
+                [{"text": "📋 Admin List", "callback_data": "admin_list"}],
+                [{"text": "☁️ CDN Status", "callback_data": "cdn_status"}],
+                [
+                    {"text": "🔄 Restart Nginx", "callback_data": "restart:nginx"},
+                    {"text": "🔄 Restart WS", "callback_data": "restart:abdulbasit-ws"},
+                ],
+                [{"text": "⬅️ Main", "callback_data": "menu_main"}],
+            ]
+        }
 
-    def send(self, chat_id: str, text: str, keyboard: dict[str, Any] | None = None) -> None:
-        payload: dict[str, Any] = {"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML", "disable_web_page_preview": True}
+    def send(
+        self, chat_id: str, text: str, keyboard: dict[str, Any] | None = None
+    ) -> None:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text[:4096],
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
         if keyboard:
             payload["reply_markup"] = keyboard
         self.api.call("sendMessage", payload)
 
-    def edit(self, chat_id: str, message_id: int, text: str, keyboard: dict[str, Any] | None = None) -> None:
-        payload: dict[str, Any] = {"chat_id": chat_id, "message_id": message_id, "text": text[:4096], "parse_mode": "HTML", "disable_web_page_preview": True}
+    def edit(
+        self,
+        chat_id: str,
+        message_id: int,
+        text: str,
+        keyboard: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text[:4096],
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
         if keyboard:
             payload["reply_markup"] = keyboard
         result = self.api.call("editMessageText", payload)
         if not result.get("ok"):
             self.send(chat_id, text, keyboard)
 
-    def main_menu(self, chat_id: str, message_id: int | None = None, notice: str = "") -> None:
+    def main_menu(
+        self, chat_id: str, message_id: int | None = None, notice: str = ""
+    ) -> None:
         self.set_state(chat_id)
-        text = "<b>🛡 Abdul Basit Secure VPS Panel</b>\n" + (f"\n{notice}" if notice else "")
+        text = "<b>🛡 Abdul Basit Secure VPS Panel</b>\n" + (
+            f"\n{notice}" if notice else ""
+        )
         keyboard = self.main_keyboard(self.is_super(chat_id))
         if message_id is None:
             self.send(chat_id, text, keyboard)
@@ -179,18 +293,39 @@ class Bot:
     def panel(self, command: str, **params: Any) -> dict[str, Any]:
         return panel_request(command, **params)
 
-    def callback(self, chat_id: str, message_id: int, callback_id: str, data: str) -> None:
+    def deliver_exports(self, chat_id: str, username: str, filenames: list[str]) -> int:
+        delivered = 0
+        for filename in filenames:
+            result = self.panel("get_export", username=username, filename=filename)
+            content = base64.b64decode(result["content_base64"], validate=True)
+            if self.api.send_document(chat_id, result["filename"], content).get("ok"):
+                delivered += 1
+        return delivered
+
+    def callback(
+        self, chat_id: str, message_id: int, callback_id: str, data: str
+    ) -> None:
         self.api.call("answerCallbackQuery", {"callback_query_id": callback_id})
         if data == "menu_main":
             self.main_menu(chat_id, message_id)
         elif data == "menu_users":
             self.set_state(chat_id)
-            self.edit(chat_id, message_id, "<b>👤 User Management</b>\nSession limit means concurrent Dropbear sessions, not unique IP addresses.", self.users_keyboard())
+            self.edit(
+                chat_id,
+                message_id,
+                "<b>👤 User Management</b>\nSession limit means concurrent Dropbear sessions, not unique IP addresses.",
+                self.users_keyboard(),
+            )
         elif data == "menu_super":
             if not self.is_super(chat_id):
                 return
             self.set_state(chat_id)
-            self.edit(chat_id, message_id, "<b>🔐 Super Admin Controls</b>", self.super_keyboard())
+            self.edit(
+                chat_id,
+                message_id,
+                "<b>🔐 Super Admin Controls</b>",
+                self.super_keyboard(),
+            )
         elif data == "create_start":
             self.set_state(chat_id, "create_username")
             self.edit(chat_id, message_id, "Enter a new lowercase username:")
@@ -201,7 +336,11 @@ class Bot:
             username = data.split(":", 1)[1]
             try:
                 self.panel("delete_user", username=username)
-                self.main_menu(chat_id, message_id, f"✅ User <code>{html.escape(username)}</code> deleted.")
+                self.main_menu(
+                    chat_id,
+                    message_id,
+                    f"✅ User <code>{html.escape(username)}</code> deleted.",
+                )
             except RuntimeError as exc:
                 self.main_menu(chat_id, message_id, f"❌ {html.escape(str(exc))}")
         elif data == "delete_cancel":
@@ -211,10 +350,40 @@ class Bot:
             self.edit(chat_id, message_id, "Enter the username to renew:")
         elif data == "sessions_start":
             self.set_state(chat_id, "sessions_username")
-            self.edit(chat_id, message_id, "Enter the username whose concurrent session limit should change:")
+            self.edit(
+                chat_id,
+                message_id,
+                "Enter the username whose concurrent session limit should change:",
+            )
         elif data == "quota_start":
             self.set_state(chat_id, "quota_username")
-            self.edit(chat_id, message_id, "Enter the username whose quota metadata should change:\n\n<i>Note: quota enforcement is intentionally disabled until a reliable accounting backend is configured.</i>")
+            self.edit(
+                chat_id,
+                message_id,
+                "Enter the username whose Xray data limit should change:",
+            )
+        elif data == "usage_reset_start":
+            self.set_state(chat_id, "usage_reset_username")
+            self.edit(
+                chat_id, message_id, "Enter the username whose Xray usage should reset:"
+            )
+        elif data == "protocol_start":
+            self.set_state(chat_id, "protocol_username")
+            self.edit(
+                chat_id, message_id, "Enter the username whose protocols should change:"
+            )
+        elif data == "export_start":
+            self.set_state(chat_id, "export_username")
+            self.edit(
+                chat_id,
+                message_id,
+                "Enter the username that should receive client files:",
+            )
+        elif data == "dnstt_export_start":
+            self.set_state(chat_id, "dnstt_export_username")
+            self.edit(
+                chat_id, message_id, "Enter the username for the DNSTT + SSH file:"
+            )
         elif data == "list_users":
             self.show_users(chat_id, message_id)
         elif data == "list_sessions":
@@ -223,30 +392,80 @@ class Bot:
             self.show_status(chat_id, message_id)
         elif data == "domain_start" and self.is_super(chat_id):
             self.set_state(chat_id, "domain")
-            self.edit(chat_id, message_id, "Enter a domain such as <code>vpn.example.com</code>:")
+            self.edit(
+                chat_id,
+                message_id,
+                "Enter a domain such as <code>vpn.example.com</code>:",
+            )
         elif data == "ssl_issue" and self.is_super(chat_id):
             domain = read_text(DOMAIN_FILE)
-            self.edit(chat_id, message_id, f"Issuing/renewing SSL for <code>{html.escape(domain or 'not set')}</code>…")
+            self.edit(
+                chat_id,
+                message_id,
+                f"Issuing/renewing SSL for <code>{html.escape(domain or 'not set')}</code>…",
+            )
             try:
-                result = self.panel("issue_cert", domain=domain)
-                self.edit(chat_id, message_id, f"✅ SSL active for <code>{html.escape(result['domain'])}</code>.", self.super_keyboard())
+                result = self.panel("issue_cert")
+                self.edit(
+                    chat_id,
+                    message_id,
+                    f"✅ SSL active for <code>{html.escape(result['domain'])}</code>.",
+                    self.super_keyboard(),
+                )
             except RuntimeError as exc:
-                self.edit(chat_id, message_id, f"❌ SSL failed: {html.escape(str(exc))}", self.super_keyboard())
+                self.edit(
+                    chat_id,
+                    message_id,
+                    f"❌ SSL failed: {html.escape(str(exc))}",
+                    self.super_keyboard(),
+                )
         elif data == "admin_add_start" and self.is_super(chat_id):
             self.set_state(chat_id, "admin_add")
-            self.edit(chat_id, message_id, "Enter the numeric Telegram user ID to authorize:")
+            self.edit(
+                chat_id, message_id, "Enter the numeric Telegram user ID to authorize:"
+            )
         elif data == "admin_remove_start" and self.is_super(chat_id):
             self.set_state(chat_id, "admin_remove")
-            self.edit(chat_id, message_id, "Enter the numeric Telegram admin ID to remove:")
+            self.edit(
+                chat_id, message_id, "Enter the numeric Telegram admin ID to remove:"
+            )
         elif data == "admin_list" and self.is_super(chat_id):
             self.show_admins(chat_id, message_id)
+        elif data == "cdn_status" and self.is_super(chat_id):
+            try:
+                cdn = self.panel("list_cdn").get("cdn", {})
+                self.edit(
+                    chat_id,
+                    message_id,
+                    "<b>☁️ CDN Status</b>\n"
+                    f"Active: <code>{html.escape(str(cdn.get('active', 'direct')))}</code>\n\n"
+                    "Configure CloudFront/Cloudflare through the TLS web dashboard or root CLI so origin secrets are not sent through Telegram.",
+                    self.super_keyboard(),
+                )
+            except RuntimeError as exc:
+                self.edit(
+                    chat_id,
+                    message_id,
+                    f"❌ {html.escape(str(exc))}",
+                    self.super_keyboard(),
+                )
         elif data.startswith("restart:") and self.is_super(chat_id):
             service = data.split(":", 1)[1]
             try:
                 self.panel("restart_service", service=service)
-                self.edit(chat_id, message_id, f"✅ <code>{html.escape(service)}</code> restarted.", self.super_keyboard())
+                self.edit(
+                    chat_id,
+                    message_id,
+                    f"✅ <code>{html.escape(service)}</code> restarted.",
+                    self.super_keyboard(),
+                )
             except RuntimeError as exc:
-                self.edit(chat_id, message_id, f"❌ {html.escape(str(exc))}", self.super_keyboard())
+                self.edit(
+                    chat_id,
+                    message_id,
+                    f"❌ {html.escape(str(exc))}",
+                    self.super_keyboard(),
+                )
 
     def show_users(self, chat_id: str, message_id: int) -> None:
         try:
@@ -257,46 +476,103 @@ class Bot:
                 lines = ["<b>📋 Managed Users</b>"]
                 for user in users[:60]:
                     quota = user.get("quota_gb")
-                    quota_text = "Unlimited" if quota is None else f"{quota} GB (metadata)"
+                    quota_text = "Unlimited" if quota is None else f"{quota} GB"
+                    protocols = (
+                        ", ".join(
+                            name
+                            for name, item in user.get("protocols", {}).items()
+                            if item.get("enabled")
+                        )
+                        or "none"
+                    )
+                    usage = user.get("usage", {})
+                    used_gb = float(usage.get("used_bytes", 0) or 0) / 1_000_000_000
                     lines.append(
                         f"\n👤 <code>{html.escape(str(user.get('username')))}</code>"
                         f"\nExpiry: {html.escape(str(user.get('expiry')))} | Sessions: {html.escape(str(user.get('max_sessions')))}"
-                        f"\nQuota: {html.escape(quota_text)} | System account: {'yes' if user.get('exists') else 'missing'}"
+                        f"\nProtocols: {html.escape(protocols)}"
+                        f"\nXray data: {used_gb:.3f} / {html.escape(quota_text)} | System account: {'yes' if user.get('exists') else 'missing'}"
                     )
                 text = "\n".join(lines)
-            self.edit(chat_id, message_id, text, self.main_keyboard(self.is_super(chat_id)))
+            self.edit(
+                chat_id, message_id, text, self.main_keyboard(self.is_super(chat_id))
+            )
         except RuntimeError as exc:
-            self.edit(chat_id, message_id, f"❌ {html.escape(str(exc))}", self.main_keyboard(self.is_super(chat_id)))
+            self.edit(
+                chat_id,
+                message_id,
+                f"❌ {html.escape(str(exc))}",
+                self.main_keyboard(self.is_super(chat_id)),
+            )
 
     def show_sessions(self, chat_id: str, message_id: int) -> None:
         try:
             sessions = self.panel("list_sessions").get("sessions", [])
-            text = "No active managed Dropbear sessions." if not sessions else "<b>🟢 Active Sessions</b>\n\n" + "\n".join(
-                f"<code>{html.escape(item['username'])}</code>: {item['count']}" for item in sessions
+            text = (
+                "No active managed Dropbear sessions."
+                if not sessions
+                else "<b>🟢 Active Sessions</b>\n\n"
+                + "\n".join(
+                    f"<code>{html.escape(item['username'])}</code>: {item['count']}"
+                    for item in sessions
+                )
             )
-            self.edit(chat_id, message_id, text, self.main_keyboard(self.is_super(chat_id)))
+            self.edit(
+                chat_id, message_id, text, self.main_keyboard(self.is_super(chat_id))
+            )
         except RuntimeError as exc:
-            self.edit(chat_id, message_id, f"❌ {html.escape(str(exc))}", self.main_keyboard(self.is_super(chat_id)))
+            self.edit(
+                chat_id,
+                message_id,
+                f"❌ {html.escape(str(exc))}",
+                self.main_keyboard(self.is_super(chat_id)),
+            )
 
     def show_status(self, chat_id: str, message_id: int) -> None:
         try:
             result = self.panel("service_status")
-            lines = [f"<b>📊 Service Status</b>\nDomain: <code>{html.escape(result.get('domain', 'Not set'))}</code>"]
+            lines = [
+                f"<b>📊 Service Status</b>\nDomain: <code>{html.escape(result.get('domain', 'Not set'))}</code>"
+            ]
             for name, status in result.get("services", {}).items():
                 icon = "🟢" if status == "active" else "🔴"
-                lines.append(f"{icon} {html.escape(name)}: <code>{html.escape(status)}</code>")
-            self.edit(chat_id, message_id, "\n".join(lines), self.main_keyboard(self.is_super(chat_id)))
+                lines.append(
+                    f"{icon} {html.escape(name)}: <code>{html.escape(status)}</code>"
+                )
+            self.edit(
+                chat_id,
+                message_id,
+                "\n".join(lines),
+                self.main_keyboard(self.is_super(chat_id)),
+            )
         except RuntimeError as exc:
-            self.edit(chat_id, message_id, f"❌ {html.escape(str(exc))}", self.main_keyboard(self.is_super(chat_id)))
+            self.edit(
+                chat_id,
+                message_id,
+                f"❌ {html.escape(str(exc))}",
+                self.main_keyboard(self.is_super(chat_id)),
+            )
 
     def show_admins(self, chat_id: str, message_id: int) -> None:
         try:
             result = self.panel("list_admins")
-            lines = [f"👑 Super Admin: <code>{html.escape(result.get('super_admin', ''))}</code>", "", "Authorized admins:"]
-            lines.extend(f"• <code>{html.escape(item)}</code>" for item in result.get("admins", []))
+            lines = [
+                f"👑 Super Admin: <code>{html.escape(result.get('super_admin', ''))}</code>",
+                "",
+                "Authorized admins:",
+            ]
+            lines.extend(
+                f"• <code>{html.escape(item)}</code>"
+                for item in result.get("admins", [])
+            )
             self.edit(chat_id, message_id, "\n".join(lines), self.super_keyboard())
         except RuntimeError as exc:
-            self.edit(chat_id, message_id, f"❌ {html.escape(str(exc))}", self.super_keyboard())
+            self.edit(
+                chat_id,
+                message_id,
+                f"❌ {html.escape(str(exc))}",
+                self.super_keyboard(),
+            )
 
     def text(self, chat_id: str, message_id: int, text: str) -> None:
         if text == "/start" or text == "/cancel":
@@ -310,23 +586,67 @@ class Bot:
         value = text.strip()
         try:
             if step == "create_username":
-                self.set_state(chat_id, "create_password", username=value)
-                self.send(chat_id, "Send a strong password (minimum 12 characters). The bot will delete that password message after reading it.")
+                self.set_state(chat_id, "create_protocols", username=value)
+                self.send(
+                    chat_id,
+                    "Enter protocols, comma-separated: <code>ssh,vmess,vless,trojan</code>",
+                )
+            elif step == "create_protocols":
+                self.set_state(
+                    chat_id,
+                    "create_password",
+                    username=state["username"],
+                    protocols=value,
+                )
+                self.send(
+                    chat_id,
+                    "Send a strong password (minimum 12 characters). The bot will delete that password message after reading it.",
+                )
             elif step == "create_password":
-                self.api.call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
-                self.set_state(chat_id, "create_days", username=state["username"], password=text)
+                self.api.call(
+                    "deleteMessage", {"chat_id": chat_id, "message_id": message_id}
+                )
+                self.set_state(
+                    chat_id,
+                    "create_days",
+                    username=state["username"],
+                    protocols=state["protocols"],
+                    password=text,
+                )
                 self.send(chat_id, "Enter validity in days (1-3650):")
             elif step == "create_days":
-                self.set_state(chat_id, "create_sessions", username=state["username"], password=state["password"], days=value)
+                self.set_state(
+                    chat_id,
+                    "create_sessions",
+                    username=state["username"],
+                    protocols=state["protocols"],
+                    password=state["password"],
+                    days=value,
+                )
                 self.send(chat_id, "Enter maximum concurrent sessions (1-20):")
             elif step == "create_sessions":
-                self.set_state(chat_id, "create_quota", username=state["username"], password=state["password"], days=state["days"], max_sessions=value)
-                self.send(chat_id, "Enter quota metadata in GB, or <code>Unlimited</code>. Accurate quota enforcement is disabled.")
+                self.set_state(
+                    chat_id,
+                    "create_quota",
+                    username=state["username"],
+                    protocols=state["protocols"],
+                    password=state["password"],
+                    days=state["days"],
+                    max_sessions=value,
+                )
+                self.send(
+                    chat_id,
+                    "Enter the Xray data limit in GB, or <code>Unlimited</code>:",
+                )
             elif step == "create_quota":
                 result = self.panel(
                     "create_user",
-                    username=state["username"], password=state["password"], days=state["days"],
-                    max_sessions=state["max_sessions"], quota_gb=value,
+                    username=state["username"],
+                    password=state["password"],
+                    days=state["days"],
+                    max_sessions=state["max_sessions"],
+                    quota_gb=value,
+                    protocols=state["protocols"],
                 )
                 self.set_state(chat_id)
                 user = result["user"]
@@ -337,53 +657,197 @@ class Bot:
                     f"Username: <code>{html.escape(user['username'])}</code>\n"
                     f"Expiry: <code>{html.escape(user['expiry'])}</code>\n"
                     f"Concurrent sessions: <code>{user['max_sessions']}</code>\n"
+                    f"Protocols: <code>{html.escape(', '.join(name for name, item in user['protocols'].items() if item.get('enabled')))}</code>\n"
                     "Ports: <code>22, 109, 447, 80, 443</code>\n\n"
                     "The password is not repeated or stored by the panel.",
                     self.users_keyboard(),
                 )
             elif step == "delete_username":
                 self.set_state(chat_id)
-                self.send(chat_id, f"Delete managed user <code>{html.escape(value)}</code>?", {"inline_keyboard": [[
-                    {"text": "✅ Confirm delete", "callback_data": f"delete_confirm:{value}"},
-                    {"text": "Cancel", "callback_data": "delete_cancel"},
-                ]]})
+                self.send(
+                    chat_id,
+                    f"Delete managed user <code>{html.escape(value)}</code>?",
+                    {
+                        "inline_keyboard": [
+                            [
+                                {
+                                    "text": "✅ Confirm delete",
+                                    "callback_data": f"delete_confirm:{value}",
+                                },
+                                {"text": "Cancel", "callback_data": "delete_cancel"},
+                            ]
+                        ]
+                    },
+                )
             elif step == "renew_username":
                 self.set_state(chat_id, "renew_days", username=value)
                 self.send(chat_id, "Enter days to add (1-3650):")
             elif step == "renew_days":
-                result = self.panel("renew_user", username=state["username"], days=value)
+                result = self.panel(
+                    "renew_user", username=state["username"], days=value
+                )
                 self.set_state(chat_id)
-                self.send(chat_id, f"✅ <code>{html.escape(result['username'])}</code> renewed until <code>{result['expiry']}</code>.", self.users_keyboard())
+                self.send(
+                    chat_id,
+                    f"✅ <code>{html.escape(result['username'])}</code> renewed until <code>{result['expiry']}</code>.",
+                    self.users_keyboard(),
+                )
             elif step == "sessions_username":
                 self.set_state(chat_id, "sessions_value", username=value)
                 self.send(chat_id, "Enter the new concurrent session limit (1-20):")
             elif step == "sessions_value":
-                result = self.panel("set_sessions", username=state["username"], max_sessions=value)
+                result = self.panel(
+                    "set_sessions", username=state["username"], max_sessions=value
+                )
                 self.set_state(chat_id)
-                self.send(chat_id, f"✅ Session limit for <code>{html.escape(result['username'])}</code> is now {result['max_sessions']}.", self.users_keyboard())
+                self.send(
+                    chat_id,
+                    f"✅ Session limit for <code>{html.escape(result['username'])}</code> is now {result['max_sessions']}.",
+                    self.users_keyboard(),
+                )
             elif step == "quota_username":
                 self.set_state(chat_id, "quota_value", username=value)
                 self.send(chat_id, "Enter GB value or <code>Unlimited</code>:")
             elif step == "quota_value":
-                result = self.panel("set_quota", username=state["username"], quota_gb=value)
+                result = self.panel(
+                    "set_quota", username=state["username"], quota_gb=value
+                )
                 self.set_state(chat_id)
-                shown = "Unlimited" if result["quota_gb"] is None else f"{result['quota_gb']} GB"
-                self.send(chat_id, f"✅ Quota metadata for <code>{html.escape(result['username'])}</code>: {html.escape(shown)}. Enforcement remains disabled.", self.users_keyboard())
+                shown = (
+                    "Unlimited"
+                    if result["quota_gb"] is None
+                    else f"{result['quota_gb']} GB"
+                )
+                scope = (
+                    "Xray traffic"
+                    if result.get("quota_enforced")
+                    else "saved; enable an Xray protocol to enforce"
+                )
+                self.send(
+                    chat_id,
+                    f"✅ Data limit for <code>{html.escape(result['username'])}</code>: {html.escape(shown)} ({html.escape(scope)}).",
+                    self.users_keyboard(),
+                )
+            elif step == "usage_reset_username":
+                result = self.panel("reset_usage", username=value)
+                self.set_state(chat_id)
+                self.send(
+                    chat_id,
+                    f"✅ Xray usage reset for <code>{html.escape(result['username'])}</code>.",
+                    self.users_keyboard(),
+                )
+            elif step == "protocol_username":
+                self.set_state(chat_id, "protocol_operation", username=value)
+                self.send(
+                    chat_id,
+                    "Enter operation: <code>enable</code>, <code>disable</code>, or <code>rotate</code>:",
+                )
+            elif step == "protocol_operation":
+                operation = value.lower()
+                if operation not in {"enable", "disable", "rotate"}:
+                    raise RuntimeError("Operation must be enable, disable or rotate")
+                self.set_state(
+                    chat_id,
+                    "protocol_value",
+                    username=state["username"],
+                    operation=operation,
+                )
+                self.send(
+                    chat_id,
+                    "Enter protocol (enable also accepts comma-separated protocols):",
+                )
+            elif step == "protocol_value":
+                operation = state["operation"]
+                command = {
+                    "enable": "enable_protocol",
+                    "disable": "disable_protocol",
+                    "rotate": "rotate_protocol",
+                }[operation]
+                params = (
+                    {"username": state["username"], "protocols": value}
+                    if operation == "enable"
+                    else {"username": state["username"], "protocol": value}
+                )
+                self.panel(command, **params)
+                self.set_state(chat_id)
+                self.send(
+                    chat_id,
+                    f"✅ {html.escape(operation)} completed for <code>{html.escape(state['username'])}</code>.",
+                    self.users_keyboard(),
+                )
+            elif step == "export_username":
+                self.set_state(chat_id, "export_protocol", username=value)
+                self.send(
+                    chat_id,
+                    "Enter protocol: <code>vmess</code>, <code>vless</code>, or <code>trojan</code>:",
+                )
+            elif step == "export_protocol":
+                self.set_state(
+                    chat_id,
+                    "export_provider",
+                    username=state["username"],
+                    protocol=value,
+                )
+                self.send(
+                    chat_id,
+                    "Enter route: <code>direct</code>, <code>cloudfront</code>, or <code>cloudflare</code>:",
+                )
+            elif step == "export_provider":
+                result = self.panel(
+                    "generate_exports",
+                    username=state["username"],
+                    protocol=state["protocol"],
+                    provider=value,
+                )
+                delivered = self.deliver_exports(
+                    chat_id, state["username"], result["files"]
+                )
+                self.set_state(chat_id)
+                self.send(
+                    chat_id,
+                    f"✅ Generated {len(result['files'])} files; delivered {delivered}.",
+                    self.users_keyboard(),
+                )
+            elif step == "dnstt_export_username":
+                result = self.panel("export_dnstt", username=value)
+                delivered = self.deliver_exports(chat_id, value, result["files"])
+                self.set_state(chat_id)
+                self.send(
+                    chat_id,
+                    f"✅ DNSTT + SSH file delivered: {delivered}/{len(result['files'])}.",
+                    self.users_keyboard(),
+                )
             elif step == "domain" and self.is_super(chat_id):
                 result = self.panel("set_domain", domain=value)
                 self.set_state(chat_id)
-                self.send(chat_id, f"✅ Domain set to <code>{html.escape(result['domain'])}</code>. TLS active: {result['tls']}", self.super_keyboard())
+                self.send(
+                    chat_id,
+                    f"✅ Domain set to <code>{html.escape(result['domain'])}</code>. TLS active: {result['tls']}",
+                    self.super_keyboard(),
+                )
             elif step == "admin_add" and self.is_super(chat_id):
                 result = self.panel("add_admin", admin_id=value)
                 self.set_state(chat_id)
-                self.send(chat_id, f"✅ Admin <code>{html.escape(value)}</code> added.", self.super_keyboard())
+                self.send(
+                    chat_id,
+                    f"✅ Admin <code>{html.escape(value)}</code> added.",
+                    self.super_keyboard(),
+                )
             elif step == "admin_remove" and self.is_super(chat_id):
                 result = self.panel("remove_admin", admin_id=value)
                 self.set_state(chat_id)
-                self.send(chat_id, f"✅ Admin <code>{html.escape(value)}</code> removed.", self.super_keyboard())
+                self.send(
+                    chat_id,
+                    f"✅ Admin <code>{html.escape(value)}</code> removed.",
+                    self.super_keyboard(),
+                )
         except RuntimeError as exc:
             self.set_state(chat_id)
-            self.send(chat_id, f"❌ {html.escape(str(exc))}", self.main_keyboard(self.is_super(chat_id)))
+            self.send(
+                chat_id,
+                f"❌ {html.escape(str(exc))}",
+                self.main_keyboard(self.is_super(chat_id)),
+            )
 
     def process_update(self, update: dict[str, Any]) -> None:
         if "callback_query" in update:
@@ -392,7 +856,12 @@ class Bot:
             chat_id = str(message.get("chat", {}).get("id", ""))
             if not self.authorized(chat_id) or not self.rate_ok(chat_id):
                 return
-            self.callback(chat_id, int(message.get("message_id", 0)), str(cb.get("id", "")), str(cb.get("data", "")))
+            self.callback(
+                chat_id,
+                int(message.get("message_id", 0)),
+                str(cb.get("id", "")),
+                str(cb.get("data", "")),
+            )
             return
         message = update.get("message", {})
         if "text" not in message:
@@ -404,19 +873,28 @@ class Bot:
             now = time.monotonic()
             if now - self.denied_notice.get(chat_id, 0) > STATE_TTL:
                 self.denied_notice[chat_id] = now
-                self.send(chat_id, f"⛔ Access denied. Your Telegram ID is <code>{html.escape(chat_id)}</code>.")
+                self.send(
+                    chat_id,
+                    f"⛔ Access denied. Your Telegram ID is <code>{html.escape(chat_id)}</code>.",
+                )
             return
-        self.text(chat_id, int(message.get("message_id", 0)), str(message.get("text", "")))
+        self.text(
+            chat_id, int(message.get("message_id", 0)), str(message.get("text", ""))
+        )
 
     def run(self) -> None:
         backoff = 1
         while True:
             self.prune_ephemeral_data()
-            result = self.api.call("getUpdates", {
-                "offset": self.offset,
-                "timeout": 25,
-                "allowed_updates": ["message", "callback_query"],
-            }, timeout=35)
+            result = self.api.call(
+                "getUpdates",
+                {
+                    "offset": self.offset,
+                    "timeout": 25,
+                    "allowed_updates": ["message", "callback_query"],
+                },
+                timeout=35,
+            )
             if not result.get("ok"):
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 30)
@@ -432,7 +910,9 @@ class Bot:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
     token = read_text(BOT_TOKEN_FILE)
     if not token:
         raise SystemExit("Bot token is not configured")

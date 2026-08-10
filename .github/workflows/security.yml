@@ -15,16 +15,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install test dependency
-        run: python -m pip install --disable-pip-version-check pytest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check pytest==9.1.1 cfn-lint==1.54.0
       - name: Python compile
-        run: python -m py_compile src/*.py
+        run: python -m py_compile src/*.py scripts/*.py
       - name: Unit tests
         run: pytest -q
       - name: Dependency-free static audit
         run: python scripts/static-audit.py
+      - name: Dashboard JavaScript syntax
+        run: node --check web/app.js
+      - name: CloudFront template validation
+        run: cfn-lint infra/cloudfront-websocket.yml
       - name: Bash syntax
-        run: bash -n install.sh menu.sh scripts/security-check.sh
+        run: bash -n install.sh menu.sh publish-to-github.sh scripts/*.sh
+      - name: Install pinned Xray in CI
+        run: sudo bash scripts/install-xray.sh
+      - name: Validate generated configs with Xray
+        run: python scripts/validate-xray-configs.py
+      - name: Exercise live Xray WebSocket and SOCKS data paths
+        run: python scripts/live-xray-smoke.py
       - name: Reject common committed secrets and unsafe subprocess shells
         shell: bash
         run: |

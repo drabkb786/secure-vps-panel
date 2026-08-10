@@ -35,3 +35,4 @@ def test_reject_body() -> None:
         parse_request(
             b"GET / HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nContent-Length: 5\r\n"
         )
+

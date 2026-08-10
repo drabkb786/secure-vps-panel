@@ -36,3 +36,4 @@ git push -u origin main
 ## Important secret rule
 
 Never commit a Telegram bot token, VPS password, SSH private key, certificate private key, or files copied from `/etc/abdulbasit`. Rotate any secret that appeared in old Git history.
+

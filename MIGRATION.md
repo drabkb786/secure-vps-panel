@@ -9,7 +9,9 @@
 
 ## Recommended method
 
-Deploy v2 on a fresh VPS. Create each account again through `menu` or `abdulbasit-panelctl`, using a new temporary password.
+Deploy v3 on a fresh VPS. Create each account again through `menu`, the TLS dashboard, or `abdulbasit-panelctl`, using a new temporary password.
+
+For an existing secure v2 installation, back up `/etc/abdulbasit`, run the v3 installer, and enable Xray protocols per user. Existing SSH users remain SSH users; the panel does not invent or recover their passwords.
 
 ## Why old metadata is not auto-imported
 
@@ -27,8 +29,6 @@ The Abdul Basit installer detects and disables the older `raretriccks-*` service
 
 After confirming the new panel works, manually delete the old directory only after preserving any non-secret account records you genuinely need:
 
-```bash
-sudo rm -rf /etc/raretriccks /usr/local/lib/raretriccks
-```
+Remove old directories only after a separate manual review and backup; do not paste a broad recursive deletion command from documentation into a production server.
 
 Do not copy `bot_token.conf`, private keys, passwords, or unknown legacy scripts into the new installation.
