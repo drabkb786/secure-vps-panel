@@ -57,4 +57,3 @@ if ERRORS:
     print("\n".join(ERRORS), file=sys.stderr)
     raise SystemExit(1)
 print("Static audit passed")
-

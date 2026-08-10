@@ -29,4 +29,3 @@ else
 fi
 
 echo "Published: https://github.com/$repo"
-
