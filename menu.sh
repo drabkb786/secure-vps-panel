@@ -83,10 +83,83 @@ EOF
   done
 }
 
+network_menu() {
+  while true; do
+    clear
+    cat <<'EOF'
+NOWAY / DNS, TLS & WEB
+
+1) Configure / reset web login
+2) Domain DNS lookup
+3) Set Xray DNS resolvers
+4) Run diagnostics
+5) Back
+EOF
+    read -r -p "Option [1-5]: " choice
+    case "$choice" in
+      1) run_ctl configure-web; pause ;;
+      2) run_ctl dns-lookup; pause ;;
+      3)
+        read -r -p "Primary DNS IP / HTTPS DoH URL: " dns1
+        read -r -p "Secondary DNS IP / HTTPS DoH URL: " dns2
+        read -r -p "Strategy (UseIPv4 / UseIP / UseIPv6) [UseIPv4]: " strategy
+        if [[ -n "$dns2" ]]; then
+          run_ctl dns-set --server "$dns1" --server "$dns2" --strategy "${strategy:-UseIPv4}"
+        else
+          run_ctl dns-set --server "$dns1" --strategy "${strategy:-UseIPv4}"
+        fi
+        pause ;;
+      4) run_ctl diagnostics; pause ;;
+      5) return ;;
+    esac
+  done
+}
+
+xray_menu() {
+  while true; do
+    clear
+    cat <<'EOF'
+NOWAY / XRAY PROFILES
+
+1) Status / profiles
+2) Enable Xray (requires installed core + TLS)
+3) Disable Xray
+4) Create VLESS + VMess + Trojan profile
+5) Renew profile
+6) Delete profile
+7) Export links + JSON (contains account secrets)
+8) Export client ZIP
+9) Back
+EOF
+    read -r -p "Option [1-9]: " choice
+    case "$choice" in
+      1) run_ctl xray-status; pause ;;
+      2) run_ctl xray-enable; pause ;;
+      3) run_ctl xray-disable; pause ;;
+      4)
+        read -r -p "Profile name: " name; read -r -p "Validity days: " days
+        run_ctl xray-create "$name" --days "$days"; pause ;;
+      5)
+        read -r -p "Profile name: " name; read -r -p "Days to add: " days
+        run_ctl xray-renew "$name" --days "$days"; pause ;;
+      6)
+        read -r -p "Profile name: " name; read -r -p "Type DELETE to confirm: " confirm
+        [[ "$confirm" == "DELETE" ]] && run_ctl xray-delete "$name"
+        pause ;;
+      7) read -r -p "Profile name: " name; run_ctl xray-export "$name"; pause ;;
+      8)
+        read -r -p "Profile name: " name; read -r -p "Save ZIP to (new absolute path): " output
+        run_ctl xray-export "$name" --zip "$output"; pause ;;
+      9) return ;;
+    esac
+  done
+}
+
 while true; do
   clear
   echo -e "${CYAN}====================================================${NC}"
-  echo -e "${YELLOW}       Abdul Basit Secure VPS Panel v2.1.0${NC}"
+  echo -e "${GREEN}          NOWAY / VPS CONTROL ROOM v3.0${NC}"
+  echo -e "${CYAN}                 by Abdul Basit${NC}"
   echo -e "${CYAN}====================================================${NC}"
   cat <<'EOF'
 1) User management
@@ -96,9 +169,11 @@ while true; do
 5) Service status
 6) Restart core services
 7) View recent logs
-8) Exit
+8) Web dashboard / DNS / Diagnostics
+9) Xray: VLESS / VMess / Trojan
+0) Exit
 EOF
-  read -r -p "Option [1-8]: " choice
+  read -r -p "Option [0-9]: " choice
   case "$choice" in
     1) user_menu ;;
     2) read -r -p "Domain (vpn.example.com): " domain; run_ctl set-domain "$domain"; pause ;;
@@ -112,9 +187,11 @@ EOF
       run_ctl restart nginx
       pause ;;
     7)
-      journalctl --no-pager -n 100 -u abdulbasit-paneld -u abdulbasit-ws -u abdulbasit-session-enforcer -u abdulbasit-bot || true
+      journalctl --no-pager -n 100 -u abdulbasit-paneld -u abdulbasit-ws -u abdulbasit-session-enforcer -u abdulbasit-bot -u abdulbasit-web -u abdulbasit-xray || true
       pause ;;
-    8) exit 0 ;;
+    8) network_menu ;;
+    9) xray_menu ;;
+    0) exit 0 ;;
     *) sleep 1 ;;
   esac
 done

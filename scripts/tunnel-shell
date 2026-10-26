@@ -1,0 +1,4 @@
+#!/bin/sh
+# Dropbear accepts this registered shell; interactive commands are never executed.
+printf '%s\n' 'NOWAY: this account supports SSH tunnelling only. Interactive access is disabled.' >&2
+exit 1

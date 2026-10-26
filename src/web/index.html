@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark"><meta name="description" content="NOWAY VPS control room — server access, Xray profiles, DNS and diagnostics.">
+  <title>NOWAY · VPS Control Room</title>
+  <link rel="icon" href="data:,"><link rel="stylesheet" href="/panel/style.css">
+  <script src="/panel/app.js" defer></script>
+</head>
+<body>
+  <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+  <section id="login-screen" class="login-screen">
+    <div class="login-art"><a class="brand" href="/panel/"><span class="monogram">N</span><span>NOWAY<span class="brand-sub">VPS CONTROL ROOM</span></span></a>
+      <div class="login-message"><span class="eyebrow">YOUR INFRASTRUCTURE. YOUR RULES.</span><h1>Control starts<br>with <em>clarity.</em></h1><p>Server access, secure profiles and network health.<br>Everything in one place.</p><div class="login-chips"><span>VLESS</span><span>VMess</span><span>Trojan</span><span>SSH</span></div></div>
+      <div class="login-footer">Built for Abdul Basit <span>NOWAY / 03</span></div>
+    </div>
+    <div class="login-side"><form id="login-form" class="login-card"><span class="mini-mark">↗</span><span class="eyebrow">ADMIN ACCESS</span><h2>Welcome back.</h2><p class="muted">Sign in to your private control room.</p>
+      <label>Username<input name="username" autocomplete="username" minlength="3" maxlength="48" required placeholder="Your admin username"></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" maxlength="128" required placeholder="Enter your password"></label>
+      <button class="btn primary full" type="submit">Enter control room <span>→</span></button>
+      <p id="login-error" class="form-error" role="alert"></p>
+      <div class="setup-note"><strong>First time here?</strong><p>Set your login from the VPS terminal:</p><code>abdulbasit-panelctl configure-web</code></div>
+      <p class="small muted">Public login requires HTTPS. Local HTTP is supported through an SSH tunnel.</p>
+    </form></div>
+  </section>
+
+  <div id="app" class="app" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="/panel/"><span class="monogram">N</span><span>NOWAY<span class="brand-sub">VPS CONTROL ROOM</span></span></a>
+      <div class="workspace-label">WORKSPACE <span>01</span></div>
+      <nav aria-label="Main navigation">
+        <button class="nav active" data-view="overview"><span class="nav-icon">◫</span>Overview<span class="nav-arrow">↗</span></button>
+        <button class="nav" data-view="ssh"><span class="nav-icon">⌘</span>SSH accounts</button>
+        <button class="nav" data-view="xray"><span class="nav-icon">◇</span>Xray profiles<span class="nav-count" id="nav-profiles">0</span></button>
+        <button class="nav" data-view="network"><span class="nav-icon">◎</span>DNS &amp; SSL</button>
+        <button class="nav" data-view="diagnostics"><span class="nav-icon">⌁</span>Diagnostics</button>
+      </nav>
+      <div class="sidebar-note"><span class="eyebrow">MANAGED CONNECTIONS</span><strong>One secure entry point.</strong><p>Public TLS on :443.<br>Internal services on loopback.</p><span class="line-label">WS + TLS <i></i> NGINX</span></div>
+      <div class="sidebar-bottom"><span class="avatar">AB</span><div><strong>Abdul Basit</strong><span id="admin-name">Administrator</span></div><span class="version">v3.0</span></div>
+    </aside>
+    <main>
+      <header class="topbar"><div><span class="muted">Workspace</span><span class="slash">/</span><strong id="breadcrumb">Overview</strong></div><div class="top-actions"><span class="connection-state" id="connection-state">Connecting</span><button id="refresh" class="icon-button" aria-label="Refresh dashboard">↻</button><button id="logout" class="btn small">Sign out</button></div></header>
+      <div class="main-content">
+        <section id="view-overview" class="view">
+          <div class="page-heading"><div><span class="eyebrow">INFRASTRUCTURE AT A GLANCE</span><h1>Your server.<br><span class="soft">One control room.</span></h1><p class="muted">A clear view of your node, access and connections.</p></div><button class="btn primary" data-new="xray">＋ New profile</button></div>
+          <div class="node-strip"><span class="node-symbol">▣</span><div><strong id="node-host">Loading server…</strong><span id="node-domain">Domain not configured</span></div><span class="node-meta" id="node-uptime">—</span><span class="pill" id="node-status">Checking</span></div>
+          <div class="stats-grid">
+            <article class="stat"><span class="stat-label">SYSTEM LOAD <span>↗</span></span><strong id="stat-load">—</strong><span id="stat-cpus" class="muted">1-minute average</span></article>
+            <article class="stat"><span class="stat-label">MEMORY <span>▤</span></span><strong id="stat-memory">—</strong><meter id="memory-meter" min="0" max="100" value="0" aria-label="Memory utilization"></meter><span id="memory-detail" class="muted">Waiting for node</span></article>
+            <article class="stat"><span class="stat-label">DISK USAGE <span>▱</span></span><strong id="stat-disk">—</strong><meter id="disk-meter" min="0" max="100" value="0" aria-label="Disk utilization"></meter><span id="disk-detail" class="muted">Waiting for node</span></article>
+            <article class="stat accent"><span class="stat-label">ACTIVE PROFILES <span>◇</span></span><strong id="stat-profiles">0</strong><span id="stat-access" class="muted">SSH + Xray access</span></article>
+          </div>
+          <div class="overview-grid"><article class="panel"><div class="panel-heading"><div><span class="eyebrow">CONNECTION LAYER</span><h2>Protocol gateway</h2></div><button class="text-button" data-view="xray">Manage ↗</button></div><div id="protocol-cards" class="protocol-cards"></div><div class="panel-foot"><span class="small muted">Separate profiles. Shared TLS entry.</span><span class="mono">:443</span></div></article>
+            <article class="panel"><div class="panel-heading"><div><span class="eyebrow">SYSTEM SERVICES</span><h2>Node health</h2></div><span id="service-total" class="pill">—</span></div><div id="service-list" class="service-list"></div></article></div>
+          <article class="panel accounts-preview"><div class="panel-heading"><div><span class="eyebrow">ACCESS DIRECTORY</span><h2>Xray profiles</h2></div><button class="text-button" data-view="xray">View all ↗</button></div><div class="table-scroll"><table><thead><tr><th>PROFILE</th><th>PROTOCOLS</th><th>EXPIRY</th><th>STATUS</th><th></th></tr></thead><tbody id="overview-profiles"></tbody></table></div></article>
+          <footer class="page-footer"><span>NOWAY VPS PANEL <b>/</b> PRIVATE INFRASTRUCTURE</span><span id="last-updated">Not refreshed yet</span></footer>
+        </section>
+
+        <section id="view-ssh" class="view" hidden><div class="page-heading compact"><div><span class="eyebrow">ACCESS MANAGEMENT</span><h1>SSH accounts<span class="heading-dot">.</span></h1><p class="muted">Dropbear access with expiry and concurrent session limits.</p></div><button class="btn primary" data-new="ssh">＋ New account</button></div><div class="info-banner">Quota is metadata only. Concurrent sessions and account expiry are enforced.</div><article class="panel"><div class="table-scroll"><table><thead><tr><th>USERNAME</th><th>EXPIRY</th><th>SESSIONS</th><th>QUOTA</th><th>ACTIONS</th></tr></thead><tbody id="ssh-users"></tbody></table></div></article></section>
+
+        <section id="view-xray" class="view" hidden><div class="page-heading compact"><div><span class="eyebrow">SECURE CONNECTIONS</span><h1>Xray profiles<span class="heading-dot">.</span></h1><p class="muted">VLESS, VMess and Trojan. Ready to import into your client.</p></div><button class="btn primary" data-new="xray">＋ New profile</button></div><div class="engine-strip panel"><div><strong>Xray core</strong><p id="xray-summary" class="muted">Checking installation…</p></div><button id="toggle-xray" class="btn">Enable Xray</button></div><div class="info-banner">TLS certificate required. Expired profiles are removed from the running config within one minute. Config changes briefly reconnect existing clients.</div><article class="panel"><div class="table-scroll"><table><thead><tr><th>PROFILE</th><th>PROTOCOLS</th><th>EXPIRY</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody id="xray-accounts"></tbody></table></div></article></section>
+
+        <section id="view-network" class="view" hidden><div class="page-heading compact"><div><span class="eyebrow">NETWORK CONFIGURATION</span><h1>DNS &amp; SSL<span class="heading-dot">.</span></h1><p class="muted">Give your server a name. Keep its connections verified.</p></div></div><div class="two-columns"><article class="panel form-panel"><span class="eyebrow">01 / DOMAIN</span><h2>Public hostname</h2><p class="muted">Create A/AAAA records at your DNS provider pointing to this VPS, then save the hostname here.</p><form id="domain-form"><label>Domain<input id="domain-input" name="domain" placeholder="vpn.example.com" required maxlength="253"></label><button class="btn primary" type="submit">Save domain →</button></form><div class="action-row"><button id="lookup-dns" class="btn">Check DNS</button><button id="issue-cert" class="btn">Issue / renew SSL</button></div><pre id="dns-result" class="result-box" hidden></pre><p class="small muted">Port 80 must be reachable for Let's Encrypt. Disable Xray before switching domains.</p></article>
+            <article class="panel form-panel"><span class="eyebrow">02 / RESOLUTION</span><h2>Resolver settings</h2><p class="muted">Used by Xray and included in generated client JSON files. Does not replace the VPS system resolver.</p><form id="dns-form"><label>DNS servers · one per line<textarea id="dns-servers" name="servers" rows="4" required placeholder="1.1.1.1&#10;8.8.8.8"></textarea></label><label>IP strategy<select id="dns-strategy" name="strategy"><option value="UseIPv4">IPv4 only · recommended for IPv4 VPS</option><option value="UseIP">IPv4 + IPv6</option><option value="UseIPv6">IPv6 only</option></select></label><button type="submit" class="btn primary">Apply resolvers →</button></form><p class="small muted">Accepts 1–4 IP addresses or HTTPS DoH URLs, such as https://cloudflare-dns.com/dns-query. No public recursive DNS listener is opened.</p></article></div></section>
+
+        <section id="view-diagnostics" class="view" hidden><div class="page-heading compact"><div><span class="eyebrow">FIND THE FAILURE</span><h1>Diagnostics<span class="heading-dot">.</span></h1><p class="muted">Check the config, internal listeners, DNS, TLS and server clock.</p></div><button id="run-diagnostics" class="btn primary">Run checks ↗</button></div><article class="panel"><div class="panel-heading"><h2>Health report</h2><span id="diagnostic-summary" class="pill">Not run yet</span></div><div id="diagnostic-list" class="diagnostic-list"><div class="empty"><span>⌁</span><h3>Know where to look.</h3><p>Run a check to see findings and practical fixes.</p></div></div></article><div class="info-banner">These checks run on the VPS. Provider firewall rules and real client connections still need an external test.</div></section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="create-dialog"><form id="create-form"><div class="dialog-heading"><div><span class="eyebrow">ACCESS MANAGEMENT</span><h2 id="create-title">New profile</h2></div><button type="button" class="icon-button" data-close="create-dialog" aria-label="Close dialog">×</button></div><label>Account name<input name="name" pattern="[a-z_][a-z0-9_-]{0,30}" maxlength="31" required placeholder="e.g. basit_mobile"></label><label>Validity · days<input name="days" type="number" min="1" max="3650" value="30" required></label><fieldset id="protocol-fields"><legend>Protocols</legend><label class="checkbox"><input name="vless" type="checkbox" checked>VLESS</label><label class="checkbox"><input name="vmess" type="checkbox" checked>VMess</label><label class="checkbox"><input name="trojan" type="checkbox" checked>Trojan</label></fieldset><div id="ssh-fields" hidden><label>Password · at least 12 characters<input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password"></label><label>Concurrent sessions<input name="sessions" type="number" min="1" max="20" value="2"></label><label>Quota metadata · GB or Unlimited<input name="quota" value="Unlimited"></label></div><button type="submit" class="btn primary full">Create account →</button></form></dialog>
+  <dialog id="renew-dialog"><form id="renew-form"><div class="dialog-heading"><h2>Renew account</h2><button type="button" class="icon-button" data-close="renew-dialog" aria-label="Close dialog">×</button></div><p id="renew-name" class="muted"></p><label>Days to add<input name="days" type="number" min="1" max="3650" value="30" required></label><button type="submit" class="btn primary full">Extend validity →</button></form></dialog>
+  <dialog id="confirm-dialog"><form id="confirm-form"><div class="dialog-heading"><h2>Confirm action</h2><button type="button" class="icon-button" data-close="confirm-dialog" aria-label="Close dialog">×</button></div><p id="confirm-message"></p><div class="action-row"><button type="button" class="btn" data-close="confirm-dialog">Cancel</button><button type="submit" class="btn danger">Confirm</button></div></form></dialog>
+  <dialog id="export-dialog" class="export-dialog"><div class="dialog-heading"><div><span class="eyebrow">CLIENT CONNECTIONS</span><h2 id="export-title">Import profile</h2></div><button type="button" class="icon-button" data-close="export-dialog" aria-label="Close dialog">×</button></div><p class="muted">Copy an import link, download individual Xray JSON files, or get the full ZIP bundle.</p><div id="export-links"></div><a id="download-zip" class="btn primary full" href="#">↓ Download all · ZIP</a><p class="small muted">Treat these links and files as passwords. Share only with the intended account holder.</p></dialog>
+</body>
+</html>

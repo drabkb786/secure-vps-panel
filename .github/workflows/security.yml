@@ -24,7 +24,25 @@ jobs:
       - name: Dependency-free static audit
         run: python scripts/static-audit.py
       - name: Bash syntax
-        run: bash -n install.sh menu.sh scripts/security-check.sh
+        run: bash -n install.sh menu.sh scripts/*.sh scripts/tunnel-shell
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dashboard JavaScript syntax
+        run: node --check src/web/app.js
+      - name: Install checksum-verified official Xray core
+        run: |
+          sudo mkdir -p /usr/local/lib/abdulbasit
+          sudo bash scripts/install-xray.sh
+      - name: Real Xray config and TLS / WebSocket transport tests
+        env:
+          XRAY_TEST_BINARY: /usr/local/lib/abdulbasit/xray
+        run: pytest -q tests/test_xray_core.py
+      - name: Parse generated Nginx HTTP and TLS sites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y nginx
+          NGINX_TEST_BINARY=/usr/sbin/nginx pytest -q tests/test_nginx.py
       - name: Reject common committed secrets and unsafe subprocess shells
         shell: bash
         run: |

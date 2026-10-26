@@ -1,0 +1,164 @@
+# NOWAY v3 — browser, DNS and Xray setup
+
+## Install or upgrade
+
+Use a copy of this branch/release on the VPS. The installer requires root, systemd,
+Python 3.10+, Ubuntu 22.04/24.04 or Debian 12+, and public ports 80/443. It does not
+need a separate hosted website. `vpn.example.com` below is a placeholder.
+
+```bash
+sudo bash install.sh --domain vpn.example.com --email admin@example.com --with-xray
+```
+
+The Xray binary is pinned by `XRAY_VERSION` to the tested official release and
+verified against its release SHA256 digest. To explicitly install another release:
+
+```bash
+sudo bash install.sh --domain vpn.example.com --with-xray --xray-version v26.10.21
+```
+
+An existing managed Xray binary is kept unless an explicit version is supplied.
+The private binary is `/usr/local/lib/abdulbasit/xray`; an independently installed
+`xray.service` and its configuration are not overwritten.
+
+The installer keeps user metadata and makes a root-only backup of existing
+application files. Upgrades regenerate the managed Nginx site even when the saved
+domain is reused. Existing managed accounts using `/bin/false` move to a registered
+tunnel-only shell. This allows Dropbear authentication while refusing interactive
+commands; normal SSH forwarding channels work without opening a command shell.
+
+## Create the browser login
+
+There is no default password. Run this on the VPS as root; password entry is hidden.
+
+```bash
+sudo abdulbasit-panelctl configure-web
+```
+
+Open `https://vpn.example.com/panel/`. Changing the web password from this command
+revokes existing sessions. Web credentials and SSH/Xray account credentials are
+separate. Browser process restarts also end all browser sessions.
+
+Before public TLS is ready, use a local SSH tunnel:
+
+```bash
+ssh -N -L 9090:127.0.0.1:9090 root@YOUR_VPS_IP
+```
+
+Then open `http://127.0.0.1:9090/panel/` on that same computer. Public plain-HTTP
+login is rejected. Localhost HTTP through the SSH tunnel is intentionally supported.
+
+## Domain and DNS
+
+Create your domain's A record pointing to the VPS IPv4 address at the DNS provider.
+Create an AAAA record only when that IPv6 address actually works. The dashboard's
+**DNS & SSL** page saves the hostname, checks A/AAAA records and issues/renews TLS.
+The ACME webroot is preserved and Nginx is not stopped for issuance.
+
+**Resolver settings** affect Xray and exported client JSON only. They do not change
+`/etc/resolv.conf`, create provider records or expose a public resolver on port 53.
+Use 1–4 IPs or HTTPS DoH URLs. The default is IPv4 resolution. DoH hostnames still
+need a working system resolver for bootstrap. Client import links do not carry
+custom DNS; use the exported JSON or configure DNS in your client separately.
+
+```bash
+sudo abdulbasit-panelctl dns-set --server 1.1.1.1 --server 8.8.8.8 --strategy UseIPv4
+```
+
+```bash
+sudo abdulbasit-panelctl dns-lookup
+```
+
+## Enable Xray and create profiles
+
+Complete the domain and TLS setup before enabling Xray. In the browser, open
+**Xray profiles → Enable Xray → New profile**. Choose protocols and validity.
+Names are unique within the Xray account list. SSH accounts remain separate.
+
+```bash
+sudo abdulbasit-panelctl xray-enable
+```
+
+```bash
+sudo abdulbasit-panelctl xray-create basit --days 30
+```
+
+| Protocol | Public endpoint | Internal listener |
+| --- | --- | --- |
+| VLESS | `wss://vpn.example.com:443/vless` | `127.0.0.1:10001` |
+| VMess | `wss://vpn.example.com:443/vmess` | `127.0.0.1:10002` |
+| Trojan | `wss://vpn.example.com:443/trojan` | `127.0.0.1:10003` |
+| Browser | `https://vpn.example.com/panel/` | `127.0.0.1:9090` |
+| Legacy SSH HTTP upgrade | existing path and 80/443 | `127.0.0.1:2082` |
+
+Nginx terminates TLS for Xray; cleartext traffic between Nginx and the core stays on
+loopback. Do not expose internal ports. Imported profiles verify TLS; there is no
+`allowInsecure: true` in generated configs. UUID/password values are randomly
+generated and stored root-only. Normal profile lists do not include them.
+
+The older SSH proxy is an HTTP-upgrade raw TCP tunnel, not a general RFC 6455
+WebSocket server. Existing compatible SSH tunnel clients can keep using it. The
+new Xray endpoints are actual WebSocket transports handled by Xray itself.
+
+## Export and import
+
+Click **Export** beside a profile. Copy the protocol's import link, download its
+Xray JSON, or download the ZIP with all selected profiles, `links.txt`, and a base64
+`subscription.txt`. This is a downloadable subscription file, not a public live
+subscription URL. ZIPs and export APIs require an admin session and are not cached.
+
+Xray is the engine; VLESS, VMess and Trojan are the connection protocols.
+The exported JSON starts a loopback SOCKS listener on `10808`. Run one client JSON
+at a time or change that local port. Import-link compatibility depends on the
+client supporting that protocol with WS+TLS.
+
+```bash
+sudo abdulbasit-panelctl xray-export basit --zip /root/basit-profiles.zip
+```
+
+```bash
+sudo abdulbasit-panelctl xray-renew basit --days 30
+```
+
+```bash
+sudo abdulbasit-panelctl xray-delete basit
+```
+
+Validity ends at the start of the expiry date in the VPS system timezone. The
+expiry timer removes expired Xray credentials within about a minute. Config/account
+changes restart the core and briefly reconnect existing clients. Failed tests or
+restarts restore previous managed files; inspect the journal if rollback restart
+also fails. Disabling Xray removes its boot-enable marker and stops its service.
+
+Private/link-local destinations (including cloud metadata addresses) are blocked
+by the generated server routing rules. This is an Internet proxy preset; private
+LAN access is not enabled. Bandwidth quotas, Xray concurrent-device limits,
+REALITY, XHTTP and protocol management inside Telegram are not part of v3.
+
+## Diagnose a deployed host
+
+```bash
+sudo abdulbasit-panelctl diagnostics
+```
+
+```bash
+sudo journalctl --no-pager -n 100 -u abdulbasit-paneld -u abdulbasit-web -u abdulbasit-xray
+```
+
+```bash
+sudo ss -ltnp
+```
+
+Check DNS A/AAAA, certificate validity, Nginx, core syntax, clock synchronization
+and internal listeners. VMess needs an accurate clock. Provider firewall or carrier
+restrictions must be tested from the actual client network; local diagnostics
+cannot guarantee access from every network.
+
+## Primary configuration references
+
+- [Xray core and official releases](https://github.com/XTLS/Xray-core)
+- [VLESS inbound](https://xtls.github.io/en/config/inbounds/vless.html)
+- [VMess inbound](https://xtls.github.io/en/config/inbounds/vmess.html)
+- [Trojan inbound](https://xtls.github.io/en/config/inbounds/trojan.html)
+- [Built-in DNS](https://xtls.github.io/en/config/dns.html)
+- [WebSocket transport](https://xtls.github.io/en/config/transports/websocket.html)

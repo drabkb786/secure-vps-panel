@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.0.0 — NOWAY VPS Control Room
+
+- Added an authenticated, responsive browser dashboard, DNS/SSL controls and diagnostics.
+- Added isolated Xray VLESS, VMess and Trojan WS/TLS profiles, account expiry timer,
+  transactional updates, import links, JSON files and authenticated ZIP exports.
+- Added checksum-verified pinned Xray installation, CLI/menu commands and upgrade support.
+- Fixed port-header false conflicts, Nginx/domain save order, stale services on upgrade,
+  bot token restart, shadow-utils lock files, tunnel-account shells, expiry boundaries,
+  and SSH relay partial writes/backpressure.
+- Added authentication/CSRF/IPC/rollback regressions and optional real-core transport checks.
+- See `docs/WEB_XRAY.md` for setup and `docs/ROADMAP.md` for remaining phases.
+
 ## 2.1.0 — Abdul Basit personalized release
 
 - Rebranded all user-facing text and internal service identifiers to Abdul Basit.

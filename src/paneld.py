@@ -23,6 +23,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+import diagnostics
+import web_auth
+import xray_manager
+
 from common import (
     ADMIN_IDS_FILE,
     BASE_DIR,
@@ -64,6 +68,8 @@ SERVICE_MAP = {
     "abdulbasit-session-enforcer": "abdulbasit-session-enforcer",
     "abdulbasit-bot": "abdulbasit-bot",
     "abdulbasit-paneld": "abdulbasit-paneld",
+    "abdulbasit-web": "abdulbasit-web",
+    "abdulbasit-xray": "abdulbasit-xray",
 }
 
 
@@ -83,7 +89,7 @@ def run(args: list[str], *, input_text: str | None = None, timeout: int = 60) ->
         capture_output=True,
         timeout=timeout,
         check=False,
-        env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+        env={"PATH": "/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
     )
     if completed.returncode != 0:
         detail_lines = (completed.stderr or completed.stdout or "").strip().splitlines()
@@ -149,7 +155,7 @@ def create_user(params: dict[str, Any]) -> dict[str, Any]:
 
     expiry = calculate_expiry(days)
     run([
-        binary("useradd"), "--no-create-home", "--shell", "/bin/false",
+        binary("useradd"), "--no-create-home", "--shell", "/usr/local/lib/abdulbasit/tunnel-shell",
         "--expiredate", expiry, "--user-group", username,
     ])
     try:
@@ -294,83 +300,96 @@ def domain_conflicts(domain: str) -> list[str]:
 
 
 def nginx_text(domain: str, tls: bool) -> str:
-    v6_http = "    listen [::]:80;\n" if ipv6_enabled() else ""
-    v6_tls = "    listen [::]:443 ssl;\n" if ipv6_enabled() else ""
-    tls_block = ""
-    if tls:
-        tls_block = f"""
-server {{
-    listen 443 ssl;
-{v6_tls}    server_name {domain};
+    """Keep legacy SSH upgrades; route browsers and real Xray WebSockets separately."""
+    def locations(secure: bool) -> str:
+        blocks = """
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+    location = /panel { return 302 /panel/; }
+    location /panel/ {
+        proxy_pass http://127.0.0.1:9090;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_read_timeout 240s;
+        proxy_buffering off;
+    }
+"""
+        for protocol, (port, path) in xray_manager.PROTOCOLS.items():
+            if secure:
+                blocks += f"""
+    location = {path} {{
+        proxy_pass http://127.0.0.1:{port};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $abdulbasit_connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        limit_conn abdulbasit_per_ip 40;
+    }}
+"""
+            else:
+                blocks += f"    location = {path} {{ return 403; }}\n"
+        blocks += """
+    location / {
+        proxy_pass http://$abdulbasit_root_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $abdulbasit_connection_upgrade;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        limit_conn abdulbasit_per_ip 40;
+    }
+"""
+        return blocks
 
+    def server(secure: bool) -> str:
+        port = 443 if secure else 80
+        suffix = " ssl" if secure else ""
+        ipv6 = f"    listen [::]:{port}{suffix};\n" if ipv6_enabled() else ""
+        certificates = f"""
     ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 1d;
     ssl_session_tickets off;
-
+""" if secure else ""
+        return f"""
+server {{
+    listen {port}{suffix};
+{ipv6}    server_name {domain};
     server_tokens off;
     client_header_timeout 10s;
     client_body_timeout 10s;
-    client_max_body_size 1k;
-
-    location / {{
-        proxy_pass http://127.0.0.1:2082;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $abdulbasit_connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_buffering off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        limit_conn abdulbasit_per_ip 20;
-        limit_req zone=abdulbasit_requests burst=20 nodelay;
-    }}
+    client_max_body_size 16k;
+{certificates}
+{locations(secure)}
 }}
 """
-    return f"""# Managed by Abdul Basit VPS Panel. Manual edits may be overwritten.
-map $http_upgrade $abdulbasit_connection_upgrade {{
+    return """# Managed by NOWAY VPS Panel. Manual edits may be overwritten.
+map $http_upgrade $abdulbasit_connection_upgrade {
     default upgrade;
     '' close;
-}}
-
+}
+map $http_upgrade $abdulbasit_root_upstream {
+    default 127.0.0.1:9090;
+    ~*websocket 127.0.0.1:2082;
+}
 limit_conn_zone $binary_remote_addr zone=abdulbasit_per_ip:10m;
-limit_req_zone $binary_remote_addr zone=abdulbasit_requests:10m rate=30r/m;
-
-server {{
-    listen 80;
-{v6_http}    server_name {domain};
-
-    server_tokens off;
-    client_header_timeout 10s;
-    client_body_timeout 10s;
-    client_max_body_size 1k;
-
-    location ^~ /.well-known/acme-challenge/ {{
-        root /var/www/letsencrypt;
-        default_type text/plain;
-        try_files $uri =404;
-    }}
-
-    location / {{
-        proxy_pass http://127.0.0.1:2082;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $abdulbasit_connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_buffering off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        limit_conn abdulbasit_per_ip 20;
-        limit_req zone=abdulbasit_requests burst=20 nodelay;
-    }}
-}}
-{tls_block}"""
+""" + server(False) + (server(True) if tls else "")
 
 
 def install_nginx_config(domain: str) -> bool:
@@ -399,14 +418,19 @@ def set_domain(params: dict[str, Any]) -> dict[str, Any]:
     if conflicts:
         raise ValidationError("Domain already appears in another Nginx config: " + ", ".join(conflicts[:3]))
     ACME_ROOT.mkdir(parents=True, exist_ok=True)
+    previous = read_text(DOMAIN_FILE)
+    if xray_manager.settings()["enabled"] and previous and domain != previous:
+        raise ValidationError("Disable Xray before changing its domain, then issue SSL and enable it again")
+    tls = install_nginx_config(domain)
     atomic_write(DOMAIN_FILE, domain + "\n", 0o640)
     set_group_readable(DOMAIN_FILE)
-    tls = install_nginx_config(domain)
     return {"domain": domain, "tls": tls}
 
 
 def issue_cert(params: dict[str, Any]) -> dict[str, Any]:
     domain = validate_domain(str(params.get("domain") or read_text(DOMAIN_FILE)))
+    if domain != read_text(DOMAIN_FILE):
+        raise ValidationError("Set this domain first before issuing its certificate")
     ACME_ROOT.mkdir(parents=True, exist_ok=True)
     install_nginx_config(domain)
     email = read_text(CERTBOT_EMAIL_FILE)
@@ -429,6 +453,8 @@ def restart_service(params: dict[str, Any]) -> dict[str, Any]:
     service = validate_service(str(params.get("service", "")))
     if service == "abdulbasit-paneld":
         raise ValidationError("The panel daemon cannot restart itself through the API")
+    if service == "abdulbasit-xray" and not xray_manager.settings()["enabled"]:
+        raise ValidationError("Enable Xray before restarting it")
     unit = SERVICE_MAP[service]
     run([binary("systemctl"), "restart", unit])
     return {"service": service}
@@ -453,6 +479,7 @@ def configure_bot(params: dict[str, Any]) -> dict[str, Any]:
         atomic_write(ADMIN_IDS_FILE, "", 0o640)
     set_group_readable(ADMIN_IDS_FILE)
     run([binary("systemctl"), "enable", "--now", "abdulbasit-bot"])
+    run([binary("systemctl"), "restart", "abdulbasit-bot"])
     return {"super_admin": super_admin}
 
 
@@ -492,6 +519,22 @@ def remove_admin(params: dict[str, Any]) -> dict[str, Any]:
     return {"super_admin": data["super_admin"], "admins": admins}
 
 
+XRAY = xray_manager.Manager(run)
+
+
+def dashboard_status(params: dict[str, Any]) -> dict[str, Any]:
+    stat = shutil.disk_usage("/")
+    mem = {}
+    for line in Path("/proc/meminfo").read_text().splitlines():
+        key, value = line.split(":", 1)
+        mem[key] = int(value.strip().split()[0]) * 1024
+    return {**service_status(params), **XRAY.status(params), **list_users(params), **list_sessions(params),
+            "system": {"hostname": socket.gethostname(), "load": list(os.getloadavg()),
+                       "cpu_count": os.cpu_count(), "uptime_seconds": float(Path("/proc/uptime").read_text().split()[0]),
+                       "disk_total": stat.total, "disk_used": stat.used,
+                       "memory_total": mem.get("MemTotal", 0), "memory_available": mem.get("MemAvailable", 0)}}
+
+
 HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "create_user": create_user,
     "delete_user": delete_user,
@@ -508,16 +551,55 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "list_admins": list_admins,
     "add_admin": add_admin,
     "remove_admin": remove_admin,
+    "configure_web": web_auth.configure,
+    "web_auth": web_auth.authenticate,
+    "web_revision": lambda _: {"revision": web_auth.revision()},
+    "dashboard_status": dashboard_status,
+    "diagnostics": diagnostics.report,
+    "dns_lookup": diagnostics.dns_lookup,
+    "dns_set": XRAY.set_dns,
+    "xray_status": XRAY.status,
+    "xray_configure": XRAY.configure,
+    "xray_create": XRAY.create,
+    "xray_update": XRAY.update,
+    "xray_export": XRAY.export,
+    "xray_sync": XRAY.sync,
 }
+
+WEB_COMMANDS = {"web_auth", "web_revision", "dashboard_status", "diagnostics", "dns_lookup", "dns_set",
+                "xray_status", "xray_configure", "xray_create", "xray_update", "xray_export",
+                "create_user", "delete_user", "renew_user", "set_sessions", "set_quota", "list_users",
+                "list_sessions", "service_status", "restart_service", "set_domain", "issue_cert"}
+
+
+def authorize_command(uid: int, command: str, params: dict) -> None:
+    if uid == 0:
+        return
+    if command == "configure_web":
+        raise ValidationError("Web credentials can only be reset from the root CLI")
+    try:
+        is_web = uid == pwd.getpwnam("abdulbasit-web").pw_uid
+    except KeyError:
+        is_web = False
+    if is_web:
+        if command not in WEB_COMMANDS:
+            raise ValidationError("Command is unavailable to the web service")
+        if command not in {"web_auth", "web_revision"} and params.pop("_web_revision", None) != web_auth.revision():
+            raise ValidationError("Web session was revoked; sign in again")
+        if command == "restart_service" and params.get("service") in {"abdulbasit-web", "abdulbasit-bot"}:
+            raise ValidationError("Restart the web/bot service from the root CLI")
 
 
 def allowed_peer(uid: int) -> bool:
     if uid == 0:
         return True
-    try:
-        return uid == pwd.getpwnam("abdulbasit-bot").pw_uid
-    except KeyError:
-        return False
+    for name in ("abdulbasit-bot", "abdulbasit-web"):
+        try:
+            if uid == pwd.getpwnam(name).pw_uid:
+                return True
+        except KeyError:
+            pass
+    return False
 
 
 def peer_uid(conn: socket.socket) -> int:
@@ -551,6 +633,7 @@ def handle_connection(conn: socket.socket) -> None:
             if not isinstance(params, dict):
                 raise ValidationError("Parameters must be an object")
             with OP_LOCK:
+                authorize_command(uid, command, params)
                 result = HANDLERS[command](params)
             response = {"ok": True, **result}
         except (ValidationError, RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:

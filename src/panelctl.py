@@ -6,6 +6,9 @@ import argparse
 import getpass
 import json
 import sys
+import os
+import zipfile
+from pathlib import Path
 from typing import Any
 
 from common import DEFAULT_SUPER_ADMIN_ID
@@ -63,6 +66,27 @@ def parser() -> argparse.ArgumentParser:
     remove_admin.add_argument("telegram_id")
 
     sub.add_parser("list-admins")
+    sub.add_parser("configure-web", help="Create/reset browser login; run as root")
+    sub.add_parser("diagnostics")
+    lookup = sub.add_parser("dns-lookup")
+    lookup.add_argument("--domain", default="")
+    dns = sub.add_parser("dns-set")
+    dns.add_argument("--server", action="append", required=True)
+    dns.add_argument("--strategy", choices=["UseIP", "UseIPv4", "UseIPv6"], default="UseIPv4")
+    for action in ("xray-status", "xray-enable", "xray-disable", "xray-sync"):
+        sub.add_parser(action)
+    profile = sub.add_parser("xray-create")
+    profile.add_argument("name")
+    profile.add_argument("--days", type=int, default=30)
+    profile.add_argument("--protocol", action="append", choices=["vless", "vmess", "trojan"])
+    renew_profile = sub.add_parser("xray-renew")
+    renew_profile.add_argument("name")
+    renew_profile.add_argument("--days", type=int, required=True)
+    delete_profile = sub.add_parser("xray-delete")
+    delete_profile.add_argument("name")
+    export = sub.add_parser("xray-export")
+    export.add_argument("name")
+    export.add_argument("--zip", type=Path, help="Save a private ZIP with all client profiles")
     return p
 
 
@@ -105,11 +129,47 @@ def main() -> int:
             result = request("remove_admin", admin_id=args.telegram_id)
         elif args.action == "list-admins":
             result = request("list_admins")
+        elif args.action == "configure-web":
+            if os.geteuid() != 0:
+                raise RuntimeError("Run configure-web as root")
+            username = input("Web admin username [noway]: ").strip() or "noway"
+            password = getpass.getpass("Web admin password (minimum 12 characters): ")
+            if password != getpass.getpass("Confirm web password: "):
+                raise RuntimeError("Passwords do not match")
+            result = request("configure_web", username=username, password=password)
+        elif args.action == "diagnostics":
+            result = request("diagnostics")
+        elif args.action == "dns-lookup":
+            result = request("dns_lookup", domain=args.domain)
+        elif args.action == "dns-set":
+            result = request("dns_set", servers=args.server, query_strategy=args.strategy)
+        elif args.action in {"xray-status", "xray-sync"}:
+            result = request(args.action.replace("-", "_"))
+        elif args.action in {"xray-enable", "xray-disable"}:
+            result = request("xray_configure", enabled=args.action == "xray-enable")
+        elif args.action == "xray-create":
+            params = {"name": args.name, "days": args.days}
+            if args.protocol:
+                params["protocols"] = args.protocol
+            result = request("xray_create", **params)
+        elif args.action == "xray-renew":
+            result = request("xray_update", name=args.name, action="renew", days=args.days)
+        elif args.action == "xray-delete":
+            result = request("xray_update", name=args.name, action="delete")
+        elif args.action == "xray-export":
+            result = request("xray_export", name=args.name)
+            if args.zip:
+                # Exclusive creation avoids clobbering an existing file or following a symlink.
+                fd = os.open(args.zip, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as handle, zipfile.ZipFile(handle, "w", zipfile.ZIP_DEFLATED) as archive:
+                    for name, content in result["files"].items():
+                        archive.writestr(name, content)
+                result = {"saved": str(args.zip)}
         else:
             raise RuntimeError("Unknown action")
         print_json(result)
         return 0
-    except (RuntimeError, KeyboardInterrupt) as exc:
+    except (RuntimeError, OSError, KeyboardInterrupt) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

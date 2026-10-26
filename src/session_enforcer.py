@@ -89,7 +89,7 @@ def enforce_once() -> None:
 
         expiry_text = str(data.get("expiry", ""))
         try:
-            expired = date.fromisoformat(expiry_text) < today
+            expired = date.fromisoformat(expiry_text) <= today
         except ValueError:
             expired = False
         if expired:

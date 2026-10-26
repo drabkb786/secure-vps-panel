@@ -1,0 +1,14 @@
+[Unit]
+Description=Remove expired NOWAY Xray profiles from the running configuration
+After=abdulbasit-paneld.service
+Wants=abdulbasit-paneld.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 /usr/local/lib/abdulbasit/panelctl.py xray-sync
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX
