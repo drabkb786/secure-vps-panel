@@ -30,6 +30,7 @@ COMMANDS = {
     "create_user", "delete_user", "renew_user", "set_sessions", "set_quota",
     "set_domain", "issue_cert", "restart_service", "dns_lookup", "dns_set",
     "xray_configure", "xray_create", "xray_update", "subscription_rotate", "subscription_revoke",
+    "set_user_lock", "traffic_sample", "live_connections", "packet_test", "live_logs", "doctor", "restart_managed", "config_view", "banner_get", "banner_set", "memory_report", "slowdns_status", "slowdns_configure", "slowdns_check",
 }
 
 
@@ -262,9 +263,10 @@ class Handler(BaseHTTPRequestHandler):
         except RuntimeError:
             self.json(404, {"error": "Subscription unavailable"})
             return
-        expiry = int(datetime.fromisoformat(result["expiry"]).timestamp())
+        expiry = int(datetime.fromisoformat(result.get("expires_at") or result["expiry"]).timestamp())
+        usage = "".join(f"{key}={int(result['traffic'][key])}; " for key in ("upload", "download", "total")) if result.get("traffic") else ""
         self.reply(200, result["content"].encode(), result["content_type"],
-                   {"profile-update-interval": "6", "subscription-userinfo": f"expire={expiry}", "Vary": "User-Agent"})
+                   {"profile-update-interval": "6", "subscription-userinfo": usage + f"expire={expiry}", "Vary": "User-Agent"})
 
     def do_POST(self):
         try:

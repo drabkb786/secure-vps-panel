@@ -1,0 +1,33 @@
+[Unit]
+Description=NOWAY optional dnstt DNS tunnel to authenticated Dropbear
+After=network-online.target dropbear.service
+Wants=network-online.target
+ConditionPathExists=/etc/abdulbasit-dnstt/config.json
+
+[Service]
+Type=simple
+User=abdulbasit-dnstt
+Group=abdulbasit-dnstt
+ExecStart=/usr/bin/python3 /usr/local/lib/abdulbasit/slowdns.py serve
+Restart=on-failure
+RestartSec=3s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+InaccessiblePaths=/etc/abdulbasit /etc/letsencrypt
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LockPersonality=yes
+MemoryMax=256M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

@@ -1,11 +1,14 @@
-# v3.1 validation
+# v3.2 validation
 
 Checked in the development environment on 27 October 2026 (Asia/Karachi).
 
 ## Passing checks
 
-- **104 Python tests and 2 JavaScript regression tests**, including all optional
-  real Xray, Nginx and client-parser checks, passed locally with no skips.
+- **132 Python tests and 2 JavaScript regression tests**, including all optional
+  real Xray, Nginx and client-parser checks, are covered by the local and GitHub native checks. The final UNIX-socket
+  transport checks require a host that permits AF_UNIX; this development container
+  rejects AF_UNIX socket creation with EPERM. Before the final socket isolation
+  change, all 132 passed locally using the loopback statistics fixture.
 - Python compilation, JavaScript syntax, Bash syntax, the repository static audit
   and `git diff --check` passed.
 - Official **Xray 26.10.21** was downloaded from XTLS releases and verified against
@@ -63,6 +66,23 @@ Checked in the development environment on 27 October 2026 (Asia/Karachi).
   recovery copies, invalid/oversized input rejection, restart rollback, corrupt
   JSON recovery and root-only restore IPC. Corrupt account/settings stores fail
   closed during normal operations instead of silently becoming empty defaults.
+- All real gateway transport cases now also round-trip **UDP** through SOCKS5
+  associations, verify native byte counters, and check authenticated IP reporting.
+  Forged client forwarding headers are overwritten by Nginx; the core reports the
+  controlled gateway address rather than the forged value.
+- Official **dnstt v1.20260501.0** server/client binaries were built using official
+  checksum-verified Go 1.27.3 and the public Go checksum database. A native test
+  round-trips 6,600 bytes of TCP data through their UDP DNS tunnel and a local echo
+  fixture. No real OS SSH account, public DNS delegation or carrier connection is
+  involved in this test.
+- New operations regressions cover exact trial expiry, persistent/idempotent
+  payload counting, crash-between-writes recovery, sampled quota removal, usage
+  reset/rollback, corrupt counter recovery, real versus observed IP labelling,
+  log redaction, banner rollback, managed SSH locks, root maintenance isolation,
+  CLI dispatch and DNS tunnel input/port/restart safeguards.
+- Browser QA checks the new daily-action layout, trial form, quota editor,
+  traffic refresh/IP distinction, operations controls, journal result modal,
+  banner loading and UDP/SlowDNS forms using a labelled example-data backend.
 
 ## Reproduce
 
@@ -82,6 +102,17 @@ python scripts/fetch-test-clients.py --directory /tmp/noway-test-clients
 
 ```bash
 XRAY_TEST_BINARY=/path/to/verified/xray NGINX_TEST_BINARY=/path/to/nginx SINGBOX_TEST_BINARY=/tmp/noway-test-clients/singbox MIHOMO_TEST_BINARY=/tmp/noway-test-clients/mihomo python -m pytest -q
+```
+
+Build the official dnstt test binaries using Go 1.27.3 with the public checksum
+database, then include their paths for the native DNS test:
+
+```bash
+GOBIN=/tmp/noway-dnstt GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org go install www.bamsoftware.com/git/dnstt.git/dnstt-server@v1.20260501.0 www.bamsoftware.com/git/dnstt.git/dnstt-client@v1.20260501.0
+```
+
+```bash
+DNSTT_TEST_SERVER=/tmp/noway-dnstt/dnstt-server DNSTT_TEST_CLIENT=/tmp/noway-dnstt/dnstt-client python -m pytest -q tests/test_slowdns.py
 ```
 
 ```bash
@@ -105,18 +136,21 @@ bash -n install.sh menu.sh scripts/*.sh scripts/tunnel-shell
 ```
 
 The GitHub workflow runs the base checks, installs the pinned verified Xray binary,
-exercises WS and XHTTP transports, parses generated sites with the distro Nginx,
-decodes QR output and validates exports using the pinned native clients.
+exercises WS/XHTTP TCP/UDP and native statistics, parses generated sites with the
+distro Nginx, decodes QR output, validates exports with pinned native clients and
+builds/tests the official dnstt transport.
 
 ## Still requires the actual VPS
 
-The complete privileged installer, systemd lifecycle, Dropbear authentication on
+The complete privileged installer, systemd lifecycle/capabilities, Dropbear authentication on
 the deployed OS, public certificate issuance/renewal, DNS propagation, provider
 firewall, and connectivity from the user's client/device have **not** been verified
-on a live VPS. A real Xray transport test does not establish network availability
+on a live VPS. Public UDP 53/NS delegation, cache/journal cleanup, reinstall and
+uninstall were not executed on the user's server. A real transport test does not establish network availability
 from every provider or country.
 
 The core reports deprecation notices for the requested legacy WS/VMess/Trojan
 compatibility transports. They pass on the pinned release. Optional XHTTP passes
-the local real-core/Nginx test; REALITY remains deferred. Traffic quota enforcement,
-multi-node management and live per-account byte usage are not implemented.
+the local real-core/Nginx test; REALITY and multi-node management remain deferred.
+Xray usage/quota enforcement is sampled once per minute and can overshoot or lose
+the unsampled tail on an unexpected core crash. SSH GB remains metadata.

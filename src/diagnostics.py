@@ -59,6 +59,14 @@ def report(_: dict) -> dict:
             ok = False
         add(name, ok, f"127.0.0.1:{port}", "Check its systemd service and port conflicts; do not expose this internal port.")
     if settings()["enabled"]:
+        import traffic
+        try:
+            with socket.socket(socket.AF_UNIX) as local:
+                local.settimeout(1); local.connect(str(traffic.API_SOCKET))
+            api_ok = True
+        except OSError:
+            api_ok = False
+        add("Private Xray statistics socket", api_ok, str(traffic.API_SOCKET), "Check the Xray runtime directory owner/mode and restart the managed core.")
         ok, detail = command([str(XRAY_BINARY), "run", "-test", "-config", str(CONFIG_FILE)], timeout=20)
         add("Xray configuration", ok, detail, "Review journalctl -u abdulbasit-xray.")
     domain = read_text(DOMAIN_FILE)
@@ -76,5 +84,15 @@ def report(_: dict) -> dict:
     # timedatectl queries the actual synchronization state; systemctl unit properties do not.
     ok, detail = command([shutil.which("timedatectl") or "/usr/bin/timedatectl", "show", "--property=NTPSynchronized", "--value"])
     add("System clock synchronized", ok and detail == "yes", detail, "Enable an NTP service. VMess requires an accurate clock.")
+    import slowdns
+    tunnel = slowdns.settings()
+    if tunnel["enabled"]:
+        ok, detail = command([shutil.which("systemctl") or "/bin/systemctl", "is-active", "abdulbasit-dnstt"])
+        add("SlowDNS service", ok and detail == "active", detail, "Inspect its journal, UDP port conflict and installed core.")
+        try:
+            delegation = slowdns.Manager(lambda args, **kw: subprocess.run(args, check=True, text=True, capture_output=True, timeout=kw.get("timeout", 6))).check({})
+            add("SlowDNS delegation", delegation["dns_ok"], str(delegation["records"]), delegation["hint"])
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            add("SlowDNS delegation", False, type(exc).__name__, "Check NS/A records at the DNS provider and allow the UDP listener externally.")
     return {"checks": checks, "passed": sum(x["ok"] for x in checks), "total": len(checks),
             "external_test_required": "Provider firewall and real client connections must be checked on the deployed VPS."}

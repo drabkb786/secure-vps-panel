@@ -5,6 +5,7 @@ let csrf = '', state = null, createMode = 'xray', renewTarget = null, confirmRes
 let noticeTimer;
 let currentExport = null;
 let currentSubscription = null;
+let trialMode = false, usageTarget = null;
 
 function notify(message, error = false) {
   const box = $('notice'); box.textContent = message; box.classList.toggle('error', error); box.hidden = false;
@@ -60,7 +61,7 @@ function showApp(session) {
 function view(name) {
   document.querySelectorAll('.view').forEach(n => { n.hidden = n.id !== `view-${name}`; });
   document.querySelectorAll('.nav').forEach(n => n.classList.toggle('active', n.dataset.view === name));
-  setText('breadcrumb', {overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', diagnostics: 'Diagnostics', recovery: 'Backup & recovery'}[name]);
+  setText('breadcrumb', {overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', diagnostics: 'Diagnostics', recovery: 'Backup & recovery', traffic: 'Traffic & connections', transports: 'UDP & SlowDNS', system: 'System toolbox', maintenance: 'Telegram & maintenance'}[name]);
 }
 const size = (value) => !Number.isFinite(value) ? '—' : value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)} GB` : `${(value / 1024 ** 2).toFixed(0)} MB`;
 const percent = (used, total) => total > 0 ? Math.max(0, Math.min(100, used / total * 100)) : 0;
@@ -70,16 +71,17 @@ function emptyRow(body, columns, text) {
 }
 function profileRows(id, rows, controls) {
   const body = $(id); body.replaceChildren();
-  if (!rows.length) { emptyRow(body, 5, 'No profiles yet. Enable Xray, then create your first profile.'); return; }
+  if (!rows.length) { emptyRow(body, controls ? 6 : 5, 'No matching profiles. Create an account or change your filter.'); return; }
   rows.forEach(row => {
     const tr = element('tr'); tr.append(element('td', 'mono', row.name));
-    const protocols = element('td'); protocols.append(tags(row.protocols)); tr.append(protocols, element('td', 'mono muted', row.expiry));
-    const status = element('td'); status.append(pill(row.active ? 'Active' : row.enabled === false ? 'Disabled' : 'Expired', row.active ? 'good' : 'warn')); tr.append(status);
+    const protocols = element('td'); protocols.append(tags(row.protocols)); if (row.trial) protocols.append(pill('24H TRIAL', 'warn')); tr.append(protocols, element('td', 'mono muted', row.expires_at ? new Date(row.expires_at).toLocaleString() : row.expiry));
+    const status = element('td'); status.append(pill(row.active ? 'Active' : row.enabled === false ? 'Locked' : row.quota_exhausted ? 'Quota reached' : 'Expired', row.active ? 'good' : 'warn')); tr.append(status);
+    if (controls) { const usage = element('td', 'usage-cell'); usage.append(element('strong', 'mono', `${size(row.used_bytes || 0)} / ${row.quota_gb == null ? 'Unlimited' : row.quota_gb + ' GB'}`)); if (row.quota_gb) { const meter = element('meter'); meter.min = 0; meter.max = 100; meter.value = percent(row.used_bytes || 0, row.quota_gb * 1024 ** 3); meter.setAttribute('aria-label', `${row.name} quota utilization`); usage.append(meter); } tr.append(usage); }
     const actions = element('td'), group = element('div', 'row-actions');
     if (row.active) group.append(button('Export ↗', () => exportProfile(row.name)));
     if (controls) {
       group.append(button('Subscription', () => openSubscription(row)));
-      group.append(button('Renew', () => openRenew('xray', row.name)), button(row.enabled === false ? 'Enable' : 'Disable', () => command('xray_update', {name: row.name, action: 'toggle', enabled: row.enabled === false}, 'Profile updated')),
+      group.append(button('Limits', () => openUsage('xray', row)), button('Renew', () => openRenew('xray', row.name)), button(row.enabled === false ? 'Unlock' : 'Lock', () => command('xray_update', {name: row.name, action: 'toggle', enabled: row.enabled === false}, 'Profile updated')),
         button('Delete', async () => { if (await confirmAction(`Delete Xray profile “${row.name}”? Its import links will stop working.`)) await command('xray_update', {name: row.name, action: 'delete'}, 'Profile deleted'); }, 'delete'));
     }
     actions.append(group); tr.append(actions); body.append(tr);
@@ -101,7 +103,7 @@ function render() {
   setText('stat-access', `${s.users.length} SSH accounts · ${s.sessions.reduce((sum, x) => sum + x.count, 0)} sessions`);
   setText('service-total', `${running}/${services.length} running`);
   const serviceList = $('service-list'); serviceList.replaceChildren();
-  const labels = {nginx: 'Nginx gateway', dropbear: 'Dropbear SSH', 'abdulbasit-ws': 'SSH upgrade proxy', 'abdulbasit-session-enforcer': 'Session enforcer', 'abdulbasit-bot': 'Telegram bot', 'abdulbasit-paneld': 'Panel daemon', 'abdulbasit-web': 'Web dashboard', 'abdulbasit-xray': 'Xray core'};
+  const labels = {nginx: 'Nginx gateway', dropbear: 'Dropbear SSH', 'abdulbasit-ws': 'SSH upgrade proxy', 'abdulbasit-session-enforcer': 'Session enforcer', 'abdulbasit-bot': 'Telegram bot', 'abdulbasit-paneld': 'Panel daemon', 'abdulbasit-web': 'Web dashboard', 'abdulbasit-xray': 'Xray core', 'abdulbasit-dnstt': 'SlowDNS tunnel'};
   services.forEach(([service, status]) => {
     const row = element('div', 'service-row'); row.append(element('span', `service-dot ${status === 'active' ? 'good' : ''}`), element('strong', '', labels[service] || service), element('span', 'service-label', status));
     if (!['abdulbasit-paneld', 'abdulbasit-web', 'abdulbasit-bot'].includes(service)) {
@@ -116,18 +118,23 @@ function render() {
     detail.append(element('strong', '', endpoint.protocol.toUpperCase()), element('p', '', `${endpoint.transport.toUpperCase()}  /  ${endpoint.path}`));
     row.append(element('span', 'protocol-symbol', ['V', 'M', 'T', 'X'][i] || 'X'), detail, pill(s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'Ready' : 'Offline', s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'good' : '')); protocols.append(row);
   }
-  profileRows('overview-profiles', s.accounts.slice(0, 4), false); profileRows('xray-accounts', s.accounts, true);
+  profileRows('overview-profiles', s.accounts.slice(0, 4), false); renderProfiles(); renderTraffic();
   const users = $('ssh-users'); users.replaceChildren();
   if (!s.users.length) emptyRow(users, 5, 'No SSH accounts yet. Create an account to grant access.');
   s.users.forEach(user => {
     const tr = element('tr'); tr.append(element('td', 'mono', user.username), element('td', 'mono muted', user.expiry), element('td', '', `${(s.sessions.find(x => x.username === user.username) || {}).count || 0} / ${user.max_sessions}`), element('td', 'muted', user.quota_gb == null ? 'Unlimited · metadata' : `${user.quota_gb} GB · metadata`));
-    const td = element('td'), actions = element('div', 'row-actions'); actions.append(button('Renew', () => openRenew('ssh', user.username)), button('Delete', async () => { if (await confirmAction(`Delete SSH account “${user.username}”? Its active sessions will be disconnected.`)) await command('delete_user', {username: user.username}, 'Account deleted'); }, 'delete')); td.append(actions); tr.append(td); users.append(tr);
+    const td = element('td'), actions = element('div', 'row-actions'); actions.append(button('Limits', () => openUsage('ssh', user)), button(user.enabled === false ? 'Unlock' : 'Lock', () => command('set_user_lock', {username: user.username, enabled: user.enabled === false}, 'SSH account updated')), button('Renew', () => openRenew('ssh', user.username)), button('Delete', async () => { if (await confirmAction(`Delete SSH account “${user.username}”? Its active sessions will be disconnected.`)) await command('delete_user', {username: user.username}, 'Account deleted'); }, 'delete')); td.append(actions); tr.append(td); users.append(tr);
   });
   setText('xray-summary', `${s.xray_installed ? 'Installed' : 'Core not installed · run install.sh --with-xray'} · ${s.network.enabled ? 'Enabled' : 'Disabled'} · TLS on port 443`);
   $('toggle-xray').textContent = s.network.enabled ? 'Disable Xray' : 'Enable Xray';
   $('toggle-xray').classList.toggle('primary', !s.network.enabled); $('toggle-xray').disabled = !s.xray_installed || $('toggle-xray').hasAttribute('aria-busy');
   $('toggle-xhttp').textContent = s.network.xhttp_enabled ? 'Disable XHTTP' : 'Enable XHTTP';
   $('toggle-xhttp').disabled = !s.network.enabled || $('toggle-xhttp').hasAttribute('aria-busy');
+  setText('udp-state', s.network.udp_enabled === false ? 'UDP blocked' : 'UDP forwarding allowed');
+  $('toggle-udp').disabled = !s.network.enabled;
+  const slow = s.slowdns || {};
+  setText('slowdns-state', !slow.installed ? 'Core not installed' : slow.enabled ? 'Enabled' : 'Disabled');
+  if (!$('slowdns-form').contains(document.activeElement)) { $('slowdns-zone').value = slow.zone || ''; $('slowdns-ns').value = slow.ns_host || ''; $('slowdns-port').value = slow.port || 53; }
   if (!$('domain-form').contains(document.activeElement)) $('domain-input').value = s.domain === 'Not set' ? '' : s.domain;
   if (!$('dns-form').contains(document.activeElement)) { $('dns-servers').value = s.network.dns.servers.join('\n'); $('dns-strategy').value = s.network.dns.query_strategy; }
   setText('connection-state', 'Connected'); $('connection-state').classList.add('online'); setText('last-updated', `Updated ${new Date().toLocaleTimeString()}`);
@@ -139,10 +146,14 @@ async function refresh() {
   catch (err) { setText('connection-state', 'Disconnected'); $('connection-state').classList.remove('online'); throw err; }
   finally { refreshing = false; $('refresh').classList.remove('refreshing'); }
 }
-function openCreate(mode) {
+function openCreate(mode, trial = false) {
+  trialMode = trial;
   createMode = mode; $('create-form').reset(); $('ssh-fields').hidden = mode !== 'ssh'; $('protocol-fields').hidden = mode === 'ssh';
   $('create-form').elements.password.required = mode === 'ssh';
-  setText('create-title', mode === 'ssh' ? 'New SSH account' : 'New Xray profile'); $('create-dialog').showModal();
+  $('xray-fields').hidden = mode === 'ssh'; $('trial-note').hidden = !trial;
+  $('create-form').elements.days.disabled = trial;
+  if (trial) { $('create-form').elements.days.value = 1; $('create-form').elements.xray_quota.value = '1'; }
+  setText('create-title', mode === 'ssh' ? 'New SSH account' : trial ? '24-hour Xray trial' : 'New VIP profile'); $('create-dialog').showModal();
 }
 function openRenew(type, name) { renewTarget = {type, name}; setText('renew-name', name); $('renew-form').reset(); $('renew-dialog').showModal(); }
 function confirmAction(message) {
@@ -196,6 +207,7 @@ function bindForm(id, handler) {
 }
 document.querySelectorAll('[data-view]').forEach(btn => btn.addEventListener('click', () => view(btn.dataset.view)));
 document.querySelectorAll('[data-new]').forEach(btn => btn.addEventListener('click', () => openCreate(btn.dataset.new)));
+document.querySelectorAll('[data-trial]').forEach(btn => btn.addEventListener('click', () => openCreate('xray', true)));
 document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => $(btn.dataset.close).close()));
 $('confirm-dialog').addEventListener('close', () => { if (confirmResolve) { confirmResolve(false); confirmResolve = null; } });
 $('confirm-form').addEventListener('submit', event => { event.preventDefault(); const resolve = confirmResolve; confirmResolve = null; $('confirm-dialog').close(); if (resolve) resolve(true); });
@@ -237,8 +249,8 @@ bindForm('login-form', async data => {
   catch (err) { setText('login-error', err.message); }
 });
 bindForm('create-form', async data => {
-  const name = data.get('name'), days = Number(data.get('days'));
-  const params = createMode === 'ssh' ? {username: name, days, password: data.get('password'), max_sessions: Number(data.get('sessions')), quota_gb: data.get('quota')} : {name, days, protocols: ['vless', 'vmess', 'trojan'].filter(p => data.has(p))};
+  const name = data.get('name'), days = trialMode ? 1 : Number(data.get('days'));
+  const params = createMode === 'ssh' ? {username: name, days, password: data.get('password'), max_sessions: Number(data.get('sessions')), quota_gb: data.get('quota')} : {name, days, trial: trialMode, quota_gb: data.get('xray_quota'), protocols: ['vless', 'vmess', 'trojan'].filter(p => data.has(p))};
   await command(createMode === 'ssh' ? 'create_user' : 'xray_create', params, 'Account created'); $('create-dialog').close();
   if (createMode === 'xray') { view('xray'); await exportProfile(name); }
 });
@@ -277,6 +289,74 @@ $('run-diagnostics').addEventListener('click', () => busy($('run-diagnostics'), 
     if (check.hint) detail.append(element('p', 'hint', check.hint)); row.append(pill(check.ok ? 'PASS' : 'CHECK', check.ok ? 'good' : 'warn'), detail); list.append(row);
   });
 }));
+function renderProfiles() {
+  if (!state) return;
+  const search = $('profile-search').value.trim().toLowerCase(), filter = $('profile-filter').value;
+  profileRows('xray-accounts', state.accounts.filter(row => row.name.includes(search) && (filter === 'all' || filter === 'active' && row.active || filter === 'locked' && row.enabled === false || filter === 'trial' && row.trial || filter === 'quota' && row.quota_exhausted)), true);
+}
+function renderTraffic() {
+  const rows = state.accounts, up = rows.reduce((n, r) => n + (r.upload_bytes || 0), 0), down = rows.reduce((n, r) => n + (r.download_bytes || 0), 0);
+  setText('traffic-total', size(up + down)); setText('traffic-up', size(up)); setText('traffic-down', size(down));
+  setText('traffic-sampled', state.traffic?.sampled_at ? `Sampled ${new Date(state.traffic.sampled_at).toLocaleString()}` : 'No successful core sample yet');
+  const body = $('traffic-profiles'); body.replaceChildren();
+  if (!rows.length) emptyRow(body, 5, 'Create an Xray profile to measure its usage.');
+  rows.forEach(row => { const tr = element('tr'); tr.append(element('td', 'mono', row.name), element('td', 'mono', size(row.upload_bytes || 0)), element('td', 'mono', size(row.download_bytes || 0)), element('td', 'mono', `${size(row.used_bytes || 0)} / ${row.quota_gb == null ? 'Unlimited' : row.quota_gb + ' GB'}`), element('td', '', row.quota_exhausted ? 'Quota reached' : row.active ? 'Active' : 'Inactive')); body.append(tr); });
+}
+function showResult(title, result) {
+  setText('result-title', title); setText('operation-result', typeof result === 'string' ? result : JSON.stringify(result, null, 2)); $('result-dialog').showModal();
+}
+async function operation(name, params = {}) { return api('command', {command: name, params}); }
+function openUsage(type, row) {
+  usageTarget = {type, name: type === 'ssh' ? row.username : row.name};
+  setText('usage-title', usageTarget.name + ' · limits');
+  setText('usage-scope', type === 'ssh' ? 'SSH GB is metadata only. Concurrent session limits are enforced.' : 'Xray payload bytes are sampled every minute. Quota exhaustion removes this profile from the core within the next cycle.');
+  $('usage-quota').value = row.quota_gb == null ? 'Unlimited' : row.quota_gb;
+  $('usage-sessions-label').hidden = type !== 'ssh'; $('usage-sessions').value = row.max_sessions || 2;
+  $('reset-usage').hidden = type === 'ssh'; $('usage-dialog').showModal();
+}
+$('profile-search').addEventListener('input', renderProfiles); $('profile-filter').addEventListener('change', renderProfiles);
+bindForm('usage-form', async data => {
+  const target = usageTarget;
+  if (target.type === 'ssh') { await command('set_quota', {username: target.name, quota_gb: data.get('quota')}); await command('set_sessions', {username: target.name, max_sessions: Number(data.get('sessions'))}); }
+  else await command('xray_update', {name: target.name, action: 'quota', quota_gb: data.get('quota')}, 'Quota updated');
+  $('usage-dialog').close();
+});
+$('reset-usage').addEventListener('click', () => busy($('reset-usage'), async () => {
+  if (usageTarget?.type === 'xray' && await confirmAction(`Reset measured traffic for ${usageTarget.name}? Its quota allowance starts again.`)) { await command('xray_update', {name: usageTarget.name, action: 'reset_usage'}, 'Measured usage reset'); $('usage-dialog').close(); }
+}));
+$('sample-traffic').addEventListener('click', () => busy($('sample-traffic'), async () => {
+  const sample = await operation('traffic_sample'); await refresh();
+  const live = await operation('live_connections');
+  setText('traffic-note', sample.available ? (sample.note || 'Core sample updated. SSH usage is excluded.') : sample.reason);
+  const auth = live.xray?.connections || [], peers = live.gateway_peers || [];
+  setText('online-total', live.xray?.available ? String(new Set(auth.map(row => row.ip)).size) : 'Unavailable');
+  for (const [id, rows, authenticated] of [['authenticated-ips', auth, true], ['gateway-ips', peers, false]]) {
+    const box = $(id); box.replaceChildren();
+    if (!rows.length) box.append(element('p', 'muted', authenticated ? live.xray?.available ? 'No authenticated activity in the current window.' : live.xray?.note || 'Core API unavailable.' : 'No external TCP peers observed.'));
+    rows.forEach(row => { const item = element('div', 'connection-item'); item.append(element('strong', 'mono', row.ip), element('span', 'small muted', authenticated ? row.email : `${row.transport} · :${row.port} · account unverified`)); box.append(item); });
+  }
+}));
+for (const [id, name, title] of [['view-config', 'config_view', 'Managed configuration · credentials redacted'], ['doctor-inspect', 'doctor', 'Auto-doctor report'], ['memory-report', 'memory_report', 'Memory report']]) {
+  $(id).addEventListener('click', () => busy($(id), async () => showResult(title, await operation(name))));
+}
+$('doctor-repair').addEventListener('click', () => busy($('doctor-repair'), async () => {
+  if (await confirmAction('Restart failed managed services after validating Nginx? This can reconnect clients. DNS provider/firewall settings are not changed.')) showResult('Repair results', await operation('doctor', {repair: true}));
+}));
+$('restart-managed').addEventListener('click', () => busy($('restart-managed'), async () => {
+  if (await confirmAction('Restart the managed gateway, Dropbear and enabled transports? Connected clients may disconnect.')) { showResult('Gateway restart', await operation('restart_managed')); await refresh(); }
+}));
+$('read-logs').addEventListener('click', () => busy($('read-logs'), async () => { const result = await operation('live_logs', {service: $('log-service').value, level: $('log-level').value}); showResult((result.service || $('log-service').value) + ' · journal', result.text || 'No matching journal entries.'); }));
+$('packet-test').addEventListener('click', () => busy($('packet-test'), async () => { notify('Sending 15 ICMP probes…'); const result = await operation('packet_test', {target: $('packet-target').value}); showResult('Packet test · ' + result.target, result.text + '\n\n' + result.note); }));
+$('load-banner').addEventListener('click', () => busy($('load-banner'), async () => { const result = await operation('banner_get'); $('banner-text').value = result.text; $('save-banner').disabled = false; }));
+bindForm('banner-form', async data => { if (await confirmAction('Save this Dropbear banner and restart managed SSH?')) await command('banner_set', {text: data.get('text')}, 'SSH banner saved'); });
+$('toggle-udp').addEventListener('click', () => busy($('toggle-udp'), async () => { if (await confirmAction('Change authenticated UDP forwarding policy and restart Xray?')) await command('xray_configure', {enabled: true, udp_enabled: state.network.udp_enabled === false}, 'UDP policy saved'); }));
+bindForm('slowdns-form', async data => {
+  if (await confirmAction('Enable the DNS tunnel on the selected UDP port? An official core, NS delegation and external firewall access are required.')) await command('slowdns_configure', {enabled: true, zone: data.get('zone'), ns_host: data.get('ns_host'), port: Number(data.get('port'))}, 'DNS tunnel enabled');
+});
+$('disable-slowdns').addEventListener('click', () => busy($('disable-slowdns'), async () => { if (await confirmAction('Disable the DNS tunnel and disconnect its clients?')) await command('slowdns_configure', {enabled: false}, 'DNS tunnel disabled'); }));
+$('check-slowdns').addEventListener('click', () => busy($('check-slowdns'), async () => { const result = await operation('slowdns_check'); setText('slowdns-result', JSON.stringify(result, null, 2)); $('slowdns-result').hidden = false; }));
+$('copy-result').addEventListener('click', () => busy($('copy-result'), async () => { try { await navigator.clipboard.writeText($('operation-result').textContent); notify('Result copied'); } catch (_) { notify('Select the visible result and copy manually.'); } }));
+document.querySelectorAll('.command-snippet').forEach(box => { const code = box.querySelector('code'); box.append(button('Copy', async () => { try { await navigator.clipboard.writeText(code.textContent); notify('Command copied'); } catch (_) { notify('Select and copy the visible command.'); } }, 'btn small copy-command')); });
 setInterval(() => { if (csrf && document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) refresh().catch(() => {}); }, 30000);
 (async () => {
   try { const session = await api('session'); showApp(session); await refresh(); }

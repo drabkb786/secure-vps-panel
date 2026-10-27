@@ -92,7 +92,7 @@ def enforce_once() -> None:
             expired = date.fromisoformat(expiry_text) <= today
         except ValueError:
             expired = False
-        if expired:
+        if expired or data.get("enabled", True) is False:
             LOG.warning("Terminating %d expired sessions for %s", len(pids), username)
             terminate(pids, uid)
             continue

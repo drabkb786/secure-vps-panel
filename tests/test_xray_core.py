@@ -5,6 +5,7 @@ import json
 import base64
 import os
 import socket
+import socketserver
 import struct
 import subprocess
 import threading
@@ -98,7 +99,7 @@ def imported_profile_from_uri(link):
         stream.pop("wsSettings"); stream["network"] = "xhttp"
         stream["xhttpSettings"] = {"path": path, "host": host, "mode": query["mode"][0]}
     return {"log": {"loglevel": "warning"},
-            "inbounds": [{"listen": "127.0.0.1", "port": 10808, "protocol": "socks", "settings": {"auth": "noauth"}}],
+            "inbounds": [{"listen": "127.0.0.1", "port": 10808, "protocol": "socks", "settings": {"auth": "noauth", "udp": True}}],
             "outbounds": [{"protocol": protocol, "settings": outbound_settings,
                            "streamSettings": stream}]}
 
@@ -114,6 +115,8 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
     if not nginx:
         pytest.skip("TLS gateway integration requires NGINX_TEST_BINARY")
     row = record(); server_cfg = server_config({"dns": DEFAULT_DNS, "xhttp_enabled": source == "xhttp_link"}, [row])
+    api_socket = tmp_path / "stats.sock"
+    server_cfg["api"]["listen"] = str(api_socket)
     server_cfg["log"]["loglevel"] = "debug"
     ports = {path: free_port() for _, path in PROTOCOLS.values()}
     if source == "xhttp_link": ports[XHTTP_PATH] = free_port()
@@ -130,6 +133,13 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
     threading.Thread(target=http.serve_forever, daemon=True).start()
     server_cfg["routing"]["rules"].insert(0, {"type": "field", "ip": ["127.0.0.1"], "port": str(http.server_port), "outboundTag": "direct"})
     server_cfg["outbounds"][0]["settings"]["finalRules"] = [{"action": "allow", "network": "tcp", "ip": ["127.0.0.1"], "port": str(http.server_port)}]
+    class UDPEcho(socketserver.BaseRequestHandler):
+        def handle(self):
+            data, sock = self.request; sock.sendto(data, self.client_address)
+    udp = socketserver.UDPServer(("127.0.0.1", 0), UDPEcho)
+    threading.Thread(target=udp.serve_forever, daemon=True).start()
+    server_cfg["routing"]["rules"].insert(0, {"type": "field", "ip": ["127.0.0.1"], "network": "udp", "port": str(udp.server_address[1]), "outboundTag": "direct"})
+    server_cfg["outbounds"][0]["settings"]["finalRules"].append({"action": "allow", "network": "udp", "ip": ["127.0.0.1"], "port": str(udp.server_address[1])})
 
     key, cert = tmp_path / "key.pem", tmp_path / "cert.pem"
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com", "-addext", "subjectAltName=DNS:vpn.example.com"], check=True, capture_output=True, timeout=20)
@@ -145,6 +155,7 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
         site = re.sub(r"^\s*listen \[::\]:[^\n]*\n", "", site, flags=re.MULTILINE)
         site = site.replace("listen 80;", f"listen 127.0.0.1:{http_port};").replace("listen 443 ssl http2;", f"listen 127.0.0.1:{front_port} ssl http2;")
         site = site.replace("/etc/letsencrypt/live/vpn.example.com/fullchain.pem", str(cert)).replace("/etc/letsencrypt/live/vpn.example.com/privkey.pem", str(key))
+        site = site.replace("X-Forwarded-For $remote_addr;", "X-Forwarded-For 198.51.100.42;")
         for protocol, (port, endpoint_path) in PROTOCOLS.items():
             site = site.replace(f"127.0.0.1:{port}", f"127.0.0.1:{ports[endpoint_path]}")
         if source == "xhttp_link":
@@ -160,6 +171,8 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
             cfg = client_config(protocol, row, "vpn.example.com", DEFAULT_DNS) if source == "json" else imported_profile_from_uri(share_link(protocol, row, "vpn.example.com"))
             cfg["log"]["loglevel"] = "debug"
             proxy = cfg["outbounds"][0]; proxy["streamSettings"]["tlsSettings"]["certificates"] = [{"certificateFile": str(cert), "usage": "verify"}]
+            transport_settings = proxy["streamSettings"].get("wsSettings", proxy["streamSettings"].get("xhttpSettings"))
+            transport_settings.setdefault("headers", {}).update({"X-Forwarded-For": "203.0.113.66", "X-Noway-Gateway": "client-spoof"})
             endpoint = proxy["settings"]["servers" if protocol == "trojan" else "vnext"][0]
             endpoint.update({"address": "127.0.0.1", "port": front_port})
             port = free_port(); cfg["inbounds"][0]["port"] = port
@@ -179,6 +192,22 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
                         if not data: break
                         response += data
                     assert b"NOWAY verified transport test" in response, protocol
+                # Exercise a real SOCKS5 UDP association through the same TLS
+                # transport. Only the fixture's loopback UDP port is allowed.
+                with socket.create_connection(("127.0.0.1", port), timeout=10) as control, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as packet:
+                    control.sendall(b"\x05\x01\x00"); assert read_exact(control, 2) == b"\x05\x00"
+                    control.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+                    reply = read_exact(control, 10); assert reply[:4] == b"\x05\x00\x00\x01"
+                    relay_port = struct.unpack("!H", reply[-2:])[0]
+                    packet.settimeout(8)
+                    payload = b"NOWAY verified UDP forwarding"
+                    packet.sendto(b"\x00\x00\x00\x01\x7f\x00\x00\x01" + struct.pack("!H", udp.server_address[1]) + payload, ("127.0.0.1", relay_port))
+                    answer, _ = packet.recvfrom(65536); assert answer.endswith(payload)
+                    measured = subprocess.run([CORE, "api", "statsquery", "--server=unix://" + str(api_socket), "-pattern=user>>>"], check=True, capture_output=True, text=True, timeout=5)
+                    values = json.loads(measured.stdout).get("stat", [])
+                    assert any(int(x.get("value", 0)) > 0 and row["name"] in x["name"] for x in values)
+                    online = subprocess.run([CORE, "api", "statsonlineiplist", "--server=unix://" + str(api_socket), "-all"], check=True, capture_output=True, text=True, timeout=5)
+                    assert "198.51.100.42" in online.stdout, online.stdout
             except Exception as exc:
                 log.flush(); server_log.flush(); front_log.flush()
                 logs = "\n".join(f"{p.name}:\n{p.read_text()}" for p in tmp_path.glob("*.log"))
@@ -189,4 +218,4 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
         if front_proc is not None:
             front_proc.terminate(); front_proc.wait(timeout=5); front_log.close()
         server_proc.terminate(); server_proc.wait(timeout=5); server_log.close()
-        http.shutdown(); http.server_close()
+        http.shutdown(); http.server_close(); udp.shutdown(); udp.server_close()

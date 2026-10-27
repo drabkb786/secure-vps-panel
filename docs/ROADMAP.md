@@ -12,7 +12,7 @@
 
 ## Deployment gate — requires the actual VPS
 
-- Back up the existing installation, then install v3.1 on Ubuntu/Debian.
+- Back up the existing installation, then install v3.2 on Ubuntu/Debian.
 - Verify the public domain's A/AAAA records, ACME issuance and provider firewall.
 - Run diagnostics and import each profile into the user's actual client/device.
 - Check browser login, reconnect after restart, renewal and certificate renewal on that host.
@@ -36,10 +36,21 @@ The bounded comparison and adoption decisions are in [PANEL_RESEARCH.md](PANEL_R
 - REALITY presets, additional transport choices and live gRPC config application.
   Current Xray emits deprecation notices for legacy WS, VMess and Trojan; those
   requested compatibility protocols still work in the tested pinned core.
-- Enforced bandwidth quotas and live traffic accounting through the Xray statistics API; existing SSH quotas remain metadata.
-- DNS-provider API record editing, authoritative DNS or a SlowDNS transport, if specifically requested. The v3 DNS page configures resolvers and checks records; it is not a public DNS server.
+- Validated per-account SSH byte accounting and exact packet-level quota cutoff;
+  v3.2 already provides Xray sampled payload accounting/quotas and activity IPs.
+- DNS-provider API record editing and a general authoritative DNS service.
+  v3.2 already provides an optional dnstt tunnel and delegation checks; resolver
+  settings remain distinct from DNS provider records.
 - Xray profile creation inside Telegram, multi-role web accounts, multi-node management,
   first-use expiry, signed updates and encrypted full-system backup workflows.
   Existing profile export and scoped Xray recovery are implemented.
 
 These follow-ups must preserve working credentials, profiles and SSH administration.
+
+## Implemented in v3.2 from the reference menu
+
+Exact 24-hour Xray trials, sampled payload quotas/reset, authenticated recent IPs,
+SSH/Xray locks, UDP policy, official dnstt SlowDNS integration, operations/logs/
+packet tests, SSH banner editing and explicit root maintenance are implemented.
+See [OPERATIONS.md](OPERATIONS.md) for the complete 20-control mapping and precise
+scope. Multi-node, REALITY and exact SSH byte quotas are not claimed.

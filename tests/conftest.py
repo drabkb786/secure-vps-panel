@@ -5,10 +5,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pytest
 import xray_manager as xray
+import traffic
 
 
 @pytest.fixture
 def manager(tmp_path, monkeypatch):
+    monkeypatch.setattr(traffic, "STATE_FILE", tmp_path / "traffic.json")
     for attr, value in {"SETTINGS_FILE": tmp_path / "network.json", "BACKUP_DIR": tmp_path / "backups", "ACCOUNTS_FILE": tmp_path / "accounts.json",
                         "CONFIG_DIR": tmp_path / "xray", "CONFIG_FILE": tmp_path / "xray/config.json",
                         "ENABLED_FILE": tmp_path / "xray/enabled", "DOMAIN_FILE": tmp_path / "domain",

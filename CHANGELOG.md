@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.2.0 — operations desk and measured usage
+
+- Map the reference screenshot's 20 controls to original NOWAY browser/terminal
+  workflows; add profile filters, daily-action cards and dedicated operations screens.
+- Add exact 24-hour Xray trial timestamps, measured per-profile traffic, sampled
+  GB quota enforcement, reset baselines and credential-preserving lock/unlock.
+- Add a private UNIX-socket StatsService and persistent authoritative counters,
+  authenticated recent IPs and separately labelled gateway peers. Overwrite and
+  test forwarded headers through the real Nginx gateway.
+- Add SSH lock/expiry enforcement, preserve manual locks during renewals, and
+  provide transactional Dropbear banners and redacted configuration viewing.
+- Add bounded logs, packet-loss/latency checks, doctor inspection/repair and
+  config-checked managed gateway restarts.
+- Add authenticated Xray UDP policy and optional official dnstt DNS tunnelling,
+  pinned/checksum-verified build tooling, an isolated service, delegation/port
+  checks and private key handling. Existing DNS services are not overwritten.
+- Add root-terminal cache/journal maintenance, checkpointed reinstall and scoped
+  uninstall with typed confirmation. Destructive maintenance is absent from HTTP APIs.
+- Extend private Xray recovery to quotas, trials, usage and damaged counter-state
+  recovery. Test real UDP traffic, native statistics/IPs and official dnstt TCP round trips.
+
 ## 3.1.0 — subscriptions, client formats and recovery
 
 - Compared 10 relevant GitHub panels/installers and two upstream references;

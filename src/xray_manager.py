@@ -19,16 +19,17 @@ import subprocess
 import tempfile
 import time
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import quote, urlencode, urlsplit
 
 from client_formats import clash_config, singbox_config
 import profile_backup
+import traffic
 
 from common import (BASE_DIR, DOMAIN_FILE, ValidationError, atomic_write,
                     atomic_write_json, calculate_expiry, read_json, read_text,
-                    validate_days, validate_domain, validate_username)
+                    validate_days, validate_domain, validate_username, validate_quota)
 
 SETTINGS_FILE = BASE_DIR / "network.json"
 ACCOUNTS_FILE = BASE_DIR / "xray_accounts.json"
@@ -48,7 +49,7 @@ def settings() -> dict:
     data = read_json(SETTINGS_FILE, None) if SETTINGS_FILE.exists() else {}
     if not isinstance(data, dict):
         raise RuntimeError("Network settings are unreadable or invalid; restore a known-good backup")
-    return {"enabled": False, "xhttp_enabled": False, "dns": dict(DEFAULT_DNS), **data}
+    return {"enabled": False, "xhttp_enabled": False, "udp_enabled": True, "dns": dict(DEFAULT_DNS), **data}
 
 
 def accounts() -> list[dict]:
@@ -60,14 +61,21 @@ def accounts() -> list[dict]:
 
 def active(account: dict, today: date | None = None) -> bool:
     try:
-        return account.get("enabled", True) is True and date.fromisoformat(account["expiry"]) > (today or date.today())
+        eligible = account.get("enabled", True) is True and not quota_exhausted(account)
+        if account.get("expires_at"):
+            return eligible and datetime.fromisoformat(account["expires_at"]) > datetime.now(timezone.utc)
+        return eligible and date.fromisoformat(account["expiry"]) > (today or date.today())
     except (KeyError, ValueError, TypeError):
         return False
 
 
+def quota_exhausted(account: dict) -> bool:
+    return account.get("quota_gb") is not None and int(account.get("used_bytes", 0)) >= float(account["quota_gb"]) * 1024 ** 3
+
+
 def public_account(account: dict) -> dict:
-    fields = {"name", "protocols", "enabled", "expiry", "created_at"}
-    return {k: v for k, v in account.items() if k in fields} | {"active": active(account), "subscription_enabled": bool(account.get("subscription_hash"))}
+    fields = {"name", "protocols", "enabled", "expiry", "created_at", "expires_at", "trial", "quota_gb", "used_bytes", "upload_bytes", "download_bytes"}
+    return {k: v for k, v in account.items() if k in fields} | {"active": active(account), "quota_exhausted": quota_exhausted(account), "subscription_enabled": bool(account.get("subscription_hash"))}
 
 
 def validate_dns(params: dict) -> dict:
@@ -127,15 +135,20 @@ def server_config(config: dict, rows: list[dict]) -> dict:
         inbounds.append({
             "tag": f"noway-{protocol}", "listen": "127.0.0.1", "port": port,
             "protocol": protocol, "settings": inbound_settings,
-            "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": path}},
+            "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": path},
+                               "sockopt": {"trustedXForwardedFor": ["X-Noway-Gateway"]}},
         })
     if config.get("xhttp_enabled"):
         clients = [{"id": row["uuid"], "email": f"{row['name']}-xhttp@noway.local"} for row in rows if active(row) and "vless" in row["protocols"]]
         inbounds.append({"tag": "noway-xhttp", "listen": "127.0.0.1", "port": XHTTP_PORT,
                          "protocol": "vless", "settings": {"clients": clients, "decryption": "none"},
-                         "streamSettings": {"network": "xhttp", "security": "none", "xhttpSettings": {"path": XHTTP_PATH, "mode": "auto"}}})
+                         "streamSettings": {"network": "xhttp", "security": "none", "xhttpSettings": {"path": XHTTP_PATH, "mode": "auto"},
+                                            "sockopt": {"trustedXForwardedFor": ["X-Noway-Gateway"]}}})
     return {
         "log": {"loglevel": "warning"},
+        "api": {"tag": "noway-stats", "listen": str(traffic.API_SOCKET), "services": ["StatsService"]},
+        "stats": {},
+        "policy": {"levels": {"0": {"statsUserUplink": True, "statsUserDownlink": True, "statsUserOnline": True}}},
         "dns": {"servers": dns["servers"], "queryStrategy": dns["query_strategy"]},
         "inbounds": inbounds,
         "outbounds": [
@@ -143,7 +156,7 @@ def server_config(config: dict, rows: list[dict]) -> dict:
             {"tag": "block", "protocol": "blackhole", "settings": {}},
         ],
         # Block private/link-local targets, including metadata services, after DNS resolution.
-        "routing": {"domainStrategy": "IPOnDemand", "rules": [{
+        "routing": {"domainStrategy": "IPOnDemand", "rules": ([] if config.get("udp_enabled", True) else [{"type": "field", "network": "udp", "outboundTag": "block"}]) + [{
             "type": "field", "ip": ["0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4", "::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"], "outboundTag": "block",
         }]},
     }
@@ -203,6 +216,8 @@ class Manager:
             for port in ports:
                 with socket.create_connection(("127.0.0.1", port), timeout=0.3):
                     pass
+            with socket.socket(socket.AF_UNIX) as stats_socket:
+                stats_socket.settimeout(0.3); stats_socket.connect(str(traffic.API_SOCKET))
             return True
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             return False
@@ -223,6 +238,36 @@ class Manager:
         if not XRAY_BINARY.is_file():
             raise ValidationError("Xray core is not installed; run install.sh --with-xray")
         return domain
+
+    def api(self, command, *args):
+        result = self.run([str(XRAY_BINARY), "api", command, "--server=" + traffic.API_ADDRESS, "-t=2", *args], timeout=4)
+        return json.loads(result.stdout)
+
+    def collect_usage(self, _=None):
+        if not settings()["enabled"]:
+            return {"available": False, "reason": "Xray is disabled"}
+        try:
+            response = self.api("statsquery", "-pattern=user>>>")
+            try:
+                epoch = self.run(["/bin/systemctl", "show", "abdulbasit-xray", "--property=InvocationID", "--value"], timeout=3).stdout.strip() or "unknown"
+            except (RuntimeError, OSError, AttributeError):
+                epoch = "unknown"
+        except (RuntimeError, OSError, AttributeError, ValueError, subprocess.TimeoutExpired):
+            return {"available": False, "reason": "Statistics API unavailable; saved totals retained"}
+        rows = accounts(); data = traffic.accumulate(rows, response, epoch)
+        # One authoritative atomic counter file prevents duplicate counting if a
+        # crash happens between persisting totals and refreshing account metadata.
+        atomic_write_json(traffic.STATE_FILE, data)
+        atomic_write_json(ACCOUNTS_FILE, rows)
+        return {"available": True, "sampled_at": data["sampled_at"], "accounts": [public_account(x) for x in rows],
+                "note": "Xray payload bytes; sampled every minute. In-flight bytes since the last sample may be lost on an unexpected core crash."}
+
+    def online(self, _):
+        try:
+            return {"available": True, "connections": traffic.ip_rows(self.api("statsonlineiplist", "-all")),
+                    "note": "Authenticated recent activity, about 20 seconds. Managed Nginx overwrites forwarded IP headers; the core trusts only its loopback gateway."}
+        except (RuntimeError, OSError, AttributeError, ValueError, subprocess.TimeoutExpired):
+            return {"available": False, "connections": [], "note": "Xray online API unavailable"}
 
     def apply(self, config: dict, rows: list[dict], *, force_restart: bool = False) -> None:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o750)
@@ -259,6 +304,7 @@ class Manager:
                 self.run(["/bin/systemctl", "restart" if config["enabled"] else "stop", "abdulbasit-xray"], timeout=30)
                 if config["enabled"]:
                     self.wait_running()
+                traffic.new_epoch()
         except Exception:
             for path, content in old.items():
                 if content is None:
@@ -291,17 +337,23 @@ class Manager:
         enabled = params.get("enabled")
         if not isinstance(enabled, bool):
             raise ValidationError("enabled must be a boolean")
+        self.collect_usage()
         cfg = settings()
         cfg["enabled"] = enabled
         if "xhttp_enabled" in params:
             if not isinstance(params["xhttp_enabled"], bool):
                 raise ValidationError("xhttp_enabled must be a boolean")
             cfg["xhttp_enabled"] = params["xhttp_enabled"]
+        if "udp_enabled" in params:
+            if not isinstance(params["udp_enabled"], bool):
+                raise ValidationError("udp_enabled must be a boolean")
+            cfg["udp_enabled"] = params["udp_enabled"]
         # Explicit enable/disable must act even when the saved settings are unchanged.
         self.apply(cfg, accounts(), force_restart=True)
         return self.status({})
 
     def set_dns(self, params: dict) -> dict:
+        self.collect_usage()
         cfg = settings()
         cfg["dns"] = validate_dns(params)
         if cfg["enabled"]:
@@ -311,9 +363,12 @@ class Manager:
         return {"dns": cfg["dns"], "scope": "Xray server and exported client profiles"}
 
     def create(self, params: dict) -> dict:
+        if "trial" in params and not isinstance(params["trial"], bool):
+            raise ValidationError("trial must be a boolean")
         domain = self.ready()
         if not settings()["enabled"]:
             raise ValidationError("Enable Xray first")
+        self.collect_usage()
         rows = accounts()
         name = validate_username(str(params.get("name", "")))
         protocols = params.get("protocols", list(PROTOCOLS))
@@ -326,7 +381,10 @@ class Manager:
         row = {"name": name, "protocols": sorted(set(protocols)), "uuid": str(uuid.uuid4()),
                "trojan_password": secrets.token_urlsafe(32), "enabled": True,
                "expiry": calculate_expiry(validate_days(params.get("days"))),
-               "created_at": datetime.now(timezone.utc).isoformat()}
+               "created_at": datetime.now(timezone.utc).isoformat(), "quota_gb": validate_quota(params.get("quota_gb", "Unlimited")),
+               "used_bytes": 0, "upload_bytes": 0, "download_bytes": 0}
+        if params.get("trial") is True:
+            row.update(trial=True, expires_at=(datetime.now(timezone.utc) + timedelta(hours=24)).isoformat())
         self.apply(settings(), rows + [row])
         return {"account": public_account(row), "links": self.profile_links(row, domain, settings())}
 
@@ -338,6 +396,8 @@ class Manager:
         return {p: share_link(p, row, domain) for p in variants}
 
     def update(self, params: dict) -> dict:
+        self.collect_usage()
+        old_traffic = None
         name = validate_username(str(params.get("name", "")))
         rows = accounts()
         row = next((x for x in rows if x["name"] == name), None)
@@ -348,11 +408,26 @@ class Manager:
             rows.remove(row)
         elif action == "renew":
             row["expiry"] = calculate_expiry(validate_days(params.get("days")), row["expiry"])
+            row.pop("expires_at", None); row.pop("trial", None)
         elif action == "toggle" and isinstance(params.get("enabled"), bool):
             row["enabled"] = params["enabled"]
+        elif action == "quota":
+            row["quota_gb"] = validate_quota(params.get("quota_gb", "Unlimited"))
+        elif action == "reset_usage":
+            if self.collect_usage().get("available") is not True:
+                raise ValidationError("Start Xray statistics before resetting usage so the baseline can be preserved")
+            row.update(used_bytes=0, upload_bytes=0, download_bytes=0)
+            old_traffic = traffic.STATE_FILE.read_text() if traffic.STATE_FILE.exists() else None
+            traffic.reset_profile(row)
         else:
-            raise ValidationError("Choose delete, renew or toggle with enabled")
-        self.apply(settings(), rows)
+            raise ValidationError("Choose delete, renew, toggle, quota or reset_usage")
+        try:
+            self.apply(settings(), rows)
+        except Exception:
+            if action == "reset_usage":
+                if old_traffic is None: traffic.STATE_FILE.unlink(missing_ok=True)
+                else: atomic_write(traffic.STATE_FILE, old_traffic)
+            raise
         return {"name": name, "action": action}
 
     def export(self, params: dict) -> dict:
@@ -425,7 +500,9 @@ class Manager:
             mime = "text/yaml; charset=utf-8" if format_name == "clash" else "application/json"
         else:
             raise ValidationError("Unsupported subscription format")
-        return {"content": content, "content_type": mime, "name": row["name"], "expiry": row["expiry"]}
+        return {"content": content, "content_type": mime, "name": row["name"], "expiry": row["expiry"],
+                "expires_at": row.get("expires_at"), "traffic": {"upload": row.get("upload_bytes", 0), "download": row.get("download_bytes", 0),
+                    "total": int(row["quota_gb"] * 1024 ** 3) if row.get("quota_gb") is not None else 0}}
 
     def backup_export(self, _: dict) -> dict:
         return {"backup": profile_backup.build(settings(), accounts(), read_text(DOMAIN_FILE))}
@@ -435,6 +512,10 @@ class Manager:
         if len(json.dumps(data).encode()) > profile_backup.MAX_BYTES:
             raise ValidationError("Backup exceeds 256 KiB")
         network, rows = profile_backup.validate(data, validate_dns)
+        try:
+            self.collect_usage()
+        except RuntimeError:
+            pass  # Valid-backup recovery must also work with corrupt metadata.
         path = BACKUP_DIR / f"xray-before-restore-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}.json"
         try:
             recovery = self.backup_export({})["backup"]
@@ -445,12 +526,22 @@ class Manager:
                 p.name: p.read_text() if p.exists() else None
                 for p in (SETTINGS_FILE, ACCOUNTS_FILE, CONFIG_FILE, ENABLED_FILE)}}
         atomic_write_json(path, recovery)
-        self.apply(network, rows, force_restart=True)
+        previous_traffic = traffic.STATE_FILE.read_text() if traffic.STATE_FILE.exists() else None
+        if previous_traffic is not None:
+            atomic_write(path.with_suffix(".traffic.raw"), previous_traffic)
+        atomic_write_json(traffic.STATE_FILE, {"totals": {x["uuid"]: {k: int(x.get(k, 0)) for k in ("upload_bytes", "download_bytes")} for x in rows}, "counters": {}})
+        try:
+            self.apply(network, rows, force_restart=True)
+        except Exception:
+            if previous_traffic is None: traffic.STATE_FILE.unlink(missing_ok=True)
+            else: atomic_write(traffic.STATE_FILE, previous_traffic)
+            raise
         return {"restored": len(rows), "rollback_backup": str(path), "domain": read_text(DOMAIN_FILE),
                 "notice": "Restored Xray profiles/settings only. Current domain, SSH accounts, certificates, web login and bot token were preserved."}
 
     def sync(self, _: dict) -> dict:
         cfg = settings()
         if cfg["enabled"]:
+            self.collect_usage()
             self.apply(cfg, accounts())
         return {"synced": True}

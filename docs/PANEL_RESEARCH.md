@@ -57,4 +57,4 @@ The only newly vendored third-party implementation is [qrcode-generator](https:/
 
 ## Deferred work
 
-Enforced byte quotas/live per-account usage, live gRPC config application, multi-node orchestration, REALITY presets, first-use expiry and external DNS-provider editing require separate integration and tests. They are not represented as completed features. Local compatibility checks cannot establish public connectivity on an untested VPS or client network.
+The v3.1 comparison deferred byte quotas until accounting existed. v3.2 now implements sampled Xray payload accounting/quotas and authenticated recent IPs; see `OPERATIONS.md`. Exact SSH byte accounting, live gRPC config application, multi-node orchestration, REALITY presets, first-use expiry and external DNS-provider editing still require separate integration and tests. They are not represented as completed features. Local compatibility checks cannot establish public connectivity on an untested VPS or client network.

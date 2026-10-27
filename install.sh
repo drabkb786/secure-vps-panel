@@ -12,6 +12,7 @@ DOMAIN=""
 EMAIL=""
 NON_INTERACTIVE=0
 WITH_XRAY=0
+WITH_DNSTT=0
 XRAY_VERSION=""
 DEFAULT_SUPER_ADMIN_ID="6408975845"
 
@@ -24,7 +25,7 @@ trap 'die "Installation failed near line $LINENO. Existing SSH port 22 was not i
 usage() {
   cat <<'EOF'
 Usage: sudo bash install.sh [--domain vpn.example.com] [--email admin@example.com]
-                           [--with-xray] [--xray-version vX.Y.Z] [--non-interactive]
+                           [--with-xray] [--with-dnstt] [--xray-version vX.Y.Z] [--non-interactive]
 EOF
 }
 
@@ -34,6 +35,7 @@ while [[ $# -gt 0 ]]; do
     --email) EMAIL="${2:-}"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;
     --with-xray) WITH_XRAY=1; shift ;;
+    --with-dnstt) WITH_DNSTT=1; shift ;;
     --xray-version) XRAY_VERSION="${2:-}"; WITH_XRAY=1; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
@@ -65,7 +67,7 @@ fi
 log "Installing required packages without performing an unattended full system upgrade"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates nginx dropbear certbot python3 procps passwd iproute2 fail2ban curl dnsutils openssl
+apt-get install -y --no-install-recommends ca-certificates nginx dropbear certbot python3 procps passwd iproute2 iputils-ping fail2ban curl dnsutils openssl
 python3 - <<'PY' || die "Python 3.10 or newer is required (use Ubuntu 22.04+/Debian 12+ or install a supported Python)"
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
@@ -86,6 +88,10 @@ if ! id abdulbasit-web >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit abdulbasit-web
 fi
 getent group abdulbasit-xray >/dev/null || groupadd --system abdulbasit-xray
+getent group abdulbasit-dnstt >/dev/null || groupadd --system abdulbasit-dnstt
+if ! id abdulbasit-dnstt >/dev/null 2>&1; then
+  useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit-dnstt abdulbasit-dnstt
+fi
 if ! id abdulbasit-xray >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit-xray abdulbasit-xray
 fi
@@ -178,12 +184,16 @@ for path in USERS_DIR.glob('*.json'):
     if account.pw_shell == '/bin/false' and account.pw_uid != 0:
         subprocess.run(['/usr/sbin/usermod', '--shell', '/usr/local/lib/abdulbasit/tunnel-shell', name], check=True)
 PY
-for module in web_auth web_server xray_manager diagnostics client_formats profile_backup; do
+for module in web_auth web_server xray_manager diagnostics client_formats profile_backup operations traffic slowdns maintenance terminal_ui; do
   install -m 0755 -o root -g root "$PROJECT_DIR/src/$module.py" "$INSTALL_DIR/$module.py"
 done
+install -m 0755 -o root -g root "$PROJECT_DIR/scripts/install-dnstt.sh" "$INSTALL_DIR/install-dnstt.sh"
 install -m 0644 -o root -g root "$PROJECT_DIR/src/web/"* "$INSTALL_DIR/web/"
 if [[ $WITH_XRAY -eq 1 ]]; then
   bash "$PROJECT_DIR/scripts/install-xray.sh" "$XRAY_VERSION"
+fi
+if [[ $WITH_DNSTT -eq 1 ]]; then
+  bash "$PROJECT_DIR/scripts/install-dnstt.sh"
 fi
 install -m 0755 -o root -g root "$PROJECT_DIR/menu.sh" /usr/local/sbin/abdulbasit-menu
 ln -sfn /usr/local/sbin/abdulbasit-menu /usr/local/bin/menu
@@ -216,12 +226,14 @@ cat > /etc/default/dropbear <<'EOF'
 # Managed by Abdul Basit Secure VPS Panel
 NO_START=0
 DROPBEAR_PORT=109
-DROPBEAR_EXTRA_ARGS="-p 447 -b /etc/issue.net -w -K 30 -I 1800"
-DROPBEAR_BANNER="/etc/issue.net"
+DROPBEAR_EXTRA_ARGS="-p 447 -b /etc/abdulbasit/ssh-banner.txt -w -K 30 -I 1800"
+DROPBEAR_BANNER="/etc/abdulbasit/ssh-banner.txt"
 EOF
 chmod 0644 /etc/default/dropbear
-touch /etc/issue.net
-chmod 0644 /etc/issue.net
+if [[ ! -f "$CONFIG_DIR/ssh-banner.txt" ]]; then
+  printf '%s\n' 'NOWAY / Private VPS access' 'Authorized accounts only.' > "$CONFIG_DIR/ssh-banner.txt"
+fi
+chmod 0644 "$CONFIG_DIR/ssh-banner.txt"
 systemctl enable dropbear
 systemctl restart dropbear
 systemctl is-active --quiet dropbear || die "Dropbear failed to start; restore from $BACKUP_DIR if needed"
@@ -268,6 +280,13 @@ for attempt in {1..30}; do
 done
 [[ -S /run/abdulbasit/paneld.sock ]] || die "Panel daemon socket not ready; inspect journalctl -u abdulbasit-paneld"
 systemctl enable --now abdulbasit-xray-expiry.timer
+if [[ -f /etc/abdulbasit-dnstt/config.json ]]; then
+  if "$INSTALL_DIR/panelctl.py" slowdns-status | python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin).get("enabled") else 1)'; then
+    systemctl enable abdulbasit-dnstt
+    systemctl restart abdulbasit-dnstt
+    systemctl is-active --quiet abdulbasit-dnstt || die "Configured SlowDNS service failed to start"
+  fi
+fi
 if [[ -f /etc/abdulbasit-xray/enabled ]]; then
   "$INSTALL_DIR/panelctl.py" xray-sync
   systemctl restart abdulbasit-xray

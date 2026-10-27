@@ -49,6 +49,18 @@ jobs:
         run: |
           python scripts/fetch-test-clients.py --directory "$RUNNER_TEMP/noway-test-clients"
           SINGBOX_TEST_BINARY="$RUNNER_TEMP/noway-test-clients/singbox" MIHOMO_TEST_BINARY="$RUNNER_TEMP/noway-test-clients/mihomo" pytest -q tests/test_client_formats.py
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Build pinned official dnstt and test real DNS transport
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOSUMDB: sum.golang.org
+        run: |
+          export GOBIN="$RUNNER_TEMP/noway-dnstt"
+          go install www.bamsoftware.com/git/dnstt.git/dnstt-server@v1.20260501.0 www.bamsoftware.com/git/dnstt.git/dnstt-client@v1.20260501.0
+          DNSTT_TEST_SERVER="$GOBIN/dnstt-server" DNSTT_TEST_CLIENT="$GOBIN/dnstt-client" pytest -q tests/test_slowdns.py
       - name: Reject common committed secrets and unsafe subprocess shells
         shell: bash
         run: |

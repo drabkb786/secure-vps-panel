@@ -26,6 +26,8 @@ from typing import Any, Callable
 import diagnostics
 import web_auth
 import xray_manager
+import operations
+import slowdns
 
 from common import (
     ADMIN_IDS_FILE,
@@ -71,6 +73,7 @@ SERVICE_MAP = {
     "abdulbasit-web": "abdulbasit-web",
     "abdulbasit-xray": "abdulbasit-xray",
 }
+SERVICE_MAP["abdulbasit-dnstt"] = "abdulbasit-dnstt.service"
 
 
 def binary(name: str) -> str:
@@ -170,6 +173,7 @@ def create_user(params: dict[str, Any]) -> dict[str, Any]:
         "max_sessions": max_sessions,
         "quota_gb": quota_gb,
         "quota_enforced": False,
+        "enabled": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     atomic_write_json(user_file(username), metadata, 0o600)
@@ -193,7 +197,10 @@ def renew_user(params: dict[str, Any]) -> dict[str, Any]:
     data = managed_user(username)
     expiry = calculate_expiry(days, str(data.get("expiry") or ""))
     run([binary("usermod"), "--expiredate", expiry, username])
-    subprocess.run([binary("passwd"), "--unlock", username], capture_output=True, text=True, check=False)
+    if data.get("enabled", True):
+        subprocess.run([binary("passwd"), "--unlock", username], capture_output=True, text=True, check=False)
+    else:
+        run([binary("usermod"), "--expiredate", "1970-01-02", username])
     data["expiry"] = expiry
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     atomic_write_json(user_file(username), data, 0o600)
@@ -208,6 +215,28 @@ def set_sessions(params: dict[str, Any]) -> dict[str, Any]:
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     atomic_write_json(user_file(username), data, 0o600)
     return {"username": username, "max_sessions": limit}
+
+
+def set_user_lock(params):
+    username = validate_username(str(params.get("username", "")))
+    enabled = params.get("enabled")
+    if not isinstance(enabled, bool): raise ValidationError("enabled must be a boolean")
+    data = managed_user(username)
+    if enabled and date.fromisoformat(data["expiry"]) <= date.today():
+        raise ValidationError("Renew the expired SSH account before unlocking")
+    previous_enabled = data.get("enabled", True)
+    run([binary("usermod"), "--unlock" if enabled else "--lock", "--expiredate", data["expiry"] if enabled else "1970-01-02", username])
+    data["enabled"] = enabled
+    try:
+        atomic_write_json(user_file(username), data)
+    except Exception:
+        run([binary("usermod"), "--unlock" if previous_enabled else "--lock", "--expiredate", data["expiry"] if previous_enabled else "1970-01-02", username])
+        raise
+    if not enabled:
+        from session_enforcer import terminate
+        uid = pwd.getpwnam(username).pw_uid
+        terminate(session_processes().get(username, []), uid)
+    return {"username": username, "enabled": enabled}
 
 
 def set_quota(params: dict[str, Any]) -> dict[str, Any]:
@@ -338,6 +367,8 @@ def nginx_text(domain: str, tls: bool) -> str:
         proxy_pass http://127.0.0.1:10004;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Noway-Gateway 1;
         proxy_set_header Connection "";
         proxy_request_buffering off;
         proxy_buffering off;
@@ -357,6 +388,8 @@ def nginx_text(domain: str, tls: bool) -> str:
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $abdulbasit_connection_upgrade;
         proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Noway-Gateway 1;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
@@ -375,6 +408,7 @@ def nginx_text(domain: str, tls: bool) -> str:
         proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Noway-Gateway 1;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_buffering off;
         proxy_read_timeout 3600s;
@@ -483,6 +517,11 @@ def restart_service(params: dict[str, Any]) -> dict[str, Any]:
         raise ValidationError("The panel daemon cannot restart itself through the API")
     if service == "abdulbasit-xray" and not xray_manager.settings()["enabled"]:
         raise ValidationError("Enable Xray before restarting it")
+    if service == "abdulbasit-dnstt" and not slowdns.settings()["enabled"]:
+        raise ValidationError("Configure and enable SlowDNS first")
+    if service == "abdulbasit-xray":
+        XRAY.configure({"enabled": True})
+        return {"service": service}
     unit = SERVICE_MAP[service]
     run([binary("systemctl"), "restart", unit])
     return {"service": service}
@@ -548,6 +587,8 @@ def remove_admin(params: dict[str, Any]) -> dict[str, Any]:
 
 
 XRAY = xray_manager.Manager(run)
+SLOWDNS = slowdns.Manager(run)
+OPS = operations.Manager(run, XRAY, service_status, install_nginx_config)
 
 
 def dashboard_status(params: dict[str, Any]) -> dict[str, Any]:
@@ -557,6 +598,7 @@ def dashboard_status(params: dict[str, Any]) -> dict[str, Any]:
         key, value = line.split(":", 1)
         mem[key] = int(value.strip().split()[0]) * 1024
     return {**service_status(params), **XRAY.status(params), **list_users(params), **list_sessions(params),
+            "slowdns": SLOWDNS.status({}), "traffic": {"sampled_at": xray_manager.traffic.state().get("sampled_at"), "scope": "Xray payload bytes; SSH GB remains metadata"},
             "system": {"hostname": socket.gethostname(), "load": list(os.getloadavg()),
                        "cpu_count": os.cpu_count(), "uptime_seconds": float(Path("/proc/uptime").read_text().split()[0]),
                        "disk_total": stat.total, "disk_used": stat.used,
@@ -597,12 +639,27 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "subscription_get": XRAY.subscription_get,
     "backup_export": XRAY.backup_export,
     "backup_restore": XRAY.backup_restore,
+    "set_user_lock": set_user_lock,
+    "traffic_sample": XRAY.collect_usage,
+    "live_connections": OPS.connections,
+    "packet_test": OPS.packet_test,
+    "live_logs": OPS.logs,
+    "doctor": OPS.doctor,
+    "restart_managed": OPS.restart_all,
+    "config_view": OPS.config_view,
+    "banner_get": OPS.banner_get,
+    "banner_set": OPS.banner_set,
+    "memory_report": OPS.memory,
+    "slowdns_status": SLOWDNS.status,
+    "slowdns_configure": SLOWDNS.configure,
+    "slowdns_check": SLOWDNS.check,
 }
 
 WEB_COMMANDS = {"web_auth", "web_revision", "dashboard_status", "diagnostics", "dns_lookup", "dns_set",
                 "xray_status", "xray_configure", "xray_create", "xray_update", "xray_export", "subscription_rotate", "subscription_revoke", "subscription_get", "backup_export",
                 "create_user", "delete_user", "renew_user", "set_sessions", "set_quota", "list_users",
                 "list_sessions", "service_status", "restart_service", "set_domain", "issue_cert"}
+WEB_COMMANDS.update({"set_user_lock", "traffic_sample", "live_connections", "packet_test", "live_logs", "doctor", "restart_managed", "config_view", "banner_get", "banner_set", "memory_report", "slowdns_status", "slowdns_configure", "slowdns_check"})
 
 
 def authorize_command(uid: int, command: str, params: dict) -> None:

@@ -1,4 +1,7 @@
-# NOWAY v3.1 — browser, DNS and Xray setup
+# NOWAY v3.2 — browser, DNS and Xray setup
+
+For the new trial/GB/IP/UDP/SlowDNS/system controls and the full reference-menu
+mapping, see [OPERATIONS.md](OPERATIONS.md).
 
 ## Install or upgrade
 
@@ -136,7 +139,8 @@ The QR button generates a code locally without sending the link to a QR service.
 The sing-box and Mihomo adapters contain the selected **WS/TLS** profiles and a
 loopback mixed listener on `10808`. The Mihomo file uses JSON syntax, which is
 valid YAML. XHTTP is included in URI and Xray exports only. These adapters verify
-TLS and do not provide enforced traffic quotas or per-account usage statistics.
+TLS. Xray usage/quotas are enforced on the server through periodic sampling;
+these client adapters do not implement a separate accounting backend.
 
 Xray is the engine; VLESS, VMess and Trojan are the connection protocols.
 The exported JSON starts a loopback SOCKS listener on `10808`. Run one client JSON
@@ -194,8 +198,9 @@ also fails. Disabling Xray removes its boot-enable marker and stops its service.
 
 Private/link-local destinations (including cloud metadata addresses) are blocked
 by the generated server routing rules. This is an Internet proxy preset; private
-LAN access is not enabled. Bandwidth quotas, Xray concurrent-device limits,
-REALITY and profile creation inside Telegram are not part of v3.1.
+LAN access is not enabled. Xray concurrent-device limits, REALITY and profile
+creation inside Telegram remain deferred. Xray GB limits and recent activity
+are available in v3.2; SSH GB remains metadata.
 
 ## Live subscription URLs
 
@@ -217,7 +222,8 @@ Clients fetch the latest eligible configuration without an admin cookie. The
 secret URL is the authorization, so treat it like a password. Public access
 requires HTTPS. Requests are bounded, never cached, and excluded from the
 managed Nginx access/error logs. An external CDN or reverse proxy may have its own
-logging policy. Subscription headers include expiry only; usage is not fabricated.
+logging policy. Subscription headers include expiry and saved measured Xray
+usage/limits. Values update on the next successful sample, not on every packet.
 
 Rotation invalidates the old URL. **Revoke URL** stops future downloads:
 
