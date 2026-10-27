@@ -11,27 +11,6 @@ import xray_manager as xray
 from common import ValidationError, read_json
 
 
-@pytest.fixture
-def manager(tmp_path, monkeypatch):
-    for attr, value in {"SETTINGS_FILE": tmp_path / "network.json", "ACCOUNTS_FILE": tmp_path / "accounts.json",
-                        "CONFIG_DIR": tmp_path / "xray", "CONFIG_FILE": tmp_path / "xray/config.json",
-                        "ENABLED_FILE": tmp_path / "xray/enabled", "DOMAIN_FILE": tmp_path / "domain",
-                        "CERT_ROOT": tmp_path / "certs", "XRAY_BINARY": tmp_path / "core"}.items():
-        monkeypatch.setattr(xray, attr, value)
-    xray.DOMAIN_FILE.write_text("vpn.example.com")
-    xray.XRAY_BINARY.touch()
-    cert = xray.CERT_ROOT / "vpn.example.com"
-    cert.mkdir(parents=True)
-    for name in ("fullchain.pem", "privkey.pem"):
-        (cert / name).touch()
-    calls = []
-    def run(args, **kwargs):
-        calls.append(args)
-    obj = xray.Manager(run, health_probe=lambda: True)
-    obj.calls = calls
-    return obj
-
-
 def test_profiles_exports_and_authentication_material(manager):
     manager.configure({"enabled": True})
     manager.create({"name": "basit", "days": 30})
@@ -49,7 +28,7 @@ def test_profiles_exports_and_authentication_material(manager):
         profile = json.loads(export["files"][f"basit-{protocol}.json"])
         stream = profile["outbounds"][0]["streamSettings"]
         assert stream["security"] == "tls"
-        assert stream["tlsSettings"] == {"allowInsecure": False, "serverName": "vpn.example.com"}
+        assert stream["tlsSettings"] == {"allowInsecure": False, "serverName": "vpn.example.com", "alpn": ["http/1.1"]}
         assert stream["wsSettings"]["path"] == xray.PROTOCOLS[protocol][1]
     vmess = json.loads(base64.b64decode(export["links"]["vmess"].split("://")[1]))
     assert vmess["id"] == rows[0]["uuid"] and vmess["aid"] == "0"

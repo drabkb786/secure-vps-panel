@@ -29,7 +29,9 @@ def test_nginx_routes_preserve_ssh_and_isolate_xray_tls(monkeypatch):
     assert tls.count("proxy_pass http://127.0.0.1:10001;") == 1
     assert "location = /vless { return 403; }" in tls
     assert "client_max_body_size 16k;" in tls
-    assert "listen 443 ssl;" in tls
+    assert "location ^~ /panel/sub/" in tls and "access_log off;" in tls and "error_log /dev/null crit;" in tls
+    assert "location ^~ /xhttp/" in tls and "proxy_request_buffering off;" in tls
+    assert "listen 443 ssl http2;" in tls
     plain = paneld.nginx_text("vpn.example.com", False)
     assert "listen 443" not in plain
     assert "proxy_pass http://127.0.0.1:10001" not in plain
@@ -42,6 +44,9 @@ def test_web_socket_peer_cannot_change_credentials_or_call_super_admin_commands(
         paneld.authorize_command(1234, "configure_web", {})
     with pytest.raises(ValidationError):
         paneld.authorize_command(1234, "configure_bot", {"_web_revision": "current"})
+    with pytest.raises(ValidationError):
+        paneld.authorize_command(1234, "backup_restore", {"_web_revision": "current"})
+    paneld.authorize_command(1234, "subscription_get", {"token": "A" * 43})
     with pytest.raises(ValidationError):
         paneld.authorize_command(1234, "xray_create", {"_web_revision": "revoked"})
     params = {"_web_revision": "current", "name": "basit"}

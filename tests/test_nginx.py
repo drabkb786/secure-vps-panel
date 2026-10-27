@@ -18,7 +18,7 @@ def test_real_nginx_accepts_generated_routes(tmp_path, tls, monkeypatch):
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com"], check=True, capture_output=True, timeout=20)
     monkeypatch.setattr(paneld, "ipv6_enabled", lambda: False)
     site = paneld.nginx_text("vpn.example.com", tls)
-    for port, suffix in ((80, ""), (443, " ssl")):
+    for port, suffix in ((80, ""), (443, " ssl http2")):
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0)); test_port = sock.getsockname()[1]
         site = site.replace(f"listen {port}{suffix};", f"listen 127.0.0.1:{test_port}{suffix};")

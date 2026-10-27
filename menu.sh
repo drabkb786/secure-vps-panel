@@ -160,7 +160,7 @@ EOF
 while true; do
   clear
   echo -e "${CYAN}====================================================${NC}"
-  echo -e "${GREEN}          NOWAY / VPS CONTROL ROOM v3.0${NC}"
+  echo -e "${GREEN}          NOWAY / VPS CONTROL ROOM v3.1.0${NC}"
   echo -e "${CYAN}                 by Abdul Basit${NC}"
   echo -e "${CYAN}====================================================${NC}"
   cat <<'EOF'

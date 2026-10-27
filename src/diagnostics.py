@@ -49,6 +49,8 @@ def report(_: dict) -> dict:
     ports = {"SSH upgrade proxy": 2082, "Web dashboard": 9090}
     if settings()["enabled"]:
         ports.update({p.upper(): value[0] for p, value in PROTOCOLS.items()})
+        if settings().get("xhttp_enabled"):
+            ports["VLESS XHTTP"] = 10004
     for name, port in ports.items():
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=1):

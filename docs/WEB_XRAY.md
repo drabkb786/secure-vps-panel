@@ -1,4 +1,4 @@
-# NOWAY v3 — browser, DNS and Xray setup
+# NOWAY v3.1 — browser, DNS and Xray setup
 
 ## Install or upgrade
 
@@ -88,6 +88,7 @@ sudo abdulbasit-panelctl xray-create basit --days 30
 | VLESS | `wss://vpn.example.com:443/vless` | `127.0.0.1:10001` |
 | VMess | `wss://vpn.example.com:443/vmess` | `127.0.0.1:10002` |
 | Trojan | `wss://vpn.example.com:443/trojan` | `127.0.0.1:10003` |
+| Optional VLESS XHTTP | `https://vpn.example.com:443/xhttp/` | `127.0.0.1:10004` |
 | Browser | `https://vpn.example.com/panel/` | `127.0.0.1:9090` |
 | Legacy SSH HTTP upgrade | existing path and 80/443 | `127.0.0.1:2082` |
 
@@ -98,16 +99,44 @@ generated and stored root-only. Normal profile lists do not include them.
 
 The older SSH proxy is an HTTP-upgrade raw TCP tunnel, not a general RFC 6455
 WebSocket server. Existing compatible SSH tunnel clients can keep using it. The
-new Xray endpoints are actual WebSocket transports handled by Xray itself.
+Xray WS endpoints are actual WebSocket transports handled by Xray itself.
+
+### Optional VLESS XHTTP
+
+Enable **XHTTP** on the Xray page or run:
+
+```bash
+sudo abdulbasit-panelctl xray-enable --xhttp
+```
+
+This adds a separate VLESS variant for eligible VLESS profiles. It preserves their
+WS links and credentials. Nginx accepts HTTP/2 over TLS and streams requests to the
+loopback XHTTP listener; generated clients use `packet-up` mode and ALPN `h2`.
+Use a client that supports Xray XHTTP. This preset has been tested through real
+Nginx and Xray, but individual CDNs and mobile networks still need testing.
+
+```bash
+sudo abdulbasit-panelctl xray-link basit --protocol vless-xhttp
+```
+
+```bash
+sudo abdulbasit-panelctl xray-enable --no-xhttp
+```
 
 ## Export and import
 
 Click **Export** beside a profile. Use **Copy VLESS link**, **Copy Trojan link**,
 **Copy all links**, or **Link TXT** for the plain import URI. You can also download
-Xray JSON, or the ZIP with all selected profiles, individual protocol TXT files,
-`links.txt`, and a base64
-`subscription.txt`. This is a downloadable subscription file, not a public live
-subscription URL. ZIPs and export APIs require an admin session and are not cached.
+Xray JSON, sing-box JSON, Mihomo/Clash.Meta YAML, or the ZIP with all selected
+profiles, individual protocol TXT files, `links.txt`, and a base64
+`subscription.txt`. The ZIP's subscription text is a static snapshot; live URLs
+are described below. ZIPs and export APIs require an admin session and are not cached.
+The QR button generates a code locally without sending the link to a QR service.
+
+The sing-box and Mihomo adapters contain the selected **WS/TLS** profiles and a
+loopback mixed listener on `10808`. The Mihomo file uses JSON syntax, which is
+valid YAML. XHTTP is included in URI and Xray exports only. These adapters verify
+TLS and do not provide enforced traffic quotas or per-account usage statistics.
 
 Xray is the engine; VLESS, VMess and Trojan are the connection protocols.
 The exported JSON starts a loopback SOCKS listener on `10808`. Run one client JSON
@@ -166,7 +195,72 @@ also fails. Disabling Xray removes its boot-enable marker and stops its service.
 Private/link-local destinations (including cloud metadata addresses) are blocked
 by the generated server routing rules. This is an Internet proxy preset; private
 LAN access is not enabled. Bandwidth quotas, Xray concurrent-device limits,
-REALITY, XHTTP and profile creation inside Telegram are not part of v3.
+REALITY and profile creation inside Telegram are not part of v3.1.
+
+## Live subscription URLs
+
+Choose **Subscription** beside a profile, then **Create / rotate URL**. Save the
+private URL immediately: the full token is shown once and only its SHA256 digest
+is stored. The CLI returns the same URL plus format-specific variants:
+
+```bash
+sudo abdulbasit-panelctl subscription-rotate basit
+```
+
+Supported `?format=` values are `base64`, `plain`, `xray`, `clash`, and `singbox`.
+The default is base64 import links; recognized Mihomo/Clash and sing-box client
+user agents select their native format. The Xray variant is a JSON array of
+individual client configurations; it is not one directly runnable core config.
+Use a downloaded individual JSON when invoking Xray directly.
+
+Clients fetch the latest eligible configuration without an admin cookie. The
+secret URL is the authorization, so treat it like a password. Public access
+requires HTTPS. Requests are bounded, never cached, and excluded from the
+managed Nginx access/error logs. An external CDN or reverse proxy may have its own
+logging policy. Subscription headers include expiry only; usage is not fabricated.
+
+Rotation invalidates the old URL. **Revoke URL** stops future downloads:
+
+```bash
+sudo abdulbasit-panelctl subscription-revoke basit
+```
+
+Disabling/expiring/deleting the profile or disabling the engine blocks downloads.
+Revocation and rotation do not change credentials already imported into a client;
+disable/delete the profile to stop those connections. Token rotation itself does
+not restart Xray.
+
+## Private Xray backup and recovery
+
+Open **Backup & recovery** to download a private JSON snapshot, or save it from
+the root CLI. The CLI creates a new file with mode `0600` and refuses overwrite:
+
+```bash
+sudo abdulbasit-panelctl backup --output /root/noway-xray-backup.json
+```
+
+This versioned backup contains Xray account UUIDs/passwords, expiry, enabled flags,
+subscription token digests and resolver/transport settings. It excludes OS SSH
+accounts/passwords, TLS private keys, browser login and Telegram credentials. Keep
+it private. A restored token digest makes a previously issued URL eligible again
+when the domain and account are still valid; the token cannot be recovered from
+the digest.
+
+Restore runs only from the root CLI and replaces the managed Xray account list
+and network settings. Install the managed core first. The existing server domain,
+TLS keys, web login and bot configuration are preserved:
+
+```bash
+sudo abdulbasit-panelctl restore /root/noway-xray-backup.json
+```
+
+Review the prompt and type `RESTORE`. `--yes` is available for a deliberate scripted
+restore. Validation happens before changes. A mode-`0600` recovery copy is written
+under `/etc/abdulbasit/backups/` before applying; config validation, restart and
+readiness failures roll the managed files back. Restores can reconnect clients.
+If existing metadata is corrupt JSON, the recovery copy instead uses a separate
+raw-file schema for inspection; it is not a valid import backup. A valid snapshot
+can still restore the damaged store.
 
 ## Diagnose a deployed host
 
@@ -195,5 +289,6 @@ cannot guarantee access from every network.
 - [Trojan inbound](https://xtls.github.io/en/config/inbounds/trojan.html)
 - [Built-in DNS](https://xtls.github.io/en/config/dns.html)
 - [WebSocket transport](https://xtls.github.io/en/config/transports/websocket.html)
+- [XHTTP transport](https://xtls.github.io/en/config/transports/splithttp.html)
 - [Xray share-link proposal](https://github.com/XTLS/Xray-core/discussions/716)
 - [XTLS libXray share-link implementation](https://github.com/XTLS/libXray/tree/main/share)

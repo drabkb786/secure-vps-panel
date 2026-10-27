@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 import uuid
+import re
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -19,7 +20,7 @@ from urllib.parse import urlsplit, parse_qs, unquote
 
 import pytest
 
-from xray_manager import DEFAULT_DNS, PROTOCOLS, client_config, server_config, share_link
+from xray_manager import DEFAULT_DNS, PROTOCOLS, XHTTP_PATH, client_config, server_config, share_link
 
 CORE = os.environ.get("XRAY_TEST_BINARY", "")
 pytestmark = pytest.mark.skipif(not CORE, reason="XRAY_TEST_BINARY is not set")
@@ -68,6 +69,8 @@ def test_generated_configs_accepted_by_real_xray(tmp_path):
     row = record()
     cases = {"server": server_config({"dns": DEFAULT_DNS}, [row]), "no-accounts": server_config({"dns": DEFAULT_DNS}, [])}
     cases.update({protocol: client_config(protocol, row, "vpn.example.com", DEFAULT_DNS) for protocol in PROTOCOLS})
+    cases["xhttp-server"] = server_config({"dns": DEFAULT_DNS, "xhttp_enabled": True}, [row])
+    cases["xhttp-client"] = client_config("vless-xhttp", row, "vpn.example.com", DEFAULT_DNS)
     for name, config in cases.items():
         path = tmp_path / f"{name}.json"; path.write_text(json.dumps(config))
         result = subprocess.run([CORE, "run", "-test", "-config", str(path)], capture_output=True, text=True, timeout=20)
@@ -82,32 +85,43 @@ def imported_profile_from_uri(link):
         assert data["net"] == "ws" and data["tls"] == "tls" and data["aid"] == "0"
         address, port, credential = data["add"], int(data["port"]), {"id": data["id"], "security": data["scy"]}
         host, path, server_name = data["host"], data["path"], data["sni"]
+        alpn = data.get("alpn", "http/1.1").split(",")
     else:
         url = urlsplit(link); query = parse_qs(url.query, strict_parsing=True)
-        assert query["type"] == ["ws"] and query["security"] == ["tls"]
+        assert query["type"][0] in ("ws", "xhttp") and query["security"] == ["tls"]
         address, port = url.hostname, url.port
         host, path, server_name = query["host"][0], query["path"][0], query["sni"][0]
+        alpn = query.get("alpn", ["http/1.1"])[0].split(",")
         credential = {"password": unquote(url.username)} if protocol == "trojan" else {"id": unquote(url.username), "encryption": query["encryption"][0]}
     outbound_settings = {"servers": [{"address": address, "port": port, **credential}]} if protocol == "trojan" else {"vnext": [{"address": address, "port": port, "users": [credential]}]}
+    stream = {"network": "ws", "security": "tls", "wsSettings": {"path": path, "host": host},
+              "tlsSettings": {"serverName": server_name, "allowInsecure": False, "alpn": alpn}}
+    if protocol != "vmess" and query["type"] == ["xhttp"]:
+        stream.pop("wsSettings"); stream["network"] = "xhttp"
+        stream["xhttpSettings"] = {"path": path, "host": host, "mode": query["mode"][0]}
     return {"log": {"loglevel": "warning"},
             "inbounds": [{"listen": "127.0.0.1", "port": 10808, "protocol": "socks", "settings": {"auth": "noauth"}}],
             "outbounds": [{"protocol": protocol, "settings": outbound_settings,
-                           "streamSettings": {"network": "ws", "security": "tls", "wsSettings": {"path": path, "host": host},
-                                              "tlsSettings": {"serverName": server_name, "allowInsecure": False}}}]}
+                           "streamSettings": stream}]}
 
 
-@pytest.mark.parametrize("source", ["json", "import_link"])
+@pytest.mark.parametrize("source", ["json", "import_link", "xhttp_link"])
 def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
     """Exercise real SOCKS -> Xray -> TLS/WS -> Xray -> local HTTP for all protocols.
 
     The TLS bridge is a fixture, not Nginx. Only this test config permits its
     loopback HTTP destination; production profiles keep private targets blocked.
     """
-    row = record(); server_cfg = server_config({"dns": DEFAULT_DNS}, [row])
+    nginx = os.environ.get("NGINX_TEST_BINARY")
+    if source == "xhttp_link" and not nginx:
+        pytest.skip("XHTTP HTTP/2 integration requires NGINX_TEST_BINARY")
+    row = record(); server_cfg = server_config({"dns": DEFAULT_DNS, "xhttp_enabled": source == "xhttp_link"}, [row])
     server_cfg["log"]["loglevel"] = "debug"
     ports = {path: free_port() for _, path in PROTOCOLS.values()}
+    if source == "xhttp_link": ports[XHTTP_PATH] = free_port()
     for inbound in server_cfg["inbounds"]:
-        inbound["port"] = ports[inbound["streamSettings"]["wsSettings"]["path"]]
+        stream = inbound["streamSettings"]
+        inbound["port"] = ports[stream.get("wsSettings", stream.get("xhttpSettings"))["path"]]
 
     class HTTPFixture(BaseHTTPRequestHandler):
         def log_message(self, *args): pass
@@ -133,7 +147,8 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
                         if not part: return
                         header += part
                         if len(header) > 16384: return
-                    path = header.split(b" ")[1].decode().split("?")[0]
+                    target_path = header.split(b" ")[1].decode().split("?")[0]
+                    path = next((p for p in ports if target_path == p or p.endswith("/") and target_path.startswith(p)), "")
                     with socket.create_connection(("127.0.0.1", ports[path]), timeout=5) as upstream:
                         upstream.sendall(header)
                         def pipe(source, target):
@@ -153,14 +168,33 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
     threading.Thread(target=tls.serve_forever, daemon=True).start()
     path = tmp_path / "server.json"; path.write_text(json.dumps(server_cfg))
     server_proc, server_log = start_core(path)
+    front_proc = front_log = None
+    front_port = tls.server_address[1]
     try:
         wait_port(next(iter(ports.values())), server_proc)
-        for protocol in PROTOCOLS:
+        if source == "xhttp_link":
+            from paneld import nginx_text
+            front_port, http_port = free_port(), free_port()
+            site = nginx_text("vpn.example.com", True)
+            site = re.sub(r"^\s*listen \[::\]:[^\n]*\n", "", site, flags=re.MULTILINE)
+            site = site.replace("listen 80;", f"listen 127.0.0.1:{http_port};").replace("listen 443 ssl http2;", f"listen 127.0.0.1:{front_port} ssl http2;")
+            site = site.replace("/etc/letsencrypt/live/vpn.example.com/fullchain.pem", str(cert)).replace("/etc/letsencrypt/live/vpn.example.com/privkey.pem", str(key))
+            for protocol, (port, endpoint_path) in PROTOCOLS.items():
+                site = site.replace(f"127.0.0.1:{port}", f"127.0.0.1:{ports[endpoint_path]}")
+            site = site.replace("127.0.0.1:10004", f"127.0.0.1:{ports[XHTTP_PATH]}")
+            config = tmp_path / "nginx.conf"
+            user = "user root root;\n" if os.geteuid() == 0 else ""
+            temp_paths = "\n".join(f"{part}_temp_path {tmp_path}/{part};" for part in ("client_body", "proxy", "fastcgi", "scgi", "uwsgi"))
+            config.write_text(user + f"master_process off;\npid {tmp_path}/nginx.pid;\nerror_log {tmp_path}/nginx-error.log;\nevents {{}}\nhttp {{access_log off;\n{temp_paths}\n{site}\n}}")
+            front_log = (tmp_path / "nginx-console.log").open("w")
+            front_proc = subprocess.Popen([nginx, "-p", str(tmp_path), "-c", str(config), "-g", "daemon off;"], stdout=front_log, stderr=front_log)
+            wait_port(front_port, front_proc)
+        for protocol in (["vless-xhttp"] if source == "xhttp_link" else PROTOCOLS):
             cfg = client_config(protocol, row, "vpn.example.com", DEFAULT_DNS) if source == "json" else imported_profile_from_uri(share_link(protocol, row, "vpn.example.com"))
             cfg["log"]["loglevel"] = "debug"
             proxy = cfg["outbounds"][0]; proxy["streamSettings"]["tlsSettings"]["certificates"] = [{"certificateFile": str(cert), "usage": "verify"}]
             endpoint = proxy["settings"]["servers" if protocol == "trojan" else "vnext"][0]
-            endpoint.update({"address": "127.0.0.1", "port": tls.server_address[1]})
+            endpoint.update({"address": "127.0.0.1", "port": front_port})
             port = free_port(); cfg["inbounds"][0]["port"] = port
             config_path = tmp_path / f"{protocol}-client.json"; config_path.write_text(json.dumps(cfg))
             proc, log = start_core(config_path)
@@ -181,5 +215,7 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
             finally:
                 proc.terminate(); proc.wait(timeout=5); log.close()
     finally:
+        if front_proc is not None:
+            front_proc.terminate(); front_proc.wait(timeout=5); front_log.close()
         server_proc.terminate(); server_proc.wait(timeout=5); server_log.close()
         tls.shutdown(); tls.server_close(); http.shutdown(); http.server_close()

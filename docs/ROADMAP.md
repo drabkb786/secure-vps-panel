@@ -12,17 +12,34 @@
 
 ## Deployment gate — requires the actual VPS
 
-- Back up the existing installation, then install v3 on Ubuntu/Debian.
+- Back up the existing installation, then install v3.1 on Ubuntu/Debian.
 - Verify the public domain's A/AAAA records, ACME issuance and provider firewall.
 - Run diagnostics and import each profile into the user's actual client/device.
 - Check browser login, reconnect after restart, renewal and certificate renewal on that host.
 - Investigate any host/network-specific failure using its real logs; local tests cannot establish universal reachability.
 
+## Implemented in v3.1 after GitHub comparison
+
+1. **Live subscriptions:** profile-specific private URLs, token hashing, rotation/revoke,
+   expiry/disable enforcement, bounded requests and sensitive-route log suppression.
+2. **Client formats and QR:** local QR generation, sing-box JSON and Mihomo/Clash.Meta
+   configuration alongside Xray/URI/ZIP exports. The two new client adapters use WS/TLS.
+3. **Recovery:** scoped Xray backup download and root-only restore with strict validation,
+   recovery copies and rollback. Corrupt JSON metadata can be recovered from a valid backup.
+4. **VLESS XHTTP:** an opt-in variant with Nginx HTTP/2, TLS and a loopback listener;
+   verified by importing the generated URI into real Xray and sending traffic.
+
+The bounded comparison and adoption decisions are in [PANEL_RESEARCH.md](PANEL_RESEARCH.md).
+
 ## Follow-up phases (not implemented in this release)
 
-- VLESS XHTTP / REALITY presets and transport selection. Current Xray emits deprecation notices for legacy WS, VMess and Trojan; those requested compatibility protocols still work in the tested pinned core.
+- REALITY presets, additional transport choices and live gRPC config application.
+  Current Xray emits deprecation notices for legacy WS, VMess and Trojan; those
+  requested compatibility protocols still work in the tested pinned core.
 - Enforced bandwidth quotas and live traffic accounting through the Xray statistics API; existing SSH quotas remain metadata.
 - DNS-provider API record editing, authoritative DNS or a SlowDNS transport, if specifically requested. The v3 DNS page configures resolvers and checks records; it is not a public DNS server.
-- Xray profile creation inside Telegram, multi-role web accounts and a signed update/backup workflow. Export of existing profiles is implemented.
+- Xray profile creation inside Telegram, multi-role web accounts, multi-node management,
+  first-use expiry, signed updates and encrypted full-system backup workflows.
+  Existing profile export and scoped Xray recovery are implemented.
 
 These follow-ups must preserve working credentials, profiles and SSH administration.

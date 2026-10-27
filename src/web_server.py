@@ -10,6 +10,8 @@ import secrets
 import threading
 import time
 import zipfile
+import re
+from datetime import datetime
 from collections import OrderedDict, deque
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,7 +29,7 @@ IDLE_TTL = 30 * 60
 COMMANDS = {
     "create_user", "delete_user", "renew_user", "set_sessions", "set_quota",
     "set_domain", "issue_cert", "restart_service", "dns_lookup", "dns_set",
-    "xray_configure", "xray_create", "xray_update",
+    "xray_configure", "xray_create", "xray_update", "subscription_rotate", "subscription_revoke",
 }
 
 
@@ -36,6 +38,23 @@ class Store:
         self.lock = threading.RLock()
         self.sessions: OrderedDict[str, dict] = OrderedDict()
         self.attempts: OrderedDict[str, deque] = OrderedDict()
+        self.public_attempts: OrderedDict[str, deque] = OrderedDict()
+        self.public_total = deque()
+
+    def public_allowed(self, ip: str) -> bool:
+        now = time.monotonic()
+        with self.lock:
+            q = self.public_attempts.setdefault(ip, deque())
+            self.public_attempts.move_to_end(ip)
+            while len(self.public_attempts) > 2048:
+                self.public_attempts.popitem(last=False)
+            for bucket in (q, self.public_total):
+                while bucket and now - bucket[0] > 60:
+                    bucket.popleft()
+            if len(q) >= 120 or len(self.public_total) >= 300:
+                return False
+            q.append(now); self.public_total.append(now)
+            return True
 
     def login_allowed(self, ip: str) -> bool:
         now = time.monotonic()
@@ -167,10 +186,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def get(self):
         url = urlsplit(self.path)
+        if url.path.startswith("/panel/sub/"):
+            self.subscription(url)
+            return
         if url.path in {"/", "/panel"}:
             self.reply(302, b"", headers={"Location": "/panel/"})
             return
-        assets = {"/panel/": ("index.html", "text/html; charset=utf-8"), "/panel/app.js": ("app.js", "text/javascript; charset=utf-8"), "/panel/style.css": ("style.css", "text/css; charset=utf-8")}
+        assets = {"/panel/": ("index.html", "text/html; charset=utf-8"), "/panel/app.js": ("app.js", "text/javascript; charset=utf-8"), "/panel/qr.js": ("qr.js", "text/javascript; charset=utf-8"), "/panel/style.css": ("style.css", "text/css; charset=utf-8")}
         if url.path in assets:
             name, mime = assets[url.path]
             self.reply(200, (ASSETS / name).read_bytes(), mime)
@@ -178,7 +200,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/panel/api/health":
             self.json(200, {"ok": True})
             return
-        if url.path not in {"/panel/api/session", "/panel/api/state", "/panel/api/diagnostics", "/panel/api/export"}:
+        if url.path not in {"/panel/api/session", "/panel/api/state", "/panel/api/diagnostics", "/panel/api/export", "/panel/api/backup"}:
             self.json(404, {"error": "Not found"})
             return
         session = self.session()
@@ -190,6 +212,9 @@ class Handler(BaseHTTPRequestHandler):
             self.json(200, request("dashboard_status", _web_revision=session["revision"]))
         elif url.path == "/panel/api/diagnostics":
             self.json(200, request("diagnostics", _web_revision=session["revision"]))
+        elif url.path == "/panel/api/backup":
+            data = request("backup_export", _web_revision=session["revision"])["backup"]
+            self.reply(200, (json.dumps(data, indent=2) + "\n").encode(), headers={"Content-Disposition": 'attachment; filename="NOWAY-xray-backup.json"'})
         else:
             query = parse_qs(url.query)
             if any(len(values) != 1 for values in query.values()):
@@ -202,7 +227,7 @@ class Handler(BaseHTTPRequestHandler):
             result = request("xray_export", name=query.get("name", [""])[0], _web_revision=session["revision"])
             if format_name == "link":
                 protocol = query.get("protocol", [""])[0]
-                if protocol not in {"vless", "vmess", "trojan"} or protocol not in result["links"]:
+                if protocol not in {"vless", "vmess", "trojan", "vless-xhttp"} or protocol not in result["links"]:
                     self.json(400, {"error": "Selected protocol is not enabled for this account"})
                     return
                 self.reply(200, (result["links"][protocol] + "\n").encode(), "text/plain; charset=utf-8",
@@ -215,6 +240,31 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, stream.getvalue(), "application/zip", {"Content-Disposition": f'attachment; filename="NOWAY-{result["name"]}.zip"'})
             else:
                 self.json(200, result)
+
+    def subscription(self, url):
+        if not self.trusted_transport():
+            self.json(426, {"error": "Use HTTPS for subscriptions"})
+            return
+        token = url.path[len("/panel/sub/"):].rstrip("/")
+        query = parse_qs(url.query)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{43}", token) or any(len(v) != 1 for v in query.values()):
+            self.json(404, {"error": "Subscription unavailable"})
+            return
+        ip = self.headers.get("X-Real-IP", self.client_address[0]) if self.headers.get("X-Forwarded-Proto") else self.client_address[0]
+        if not STORE.public_allowed(ip):
+            self.json(429, {"error": "Try again later"}, {"Retry-After": "60"})
+            return
+        agent = self.headers.get("User-Agent", "").lower()
+        default = "clash" if "clash" in agent or "mihomo" in agent else "singbox" if "sing-box" in agent or "singbox" in agent else "base64"
+        format_name = query.get("format", [default])[0]
+        try:
+            result = request("subscription_get", token=token, format=format_name)
+        except RuntimeError:
+            self.json(404, {"error": "Subscription unavailable"})
+            return
+        expiry = int(datetime.fromisoformat(result["expiry"]).timestamp())
+        self.reply(200, result["content"].encode(), result["content_type"],
+                   {"profile-update-interval": "6", "subscription-userinfo": f"expire={expiry}", "Vary": "User-Agent"})
 
     def do_POST(self):
         try:

@@ -178,7 +178,7 @@ for path in USERS_DIR.glob('*.json'):
     if account.pw_shell == '/bin/false' and account.pw_uid != 0:
         subprocess.run(['/usr/sbin/usermod', '--shell', '/usr/local/lib/abdulbasit/tunnel-shell', name], check=True)
 PY
-for module in web_auth web_server xray_manager diagnostics; do
+for module in web_auth web_server xray_manager diagnostics client_formats profile_backup; do
   install -m 0755 -o root -g root "$PROJECT_DIR/src/$module.py" "$INSTALL_DIR/$module.py"
 done
 install -m 0644 -o root -g root "$PROJECT_DIR/src/web/"* "$INSTALL_DIR/web/"

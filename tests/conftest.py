@@ -2,3 +2,27 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+import pytest
+import xray_manager as xray
+
+
+@pytest.fixture
+def manager(tmp_path, monkeypatch):
+    for attr, value in {"SETTINGS_FILE": tmp_path / "network.json", "BACKUP_DIR": tmp_path / "backups", "ACCOUNTS_FILE": tmp_path / "accounts.json",
+                        "CONFIG_DIR": tmp_path / "xray", "CONFIG_FILE": tmp_path / "xray/config.json",
+                        "ENABLED_FILE": tmp_path / "xray/enabled", "DOMAIN_FILE": tmp_path / "domain",
+                        "CERT_ROOT": tmp_path / "certs", "XRAY_BINARY": tmp_path / "core"}.items():
+        monkeypatch.setattr(xray, attr, value)
+    xray.DOMAIN_FILE.write_text("vpn.example.com")
+    xray.XRAY_BINARY.touch()
+    cert = xray.CERT_ROOT / "vpn.example.com"
+    cert.mkdir(parents=True)
+    for name in ("fullchain.pem", "privkey.pem"):
+        (cert / name).touch()
+    calls = []
+    def run(args, **kwargs):
+        calls.append(args)
+    obj = xray.Manager(run, health_probe=lambda: True)
+    obj.calls = calls
+    return obj

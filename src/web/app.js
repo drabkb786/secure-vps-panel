@@ -4,6 +4,7 @@ const API = '/panel/api/';
 let csrf = '', state = null, createMode = 'xray', renewTarget = null, confirmResolve = null, refreshing = false;
 let noticeTimer;
 let currentExport = null;
+let currentSubscription = null;
 
 function notify(message, error = false) {
   const box = $('notice'); box.textContent = message; box.classList.toggle('error', error); box.hidden = false;
@@ -59,7 +60,7 @@ function showApp(session) {
 function view(name) {
   document.querySelectorAll('.view').forEach(n => { n.hidden = n.id !== `view-${name}`; });
   document.querySelectorAll('.nav').forEach(n => n.classList.toggle('active', n.dataset.view === name));
-  setText('breadcrumb', {overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', diagnostics: 'Diagnostics'}[name]);
+  setText('breadcrumb', {overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', diagnostics: 'Diagnostics', recovery: 'Backup & recovery'}[name]);
 }
 const size = (value) => !Number.isFinite(value) ? '—' : value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)} GB` : `${(value / 1024 ** 2).toFixed(0)} MB`;
 const percent = (used, total) => total > 0 ? Math.max(0, Math.min(100, used / total * 100)) : 0;
@@ -77,6 +78,7 @@ function profileRows(id, rows, controls) {
     const actions = element('td'), group = element('div', 'row-actions');
     if (row.active) group.append(button('Export ↗', () => exportProfile(row.name)));
     if (controls) {
+      group.append(button('Subscription', () => openSubscription(row)));
       group.append(button('Renew', () => openRenew('xray', row.name)), button(row.enabled === false ? 'Enable' : 'Disable', () => command('xray_update', {name: row.name, action: 'toggle', enabled: row.enabled === false}, 'Profile updated')),
         button('Delete', async () => { if (await confirmAction(`Delete Xray profile “${row.name}”? Its import links will stop working.`)) await command('xray_update', {name: row.name, action: 'delete'}, 'Profile deleted'); }, 'delete'));
     }
@@ -111,8 +113,8 @@ function render() {
   const protocols = $('protocol-cards'); protocols.replaceChildren();
   for (const [i, endpoint] of s.endpoints.entries()) {
     const row = element('div', 'protocol-row'), detail = element('div');
-    detail.append(element('strong', '', endpoint.protocol.toUpperCase()), element('p', '', `WS + TLS  /  ${endpoint.path}`));
-    row.append(element('span', 'protocol-symbol', ['V', 'M', 'T'][i]), detail, pill(s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'Ready' : 'Offline', s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'good' : '')); protocols.append(row);
+    detail.append(element('strong', '', endpoint.protocol.toUpperCase()), element('p', '', `${endpoint.transport.toUpperCase()}  /  ${endpoint.path}`));
+    row.append(element('span', 'protocol-symbol', ['V', 'M', 'T', 'X'][i] || 'X'), detail, pill(s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'Ready' : 'Offline', s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'good' : '')); protocols.append(row);
   }
   profileRows('overview-profiles', s.accounts.slice(0, 4), false); profileRows('xray-accounts', s.accounts, true);
   const users = $('ssh-users'); users.replaceChildren();
@@ -124,6 +126,8 @@ function render() {
   setText('xray-summary', `${s.xray_installed ? 'Installed' : 'Core not installed · run install.sh --with-xray'} · ${s.network.enabled ? 'Enabled' : 'Disabled'} · TLS on port 443`);
   $('toggle-xray').textContent = s.network.enabled ? 'Disable Xray' : 'Enable Xray';
   $('toggle-xray').classList.toggle('primary', !s.network.enabled); $('toggle-xray').disabled = !s.xray_installed || $('toggle-xray').hasAttribute('aria-busy');
+  $('toggle-xhttp').textContent = s.network.xhttp_enabled ? 'Disable XHTTP' : 'Enable XHTTP';
+  $('toggle-xhttp').disabled = !s.network.enabled || $('toggle-xhttp').hasAttribute('aria-busy');
   if (!$('domain-form').contains(document.activeElement)) $('domain-input').value = s.domain === 'Not set' ? '' : s.domain;
   if (!$('dns-form').contains(document.activeElement)) { $('dns-servers').value = s.network.dns.servers.join('\n'); $('dns-strategy').value = s.network.dns.query_strategy; }
   setText('connection-state', 'Connected'); $('connection-state').classList.add('online'); setText('last-updated', `Updated ${new Date().toLocaleTimeString()}`);
@@ -162,9 +166,30 @@ async function exportProfile(name) {
     }, 'btn small'));
     const textFile = element('a', 'btn small', '↓ Link TXT');
     textFile.href = API + `export?name=${encodeURIComponent(name)}&format=link&protocol=${encodeURIComponent(protocol)}`;
-    item.append(textFile); container.append(item);
+    item.append(textFile, button('QR code', () => showQR(link), 'btn small')); container.append(item);
   });
+  for (const [suffix, label] of [['singbox.json', 'sing-box JSON'], ['clash.yaml', 'Clash.Meta YAML']]) {
+    const content = result.files[`${name}-${suffix}`];
+    if (content) container.append(button(`↓ ${label}`, () => downloadText(content, `${name}-${suffix}`), 'btn small'));
+  }
   $('download-zip').href = API + `export?name=${encodeURIComponent(name)}&format=zip`; $('export-dialog').showModal();
+}
+function downloadText(content, filename) {
+  const url = URL.createObjectURL(new Blob([content], {type: 'text/plain;charset=utf-8'}));
+  const anchor = element('a'); anchor.href = url; anchor.download = filename; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+function showQR(text) {
+  const code = qrcode(0, 'M'); code.addData(text); code.make();
+  $('qr-image').src = code.createDataURL(4, 16); $('qr-dialog').showModal();
+}
+function openSubscription(row) {
+  currentSubscription = {name: row.name, enabled: row.subscription_enabled};
+  setText('subscription-title', `${row.name} · subscription`);
+  setText('subscription-note', row.subscription_enabled ? 'A URL already exists. Its secret cannot be retrieved; rotate only if you need a replacement.' : 'No subscription URL is enabled for this profile.');
+  $('subscription-url').value = ''; $('subscription-formats').replaceChildren();
+  $('subscription-revoke').disabled = !row.subscription_enabled;
+  $('subscription-copy').disabled = true; $('subscription-qr').disabled = true;
+  $('subscription-dialog').showModal();
 }
 function bindForm(id, handler) {
   $(id).addEventListener('submit', event => { event.preventDefault(); busy($(id).querySelector('[type="submit"]'), () => handler(new FormData($(id)))); });
@@ -175,6 +200,31 @@ document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('c
 $('confirm-dialog').addEventListener('close', () => { if (confirmResolve) { confirmResolve(false); confirmResolve = null; } });
 $('confirm-form').addEventListener('submit', event => { event.preventDefault(); const resolve = confirmResolve; confirmResolve = null; $('confirm-dialog').close(); if (resolve) resolve(true); });
 $('export-dialog').addEventListener('close', () => { currentExport = null; $('export-links').replaceChildren(); $('download-zip').removeAttribute('href'); });
+$('qr-dialog').addEventListener('close', () => $('qr-image').removeAttribute('src'));
+$('subscription-dialog').addEventListener('close', () => { currentSubscription = null; $('subscription-url').value = ''; $('subscription-formats').replaceChildren(); });
+$('subscription-rotate').addEventListener('click', () => busy($('subscription-rotate'), async () => {
+  if (!currentSubscription) return;
+  const name = currentSubscription.name;
+  if (!await confirmAction('Create a replacement subscription URL? The old URL will stop updating. Proxy credentials already downloaded stay unchanged.')) return;
+  const result = await command('subscription_rotate', {name}, 'Private subscription URL created');
+  if (!currentSubscription) return;
+  currentSubscription = {name, enabled: true}; $('subscription-url').value = result.url;
+  $('subscription-revoke').disabled = false; $('subscription-copy').disabled = false; $('subscription-qr').disabled = false;
+  setText('subscription-note', 'Save this URL now. Only its hash is stored; the full URL is shown once.');
+  const formats = $('subscription-formats'); formats.replaceChildren();
+  Object.entries(result.formats).forEach(([format, url]) => {
+    const link = element('a', 'btn small', format); link.href = url; link.target = '_blank'; link.rel = 'noreferrer'; formats.append(link);
+  });
+}));
+$('subscription-revoke').addEventListener('click', () => busy($('subscription-revoke'), async () => {
+  if (!currentSubscription || !await confirmAction('Revoke this subscription URL? Previously imported proxy credentials are unchanged.')) return;
+  await command('subscription_revoke', {name: currentSubscription.name}, 'Subscription URL revoked'); $('subscription-dialog').close();
+}));
+$('subscription-copy').addEventListener('click', () => busy($('subscription-copy'), async () => {
+  try { await navigator.clipboard.writeText($('subscription-url').value); notify('Private URL copied'); }
+  catch (_) { $('subscription-url').select(); notify('Copy the selected URL manually'); }
+}));
+$('subscription-qr').addEventListener('click', () => { if ($('subscription-url').value) showQR($('subscription-url').value); });
 $('copy-all-links').addEventListener('click', () => busy($('copy-all-links'), async () => {
   if (!currentExport) return;
   try { await navigator.clipboard.writeText(Object.values(currentExport.links).join('\n')); notify('All import links copied'); }
@@ -205,6 +255,10 @@ $('logout').addEventListener('click', () => busy($('logout'), async () => { awai
 $('toggle-xray').addEventListener('click', () => busy($('toggle-xray'), async () => {
   const enabled = !state.network.enabled;
   if (await confirmAction(enabled ? 'Enable Xray with VLESS, VMess and Trojan over TLS?' : 'Disable Xray? Existing Xray connections will disconnect.')) await command('xray_configure', {enabled}, enabled ? 'Xray enabled' : 'Xray disabled');
+}));
+$('toggle-xhttp').addEventListener('click', () => busy($('toggle-xhttp'), async () => {
+  const enabled = !state.network.xhttp_enabled;
+  if (await confirmAction(`${enabled ? 'Enable' : 'Disable'} the additional VLESS XHTTP endpoint? The core will restart.`)) await command('xray_configure', {enabled: true, xhttp_enabled: enabled}, 'XHTTP transport updated');
 }));
 $('lookup-dns').addEventListener('click', () => busy($('lookup-dns'), async () => {
   const result = await api('command', {command: 'dns_lookup', params: {domain: $('domain-input').value.trim()}});

@@ -73,8 +73,10 @@ def parser() -> argparse.ArgumentParser:
     dns = sub.add_parser("dns-set")
     dns.add_argument("--server", action="append", required=True)
     dns.add_argument("--strategy", choices=["UseIP", "UseIPv4", "UseIPv6"], default="UseIPv4")
-    for action in ("xray-status", "xray-enable", "xray-disable", "xray-sync"):
+    for action in ("xray-status", "xray-disable", "xray-sync"):
         sub.add_parser(action)
+    enable = sub.add_parser("xray-enable")
+    enable.add_argument("--xhttp", action=argparse.BooleanOptionalAction, default=None, help="Enable/disable the additional VLESS XHTTP TLS endpoint")
     profile = sub.add_parser("xray-create")
     profile.add_argument("name")
     profile.add_argument("--days", type=int, default=30)
@@ -91,7 +93,15 @@ def parser() -> argparse.ArgumentParser:
     format_group.add_argument("--links", action="store_true", help="Print only the import links, one per line")
     link = sub.add_parser("xray-link", help="Print one direct import URI without JSON wrapping")
     link.add_argument("name")
-    link.add_argument("--protocol", choices=["vless", "vmess", "trojan"], default="vless")
+    link.add_argument("--protocol", choices=["vless", "vmess", "trojan", "vless-xhttp"], default="vless")
+    for action in ("subscription-rotate", "subscription-revoke"):
+        command = sub.add_parser(action)
+        command.add_argument("name")
+    backup = sub.add_parser("backup")
+    backup.add_argument("--output", type=Path, required=True)
+    restore = sub.add_parser("restore")
+    restore.add_argument("path", type=Path)
+    restore.add_argument("--yes", action="store_true", help="Confirm replacement of Xray profiles/settings")
     return p
 
 
@@ -151,7 +161,27 @@ def main() -> int:
         elif args.action in {"xray-status", "xray-sync"}:
             result = request(args.action.replace("-", "_"))
         elif args.action in {"xray-enable", "xray-disable"}:
-            result = request("xray_configure", enabled=args.action == "xray-enable")
+            params = {"enabled": args.action == "xray-enable"}
+            if args.action == "xray-enable" and args.xhttp is not None:
+                params["xhttp_enabled"] = args.xhttp
+            result = request("xray_configure", **params)
+        elif args.action in {"subscription-rotate", "subscription-revoke"}:
+            result = request(args.action.replace("-", "_"), name=args.name)
+        elif args.action == "backup":
+            data = request("backup_export")["backup"]
+            fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as handle:
+                json.dump(data, handle, indent=2); handle.write("\n")
+            result = {"saved": str(args.output), "scope": data.get("scope")}
+        elif args.action == "restore":
+            if os.geteuid() != 0:
+                raise RuntimeError("Restore requires the root CLI")
+            if not args.path.is_file() or args.path.stat().st_size > 256 * 1024:
+                raise RuntimeError("Choose a regular backup JSON file, at most 256 KiB")
+            data = json.loads(args.path.read_text())
+            if not args.yes and input("Replace current Xray profiles/settings? Type RESTORE: ").strip() != "RESTORE":
+                raise RuntimeError("Restore cancelled")
+            result = request("backup_restore", backup=data)
         elif args.action == "xray-create":
             params = {"name": args.name, "days": args.days}
             if args.protocol:
@@ -185,7 +215,7 @@ def main() -> int:
             raise RuntimeError("Unknown action")
         print_json(result)
         return 0
-    except (RuntimeError, OSError, KeyboardInterrupt) as exc:
+    except (RuntimeError, OSError, ValueError, KeyboardInterrupt) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

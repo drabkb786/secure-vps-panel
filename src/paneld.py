@@ -58,7 +58,7 @@ from common import (
 LOG = logging.getLogger("abdulbasit-paneld")
 OP_LOCK = threading.RLock()
 CONNECTION_SLOTS = threading.BoundedSemaphore(20)
-MAX_REQUEST = 16 * 1024
+MAX_REQUEST = 512 * 1024
 NGINX_CONFIG = Path("/etc/nginx/conf.d/abdulbasit-vpn.conf")
 ACME_ROOT = Path("/var/www/letsencrypt")
 SERVICE_MAP = {
@@ -309,6 +309,18 @@ def nginx_text(domain: str, tls: bool) -> str:
         try_files $uri =404;
     }
     location = /panel { return 302 /panel/; }
+    location ^~ /panel/sub/ {
+        access_log off;
+        error_log /dev/null crit;
+        proxy_pass http://127.0.0.1:9090;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+        proxy_buffering off;
+    }
     location /panel/ {
         proxy_pass http://127.0.0.1:9090;
         proxy_http_version 1.1;
@@ -320,6 +332,22 @@ def nginx_text(domain: str, tls: bool) -> str:
         proxy_buffering off;
     }
 """
+        if secure:
+            blocks += """
+    location ^~ /xhttp/ {
+        proxy_pass http://127.0.0.1:10004;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        client_max_body_size 32m;
+    }
+"""
+        else:
+            blocks += "    location ^~ /xhttp/ { return 403; }\n"
         for protocol, (port, path) in xray_manager.PROTOCOLS.items():
             if secure:
                 blocks += f"""
@@ -358,7 +386,7 @@ def nginx_text(domain: str, tls: bool) -> str:
 
     def server(secure: bool) -> str:
         port = 443 if secure else 80
-        suffix = " ssl" if secure else ""
+        suffix = " ssl http2" if secure else ""
         ipv6 = f"    listen [::]:{port}{suffix};\n" if ipv6_enabled() else ""
         certificates = f"""
     ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
@@ -564,10 +592,15 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "xray_update": XRAY.update,
     "xray_export": XRAY.export,
     "xray_sync": XRAY.sync,
+    "subscription_rotate": XRAY.subscription_rotate,
+    "subscription_revoke": XRAY.subscription_revoke,
+    "subscription_get": XRAY.subscription_get,
+    "backup_export": XRAY.backup_export,
+    "backup_restore": XRAY.backup_restore,
 }
 
 WEB_COMMANDS = {"web_auth", "web_revision", "dashboard_status", "diagnostics", "dns_lookup", "dns_set",
-                "xray_status", "xray_configure", "xray_create", "xray_update", "xray_export",
+                "xray_status", "xray_configure", "xray_create", "xray_update", "xray_export", "subscription_rotate", "subscription_revoke", "subscription_get", "backup_export",
                 "create_user", "delete_user", "renew_user", "set_sessions", "set_quota", "list_users",
                 "list_sessions", "service_status", "restart_service", "set_domain", "issue_cert"}
 
@@ -575,8 +608,8 @@ WEB_COMMANDS = {"web_auth", "web_revision", "dashboard_status", "diagnostics", "
 def authorize_command(uid: int, command: str, params: dict) -> None:
     if uid == 0:
         return
-    if command == "configure_web":
-        raise ValidationError("Web credentials can only be reset from the root CLI")
+    if command in {"configure_web", "backup_restore"}:
+        raise ValidationError("Credential resets and backup restoration require the root CLI")
     try:
         is_web = uid == pwd.getpwnam("abdulbasit-web").pw_uid
     except KeyError:
@@ -584,7 +617,7 @@ def authorize_command(uid: int, command: str, params: dict) -> None:
     if is_web:
         if command not in WEB_COMMANDS:
             raise ValidationError("Command is unavailable to the web service")
-        if command not in {"web_auth", "web_revision"} and params.pop("_web_revision", None) != web_auth.revision():
+        if command not in {"web_auth", "web_revision", "subscription_get"} and params.pop("_web_revision", None) != web_auth.revision():
             raise ValidationError("Web session was revoked; sign in again")
         if command == "restart_service" and params.get("service") in {"abdulbasit-web", "abdulbasit-bot"}:
             raise ValidationError("Restart the web/bot service from the root CLI")
@@ -630,6 +663,8 @@ def handle_connection(conn: socket.socket) -> None:
             params = request_data.get("params", {})
             if not isinstance(command, str) or command not in HANDLERS:
                 raise ValidationError("Unknown command")
+            if len(data) > 16 * 1024 and command != "backup_restore":
+                raise ValidationError("Request too large")
             if not isinstance(params, dict):
                 raise ValidationError("Parameters must be an object")
             with OP_LOCK:

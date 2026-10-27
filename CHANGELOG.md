@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.1.0 — subscriptions, client formats and recovery
+
+- Compared 10 relevant GitHub panels/installers and two upstream references;
+  recorded feature decisions, source snapshots and license metadata in `docs/PANEL_RESEARCH.md`.
+- Added per-profile live subscription URLs with hashed tokens, one-time display,
+  rotation/revocation, expiry/disable enforcement, format selection and bounded public requests.
+- Added browser-local QR generation and WS/TLS sing-box and Mihomo/Clash.Meta exports.
+- Added scoped private Xray backups and root-only transactional restore, including
+  pre-restore recovery copies and recovery from corrupt metadata.
+- Added optional VLESS XHTTP with streaming Nginx proxying, HTTP/2 and explicit
+  ALPN; existing WS profiles and credentials are retained.
+- Fail closed on unreadable/invalid JSON stores instead of silently replacing
+  existing accounts/settings with defaults.
+- Validate imported XHTTP links through real Xray/Nginx, native client parsers,
+  QR decoding and subscription/recovery regressions. See `docs/VALIDATION.md`.
+
 ## Direct-link audit — v3 follow-up
 
 - Added plain `xray-link` and `xray-export --links` output, protocol TXT exports,
