@@ -1,5 +1,17 @@
 # Changelog
 
+## Direct-link audit — v3 follow-up
+
+- Added plain `xray-link` and `xray-export --links` output, protocol TXT exports,
+  explicit protocol copy buttons, copy-all and Telegram retrieval of existing profiles.
+- Return import links immediately when creating a profile; report offline-core
+  warnings separately from credential validity and public network reachability.
+- Fix explicit re-enable of stopped services, verify core listeners after startup,
+  preserve marker permissions on rollback, and retain successful account creation
+  when a subsequent dashboard refresh fails.
+- Test the generated URIs by independently importing them and using real Xray
+  TLS/WebSocket connections. Local validation: 70 Python tests + 2 JavaScript tests.
+
 ## 3.0.0 — NOWAY VPS Control Room
 
 - Added an authenticated, responsive browser dashboard, DNS/SSL controls and diagnostics.

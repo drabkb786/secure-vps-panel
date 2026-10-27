@@ -127,7 +127,7 @@ NOWAY / XRAY PROFILES
 4) Create VLESS + VMess + Trojan profile
 5) Renew profile
 6) Delete profile
-7) Export links + JSON (contains account secrets)
+7) Direct VLESS / VMess / Trojan link
 8) Export client ZIP
 9) Back
 EOF
@@ -146,7 +146,9 @@ EOF
         read -r -p "Profile name: " name; read -r -p "Type DELETE to confirm: " confirm
         [[ "$confirm" == "DELETE" ]] && run_ctl xray-delete "$name"
         pause ;;
-      7) read -r -p "Profile name: " name; run_ctl xray-export "$name"; pause ;;
+      7)
+        read -r -p "Profile name: " name; read -r -p "Protocol (vless/vmess/trojan) [vless]: " protocol
+        run_ctl xray-link "$name" --protocol "${protocol:-vless}"; pause ;;
       8)
         read -r -p "Profile name: " name; read -r -p "Save ZIP to (new absolute path): " output
         run_ctl xray-export "$name" --zip "$output"; pause ;;

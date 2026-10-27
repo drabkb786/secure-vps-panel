@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import date, timedelta
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlsplit, unquote
 
 import pytest
 
@@ -27,7 +27,7 @@ def manager(tmp_path, monkeypatch):
     calls = []
     def run(args, **kwargs):
         calls.append(args)
-    obj = xray.Manager(run)
+    obj = xray.Manager(run, health_probe=lambda: True)
     obj.calls = calls
     return obj
 
@@ -133,3 +133,54 @@ def test_enabling_requires_certificate_and_core(manager):
     with pytest.raises(ValidationError, match="not installed"):
         manager.configure({"enabled": True})
     assert not xray.CONFIG_FILE.exists()
+
+
+def test_reenable_restarts_stopped_service_even_with_unchanged_config(manager):
+    manager.configure({"enabled": True})
+    before = sum(c[1] == "restart" for c in manager.calls)
+    manager.configure({"enabled": True})
+    assert sum(c[1] == "restart" for c in manager.calls) == before + 1
+
+
+def test_failed_listener_readiness_rolls_back_even_after_successful_systemctl(manager):
+    manager.configure({"enabled": True})
+    previous = {p: p.read_bytes() for p in (xray.CONFIG_FILE, xray.SETTINGS_FILE, xray.ACCOUNTS_FILE, xray.ENABLED_FILE)}
+    def not_ready():
+        raise RuntimeError("Xray did not become ready")
+    manager.wait_running = not_ready
+    with pytest.raises(RuntimeError, match="not become ready"):
+        manager.create({"name": "not_ready", "days": 3})
+    assert {p: p.read_bytes() for p in previous} == previous
+    assert xray.ENABLED_FILE.stat().st_mode & 0o777 == 0o644
+
+
+def test_creation_returns_direct_links_and_separate_txt_files(manager):
+    manager.configure({"enabled": True})
+    created = manager.create({"name": "direct", "days": 7, "protocols": ["vless", "trojan"]})
+    exported = manager.export({"name": "direct"})
+    assert created["links"] == exported["links"]
+    assert set(exported["links"]) == {"vless", "trojan"}
+    for p in exported["links"]:
+        assert exported["files"][f"direct-{p}.txt"] == exported["links"][p] + "\n"
+    manager.health_probe = lambda: False
+    offline = manager.export({"name": "direct"})
+    assert offline["links"] == created["links"]
+    assert offline["readiness"]["core_ready"] is False
+    assert offline["readiness"]["warnings"]
+    assert offline["readiness"]["public_reachability"] == "not_checked"
+
+
+def test_trojan_uri_percent_encoding_preserves_password():
+    password = "test:@/?#%+&=value"
+    link = xray.share_link("trojan", {"name": "encoding", "trojan_password": password}, "vpn.example.com")
+    parsed = urlsplit(link)
+    assert unquote(parsed.username) == password
+    assert parsed.password is None and parsed.hostname == "vpn.example.com" and parsed.port == 443
+    assert parse_qs(parsed.query)["path"] == ["/trojan"]
+
+
+def test_invalid_share_link_protocol_and_domain_are_rejected():
+    with pytest.raises(ValidationError):
+        xray.share_link("other", {}, "vpn.example.com")
+    with pytest.raises(ValidationError):
+        xray.share_link("vless", {}, "example.com?injected=true")

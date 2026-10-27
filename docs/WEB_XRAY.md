@@ -102,8 +102,10 @@ new Xray endpoints are actual WebSocket transports handled by Xray itself.
 
 ## Export and import
 
-Click **Export** beside a profile. Copy the protocol's import link, download its
-Xray JSON, or download the ZIP with all selected profiles, `links.txt`, and a base64
+Click **Export** beside a profile. Use **Copy VLESS link**, **Copy Trojan link**,
+**Copy all links**, or **Link TXT** for the plain import URI. You can also download
+Xray JSON, or the ZIP with all selected profiles, individual protocol TXT files,
+`links.txt`, and a base64
 `subscription.txt`. This is a downloadable subscription file, not a public live
 subscription URL. ZIPs and export APIs require an admin session and are not cached.
 
@@ -111,6 +113,37 @@ Xray is the engine; VLESS, VMess and Trojan are the connection protocols.
 The exported JSON starts a loopback SOCKS listener on `10808`. Run one client JSON
 at a time or change that local port. Import-link compatibility depends on the
 client supporting that protocol with WS+TLS.
+
+These are direct **import URIs** (`vless://`, `trojan://`, `vmess://`). The configured
+transport remains TLS + WebSocket on port 443; the word "direct" does not switch
+the profile to a raw TCP transport. Import links are returned when creating a
+profile and can be retrieved later without regenerating its credentials.
+
+To print only one link with no JSON wrapper (replace `basit` with your profile name):
+
+```bash
+sudo abdulbasit-panelctl xray-link basit --protocol vless
+```
+
+```bash
+sudo abdulbasit-panelctl xray-link basit --protocol trojan
+```
+
+```bash
+sudo abdulbasit-panelctl xray-export basit --links
+```
+
+Warnings go to stderr so copied stdout remains importable. A missing protocol,
+expired account or disabled account returns an error instead of an invented link.
+If the core is offline, eligible profiles can still be exported with a clear warning;
+core readiness and public reachability are separate. DNS, certificate and provider
+firewall checks are still needed on the actual VPS. The Web UI shows that warning
+beside its links. Its TXT/ZIP download endpoints require an admin session.
+
+Telegram admins can open **Xray Links**, select a profile (or find it by name),
+and copy its VLESS/VMess/Trojan URIs. This retrieves existing profiles; creation
+continues through the dashboard/CLI. No real Telegram messages were sent during
+the development tests; the bot tests use an offline API fixture.
 
 ```bash
 sudo abdulbasit-panelctl xray-export basit --zip /root/basit-profiles.zip
@@ -133,7 +166,7 @@ also fails. Disabling Xray removes its boot-enable marker and stops its service.
 Private/link-local destinations (including cloud metadata addresses) are blocked
 by the generated server routing rules. This is an Internet proxy preset; private
 LAN access is not enabled. Bandwidth quotas, Xray concurrent-device limits,
-REALITY, XHTTP and protocol management inside Telegram are not part of v3.
+REALITY, XHTTP and profile creation inside Telegram are not part of v3.
 
 ## Diagnose a deployed host
 
@@ -162,3 +195,5 @@ cannot guarantee access from every network.
 - [Trojan inbound](https://xtls.github.io/en/config/inbounds/trojan.html)
 - [Built-in DNS](https://xtls.github.io/en/config/dns.html)
 - [WebSocket transport](https://xtls.github.io/en/config/transports/websocket.html)
+- [Xray share-link proposal](https://github.com/XTLS/Xray-core/discussions/716)
+- [XTLS libXray share-link implementation](https://github.com/XTLS/libXray/tree/main/share)

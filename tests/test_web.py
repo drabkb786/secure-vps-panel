@@ -22,7 +22,7 @@ def client(monkeypatch):
         if command == "web_revision":
             return {"revision": "revision1"}
         if command == "xray_export":
-            return {"name": "basit", "links": {"vless": "secret-link"}, "files": {"basit-vless.json": '{"outbounds":[]}', "links.txt": "secret-link"}}
+            return {"name": "basit", "links": {"vless": "secret-link", "trojan": "trojan://fixture-password@vpn.example.com:443?type=ws&security=tls&path=%2Ftrojan"}, "files": {"basit-vless.json": '{"outbounds":[]}', "links.txt": "secret-link"}}
         return {"ok": True, "test_result": command}
     monkeypatch.setattr(web, "request", backend)
     monkeypatch.setattr(web, "STORE", web.Store())
@@ -50,7 +50,7 @@ def login(client):
 
 
 def test_unauthenticated_reads_and_exports_are_denied(client):
-    for path in ("api/state", "api/diagnostics", "api/export?name=basit&format=zip"):
+    for path in ("api/state", "api/diagnostics", "api/export?name=basit&format=zip", "api/export?name=basit&format=link&protocol=trojan"):
         code, body, _ = client(path)
         assert code == 401
         assert b"secret-link" not in body
@@ -116,3 +116,20 @@ def test_session_idle_expiry(monkeypatch):
     store = web.Store(); token, _ = store.add("noway", "revision")
     clock[0] += web.IDLE_TTL + 1
     assert store.get(token) is None
+
+
+def test_direct_trojan_txt_is_private_plain_text_without_json_wrapper(client):
+    cookie, _ = login(client)
+    code, body, headers = client("api/export?name=basit&format=link&protocol=trojan", cookie=cookie)
+    assert code == 200
+    assert body.startswith(b"trojan://") and body.endswith(b"\n")
+    assert headers["Content-Type"] == "text/plain; charset=utf-8"
+    assert headers["Cache-Control"] == "no-store"
+    assert 'filename="basit-trojan.txt"' in headers["Content-Disposition"]
+
+
+@pytest.mark.parametrize("query", ["format=other", "format=link&protocol=ss", "format=link&protocol=vmess", "format=link&protocol=vless&protocol=trojan"])
+def test_invalid_export_format_or_unavailable_protocol_returns_actionable_error(client, query):
+    cookie, _ = login(client)
+    code, body, _ = client("api/export?name=basit&" + query, cookie=cookie)
+    assert code == 400 and "error" in json.loads(body)

@@ -3,6 +3,7 @@ const $ = (id) => document.getElementById(id);
 const API = '/panel/api/';
 let csrf = '', state = null, createMode = 'xray', renewTarget = null, confirmResolve = null, refreshing = false;
 let noticeTimer;
+let currentExport = null;
 
 function notify(message, error = false) {
   const box = $('notice'); box.textContent = message; box.classList.toggle('error', error); box.hidden = false;
@@ -42,7 +43,9 @@ async function api(path, data) {
 async function command(name, params = {}, message = 'Saved successfully') {
   const result = await api('command', {command: name, params});
   if (message) notify(message);
-  await refresh(); return result;
+  try { await refresh(); }
+  catch (_) { notify('Change saved, but the dashboard could not refresh. Refresh before making another change.', true); }
+  return result;
 }
 function showLogin() {
   csrf = ''; state = null; $('app').hidden = true; $('login-screen').hidden = false;
@@ -120,7 +123,7 @@ function render() {
   });
   setText('xray-summary', `${s.xray_installed ? 'Installed' : 'Core not installed · run install.sh --with-xray'} · ${s.network.enabled ? 'Enabled' : 'Disabled'} · TLS on port 443`);
   $('toggle-xray').textContent = s.network.enabled ? 'Disable Xray' : 'Enable Xray';
-  $('toggle-xray').classList.toggle('primary', !s.network.enabled); $('toggle-xray').disabled = !s.xray_installed;
+  $('toggle-xray').classList.toggle('primary', !s.network.enabled); $('toggle-xray').disabled = !s.xray_installed || $('toggle-xray').hasAttribute('aria-busy');
   if (!$('domain-form').contains(document.activeElement)) $('domain-input').value = s.domain === 'Not set' ? '' : s.domain;
   if (!$('dns-form').contains(document.activeElement)) { $('dns-servers').value = s.network.dns.servers.join('\n'); $('dns-strategy').value = s.network.dns.query_strategy; }
   setText('connection-state', 'Connected'); $('connection-state').classList.add('online'); setText('last-updated', `Updated ${new Date().toLocaleTimeString()}`);
@@ -144,16 +147,22 @@ function confirmAction(message) {
 }
 async function exportProfile(name) {
   const result = await api(`export?name=${encodeURIComponent(name)}`);
+  currentExport = result;
+  const warnings = result.readiness?.warnings || [];
+  setText('export-warning', warnings.join(' ')); $('export-warning').hidden = !warnings.length;
   setText('export-title', name); const container = $('export-links'); container.replaceChildren();
   Object.entries(result.links).forEach(([protocol, link]) => {
     const item = element('div', 'export-item'), input = element('textarea'); input.value = link; input.readOnly = true; input.setAttribute('aria-label', `${protocol} import link`);
-    item.append(element('strong', '', protocol.toUpperCase()), input, button('Copy link', async () => {
+    item.append(element('strong', '', protocol.toUpperCase()), input, button(`Copy ${protocol.toUpperCase()} link`, async () => {
       try { await navigator.clipboard.writeText(link); notify('Import link copied'); }
       catch (_) { input.select(); notify('Select and copy the highlighted link manually'); }
     }, 'btn small'), button('↓ Xray JSON', () => {
       const blob = new Blob([result.files[`${name}-${protocol}.json`]], {type: 'application/json'}), url = URL.createObjectURL(blob);
       const a = element('a'); a.href = url; a.download = `${name}-${protocol}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
-    }, 'btn small')); container.append(item);
+    }, 'btn small'));
+    const textFile = element('a', 'btn small', '↓ Link TXT');
+    textFile.href = API + `export?name=${encodeURIComponent(name)}&format=link&protocol=${encodeURIComponent(protocol)}`;
+    item.append(textFile); container.append(item);
   });
   $('download-zip').href = API + `export?name=${encodeURIComponent(name)}&format=zip`; $('export-dialog').showModal();
 }
@@ -165,7 +174,12 @@ document.querySelectorAll('[data-new]').forEach(btn => btn.addEventListener('cli
 document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => $(btn.dataset.close).close()));
 $('confirm-dialog').addEventListener('close', () => { if (confirmResolve) { confirmResolve(false); confirmResolve = null; } });
 $('confirm-form').addEventListener('submit', event => { event.preventDefault(); const resolve = confirmResolve; confirmResolve = null; $('confirm-dialog').close(); if (resolve) resolve(true); });
-$('export-dialog').addEventListener('close', () => { $('export-links').replaceChildren(); $('download-zip').removeAttribute('href'); });
+$('export-dialog').addEventListener('close', () => { currentExport = null; $('export-links').replaceChildren(); $('download-zip').removeAttribute('href'); });
+$('copy-all-links').addEventListener('click', () => busy($('copy-all-links'), async () => {
+  if (!currentExport) return;
+  try { await navigator.clipboard.writeText(Object.values(currentExport.links).join('\n')); notify('All import links copied'); }
+  catch (_) { notify('Clipboard is unavailable. Select and copy each visible link manually.', true); }
+}));
 $('create-dialog').addEventListener('close', () => { $('create-form').elements.password.value = ''; });
 bindForm('login-form', async data => {
   setText('login-error', '');

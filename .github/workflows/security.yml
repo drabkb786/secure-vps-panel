@@ -30,6 +30,8 @@ jobs:
           node-version: '22'
       - name: Dashboard JavaScript syntax
         run: node --check src/web/app.js
+      - name: Dashboard mutation result regressions
+        run: node --test tests/test_web_client.js
       - name: Install checksum-verified official Xray core
         run: |
           sudo mkdir -p /usr/local/lib/abdulbasit

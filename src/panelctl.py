@@ -86,7 +86,12 @@ def parser() -> argparse.ArgumentParser:
     delete_profile.add_argument("name")
     export = sub.add_parser("xray-export")
     export.add_argument("name")
-    export.add_argument("--zip", type=Path, help="Save a private ZIP with all client profiles")
+    format_group = export.add_mutually_exclusive_group()
+    format_group.add_argument("--zip", type=Path, help="Save a private ZIP with all client profiles")
+    format_group.add_argument("--links", action="store_true", help="Print only the import links, one per line")
+    link = sub.add_parser("xray-link", help="Print one direct import URI without JSON wrapping")
+    link.add_argument("name")
+    link.add_argument("--protocol", choices=["vless", "vmess", "trojan"], default="vless")
     return p
 
 
@@ -156,8 +161,19 @@ def main() -> int:
             result = request("xray_update", name=args.name, action="renew", days=args.days)
         elif args.action == "xray-delete":
             result = request("xray_update", name=args.name, action="delete")
-        elif args.action == "xray-export":
+        elif args.action in {"xray-export", "xray-link"}:
             result = request("xray_export", name=args.name)
+            for warning in result.get("readiness", {}).get("warnings", []):
+                print(f"WARNING: {warning}", file=sys.stderr)
+            if args.action == "xray-link":
+                link = result["links"].get(args.protocol)
+                if not link:
+                    raise RuntimeError(f"{args.protocol.upper()} is not enabled for this account")
+                print(link)
+                return 0
+            if args.links:
+                print("\n".join(result["links"].values()))
+                return 0
             if args.zip:
                 # Exclusive creation avoids clobbering an existing file or following a symlink.
                 fd = os.open(args.zip, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

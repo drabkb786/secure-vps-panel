@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import os
 import socket
 import socketserver
@@ -14,10 +15,11 @@ import uuid
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit, parse_qs, unquote
 
 import pytest
 
-from xray_manager import DEFAULT_DNS, PROTOCOLS, client_config, server_config
+from xray_manager import DEFAULT_DNS, PROTOCOLS, client_config, server_config, share_link
 
 CORE = os.environ.get("XRAY_TEST_BINARY", "")
 pytestmark = pytest.mark.skipif(not CORE, reason="XRAY_TEST_BINARY is not set")
@@ -72,7 +74,30 @@ def test_generated_configs_accepted_by_real_xray(tmp_path):
         assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path):
+def imported_profile_from_uri(link):
+    """Independent client-style URI decoding; deliberately does not call client_config."""
+    protocol, encoded = link.split("://", 1)
+    if protocol == "vmess":
+        data = json.loads(base64.b64decode(encoded, validate=True))
+        assert data["net"] == "ws" and data["tls"] == "tls" and data["aid"] == "0"
+        address, port, credential = data["add"], int(data["port"]), {"id": data["id"], "security": data["scy"]}
+        host, path, server_name = data["host"], data["path"], data["sni"]
+    else:
+        url = urlsplit(link); query = parse_qs(url.query, strict_parsing=True)
+        assert query["type"] == ["ws"] and query["security"] == ["tls"]
+        address, port = url.hostname, url.port
+        host, path, server_name = query["host"][0], query["path"][0], query["sni"][0]
+        credential = {"password": unquote(url.username)} if protocol == "trojan" else {"id": unquote(url.username), "encryption": query["encryption"][0]}
+    outbound_settings = {"servers": [{"address": address, "port": port, **credential}]} if protocol == "trojan" else {"vnext": [{"address": address, "port": port, "users": [credential]}]}
+    return {"log": {"loglevel": "warning"},
+            "inbounds": [{"listen": "127.0.0.1", "port": 10808, "protocol": "socks", "settings": {"auth": "noauth"}}],
+            "outbounds": [{"protocol": protocol, "settings": outbound_settings,
+                           "streamSettings": {"network": "ws", "security": "tls", "wsSettings": {"path": path, "host": host},
+                                              "tlsSettings": {"serverName": server_name, "allowInsecure": False}}}]}
+
+
+@pytest.mark.parametrize("source", ["json", "import_link"])
+def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
     """Exercise real SOCKS -> Xray -> TLS/WS -> Xray -> local HTTP for all protocols.
 
     The TLS bridge is a fixture, not Nginx. Only this test config permits its
@@ -131,7 +156,7 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path):
     try:
         wait_port(next(iter(ports.values())), server_proc)
         for protocol in PROTOCOLS:
-            cfg = client_config(protocol, row, "vpn.example.com", DEFAULT_DNS)
+            cfg = client_config(protocol, row, "vpn.example.com", DEFAULT_DNS) if source == "json" else imported_profile_from_uri(share_link(protocol, row, "vpn.example.com"))
             cfg["log"]["loglevel"] = "debug"
             proxy = cfg["outbounds"][0]; proxy["streamSettings"]["tlsSettings"]["certificates"] = [{"certificateFile": str(cert), "usage": "verify"}]
             endpoint = proxy["settings"]["servers" if protocol == "trojan" else "vnext"][0]

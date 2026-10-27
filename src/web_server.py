@@ -192,8 +192,22 @@ class Handler(BaseHTTPRequestHandler):
             self.json(200, request("diagnostics", _web_revision=session["revision"]))
         else:
             query = parse_qs(url.query)
+            if any(len(values) != 1 for values in query.values()):
+                self.json(400, {"error": "Duplicate export parameters are not supported"})
+                return
+            format_name = query.get("format", ["json"])[0]
+            if format_name not in {"json", "zip", "link"}:
+                self.json(400, {"error": "Choose json, zip or link export format"})
+                return
             result = request("xray_export", name=query.get("name", [""])[0], _web_revision=session["revision"])
-            if query.get("format") == ["zip"]:
+            if format_name == "link":
+                protocol = query.get("protocol", [""])[0]
+                if protocol not in {"vless", "vmess", "trojan"} or protocol not in result["links"]:
+                    self.json(400, {"error": "Selected protocol is not enabled for this account"})
+                    return
+                self.reply(200, (result["links"][protocol] + "\n").encode(), "text/plain; charset=utf-8",
+                           {"Content-Disposition": f'attachment; filename="{result["name"]}-{protocol}.txt"'})
+            elif format_name == "zip":
                 stream = io.BytesIO()
                 with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
                     for name, content in result["files"].items():

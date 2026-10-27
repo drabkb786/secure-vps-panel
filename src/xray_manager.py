@@ -11,7 +11,10 @@ import ipaddress
 import json
 import os
 import secrets
+import socket
+import subprocess
 import tempfile
+import time
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -149,6 +152,9 @@ def client_config(protocol: str, row: dict, domain: str, dns: dict) -> dict:
 
 
 def share_link(protocol: str, row: dict, domain: str) -> str:
+    if protocol not in PROTOCOLS:
+        raise ValidationError("Choose vless, vmess or trojan")
+    domain = validate_domain(domain)
     _, path = PROTOCOLS[protocol]
     label = f"NOWAY-{row['name']}-{protocol.upper()}"
     if protocol == "vmess":
@@ -162,8 +168,29 @@ def share_link(protocol: str, row: dict, domain: str) -> str:
 
 
 class Manager:
-    def __init__(self, run):
+    def __init__(self, run, *, health_probe=None):
         self.run = run
+        self.health_probe = health_probe or self.runtime_ready
+
+    def runtime_ready(self) -> bool:
+        """A successful Type=simple start alone does not establish listener readiness."""
+        try:
+            self.run(["/bin/systemctl", "is-active", "--quiet", "abdulbasit-xray"], timeout=3)
+            for port, _ in PROTOCOLS.values():
+                with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+                    pass
+            return True
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            return False
+
+    def wait_running(self) -> None:
+        deadline = time.monotonic() + 8
+        while True:
+            if self.health_probe():
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Xray did not become ready; previous config restored. Check journalctl -u abdulbasit-xray for port conflicts or startup errors")
+            time.sleep(0.2)
 
     def ready(self) -> str:
         domain = validate_domain(read_text(DOMAIN_FILE))
@@ -173,7 +200,7 @@ class Manager:
             raise ValidationError("Xray core is not installed; run install.sh --with-xray")
         return domain
 
-    def apply(self, config: dict, rows: list[dict]) -> None:
+    def apply(self, config: dict, rows: list[dict], *, force_restart: bool = False) -> None:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o750)
         os.chmod(CONFIG_DIR, 0o750)
         try:
@@ -193,7 +220,7 @@ class Manager:
             finally:
                 Path(candidate).unlink(missing_ok=True)
         old = {p: p.read_text() if p.exists() else None for p in (CONFIG_FILE, SETTINGS_FILE, ACCOUNTS_FILE, ENABLED_FILE)}
-        changed = text != old[CONFIG_FILE] or config["enabled"] != settings()["enabled"]
+        changed = force_restart or text != old[CONFIG_FILE] or config["enabled"] != settings()["enabled"]
         try:
             atomic_write_json(SETTINGS_FILE, config)
             atomic_write_json(ACCOUNTS_FILE, rows)
@@ -206,12 +233,14 @@ class Manager:
                 ENABLED_FILE.unlink(missing_ok=True)
             if changed:
                 self.run(["/bin/systemctl", "restart" if config["enabled"] else "stop", "abdulbasit-xray"], timeout=30)
+                if config["enabled"]:
+                    self.wait_running()
         except Exception:
             for path, content in old.items():
                 if content is None:
                     path.unlink(missing_ok=True)
                 else:
-                    atomic_write(path, content, 0o640 if path == CONFIG_FILE else 0o600)
+                    atomic_write(path, content, 0o640 if path == CONFIG_FILE else 0o644 if path == ENABLED_FILE else 0o600)
                     if path == CONFIG_FILE and gid is not None:
                         os.chown(path, 0, gid)
             if old[CONFIG_FILE] is not None:
@@ -237,7 +266,8 @@ class Manager:
             raise ValidationError("enabled must be a boolean")
         cfg = settings()
         cfg["enabled"] = enabled
-        self.apply(cfg, accounts())
+        # Explicit enable/disable must act even when the saved settings are unchanged.
+        self.apply(cfg, accounts(), force_restart=True)
         return self.status({})
 
     def set_dns(self, params: dict) -> dict:
@@ -250,7 +280,7 @@ class Manager:
         return {"dns": cfg["dns"], "scope": "Xray server and exported client profiles"}
 
     def create(self, params: dict) -> dict:
-        self.ready()
+        domain = self.ready()
         if not settings()["enabled"]:
             raise ValidationError("Enable Xray first")
         rows = accounts()
@@ -267,7 +297,7 @@ class Manager:
                "expiry": calculate_expiry(validate_days(params.get("days"))),
                "created_at": datetime.now(timezone.utc).isoformat()}
         self.apply(settings(), rows + [row])
-        return {"account": public_account(row)}
+        return {"account": public_account(row), "links": {p: share_link(p, row, domain) for p in row["protocols"]}}
 
     def update(self, params: dict) -> dict:
         name = validate_username(str(params.get("name", "")))
@@ -299,8 +329,12 @@ class Manager:
         links = {p: share_link(p, row, domain) for p in row["protocols"]}
         text = "\n".join(links.values()) + "\n"
         files = {f"{name}-{p}.json": json.dumps(client_config(p, row, domain, cfg["dns"]), indent=2) + "\n" for p in row["protocols"]}
+        files.update({f"{name}-{p}.txt": link + "\n" for p, link in links.items()})
         files.update({"links.txt": text, "subscription.txt": base64.b64encode(text.encode()).decode() + "\n"})
-        return {"name": name, "links": links, "files": files}
+        running = self.health_probe()
+        warnings = [] if running else ["The link is configured, but Xray is not currently ready. Enable/restart Xray and run diagnostics before connecting."]
+        return {"name": name, "links": links, "files": files,
+                "readiness": {"core_ready": running, "public_reachability": "not_checked", "warnings": warnings}}
 
     def sync(self, _: dict) -> dict:
         cfg = settings()

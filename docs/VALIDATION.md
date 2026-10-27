@@ -4,7 +4,7 @@ Checked in the development environment on 27 October 2026 (Asia/Karachi).
 
 ## Passing checks
 
-- **52 tests**, including real Xray and Nginx checks, passed locally.
+- **70 Python tests and 2 JavaScript regression tests**, including real Xray and Nginx checks, passed locally.
 - Python compilation, JavaScript syntax, Bash syntax, the repository static audit
   and `git diff --check` passed.
 - Official **Xray 26.10.21** was downloaded from XTLS releases and verified against
@@ -16,6 +16,9 @@ Checked in the development environment on 27 October 2026 (Asia/Karachi).
   Xray → a local HTTP fixture. TLS verification stayed enabled; a test CA was
   trusted explicitly. Only the test config allowed that fixture's loopback port;
   production routing continues to block private targets.
+- The transport test also independently decoded each generated import URI, built
+  a client config from its actual fields, and obtained the same HTTP response.
+  This covers the links themselves, not only separately generated client JSON.
 - An isolated **Ubuntu Nginx 1.24.0** binary accepted the generated HTTP and TLS
   sites. The tests substituted fixture certificate/log/temp paths and loopback
   high ports; route content and upstream wiring were retained.
@@ -29,6 +32,14 @@ Checked in the development environment on 27 October 2026 (Asia/Karachi).
 - Account/config regressions cover failed config tests, failed restarts, rollback,
   expiry removal, renewal, disable-on-boot markers, secret-free profile lists,
   DNS validation and exported protocol credentials.
+- Direct-link regressions cover plain CLI output without JSON wrapping, isolated
+  warning output, per-protocol TXT downloads, unavailable-protocol errors,
+  Trojan password percent encoding, offline-core warnings and authorized Telegram
+  link retrieval. Telegram tests send no real messages.
+- Repeated Enable now restarts an already-configured but stopped core. Successful
+  systemctl startup is followed by listener readiness checks, with rollback if
+  they fail. A failed dashboard refresh no longer reports an already-saved account
+  creation as a failed mutation.
 - A 4 MiB stream/half-close test verifies the SSH upgrade relay preserves data
   under socket backpressure.
 
@@ -58,6 +69,10 @@ python -m py_compile src/*.py
 
 ```bash
 node --check src/web/app.js
+```
+
+```bash
+node --test tests/test_web_client.js
 ```
 
 ```bash
