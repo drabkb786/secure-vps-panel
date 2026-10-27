@@ -5,8 +5,6 @@ import json
 import base64
 import os
 import socket
-import socketserver
-import ssl
 import struct
 import subprocess
 import threading
@@ -107,14 +105,14 @@ def imported_profile_from_uri(link):
 
 @pytest.mark.parametrize("source", ["json", "import_link", "xhttp_link"])
 def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
-    """Exercise real SOCKS -> Xray -> TLS/WS -> Xray -> local HTTP for all protocols.
+    """Exercise SOCKS -> Xray -> verified TLS/Nginx -> Xray -> local HTTP.
 
-    The TLS bridge is a fixture, not Nginx. Only this test config permits its
-    loopback HTTP destination; production profiles keep private targets blocked.
+    Only this test config permits its loopback HTTP destination; production
+    profiles keep private targets blocked. All transports use the actual gateway.
     """
     nginx = os.environ.get("NGINX_TEST_BINARY")
-    if source == "xhttp_link" and not nginx:
-        pytest.skip("XHTTP HTTP/2 integration requires NGINX_TEST_BINARY")
+    if not nginx:
+        pytest.skip("TLS gateway integration requires NGINX_TEST_BINARY")
     row = record(); server_cfg = server_config({"dns": DEFAULT_DNS, "xhttp_enabled": source == "xhttp_link"}, [row])
     server_cfg["log"]["loglevel"] = "debug"
     ports = {path: free_port() for _, path in PROTOCOLS.values()}
@@ -135,60 +133,29 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
 
     key, cert = tmp_path / "key.pem", tmp_path / "cert.pem"
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com", "-addext", "subjectAltName=DNS:vpn.example.com"], check=True, capture_output=True, timeout=20)
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(cert, key)
-
-    class Bridge(socketserver.BaseRequestHandler):
-        def handle(self):
-            try:
-                with context.wrap_socket(self.request, server_side=True) as secure:
-                    secure.settimeout(5); header = b""
-                    while b"\r\n\r\n" not in header:
-                        part = secure.recv(4096)
-                        if not part: return
-                        header += part
-                        if len(header) > 16384: return
-                    target_path = header.split(b" ")[1].decode().split("?")[0]
-                    path = next((p for p in ports if target_path == p or p.endswith("/") and target_path.startswith(p)), "")
-                    with socket.create_connection(("127.0.0.1", ports[path]), timeout=5) as upstream:
-                        upstream.sendall(header)
-                        def pipe(source, target):
-                            try:
-                                while True:
-                                    payload = source.recv(65536)
-                                    if not payload: break
-                                    target.sendall(payload)
-                            except OSError: pass
-                        forward = threading.Thread(target=pipe, args=(secure, upstream), daemon=True); forward.start()
-                        pipe(upstream, secure)
-            except (OSError, KeyError): pass
-    class BridgeServer(socketserver.ThreadingTCPServer):
-        daemon_threads = True
-        allow_reuse_address = True
-    tls = BridgeServer(("127.0.0.1", 0), Bridge)
-    threading.Thread(target=tls.serve_forever, daemon=True).start()
     path = tmp_path / "server.json"; path.write_text(json.dumps(server_cfg))
     server_proc, server_log = start_core(path)
     front_proc = front_log = None
-    front_port = tls.server_address[1]
     try:
-        wait_port(next(iter(ports.values())), server_proc)
+        for backend_port in ports.values():
+            wait_port(backend_port, server_proc)
+        from paneld import nginx_text
+        front_port, http_port = free_port(), free_port()
+        site = nginx_text("vpn.example.com", True)
+        site = re.sub(r"^\s*listen \[::\]:[^\n]*\n", "", site, flags=re.MULTILINE)
+        site = site.replace("listen 80;", f"listen 127.0.0.1:{http_port};").replace("listen 443 ssl http2;", f"listen 127.0.0.1:{front_port} ssl http2;")
+        site = site.replace("/etc/letsencrypt/live/vpn.example.com/fullchain.pem", str(cert)).replace("/etc/letsencrypt/live/vpn.example.com/privkey.pem", str(key))
+        for protocol, (port, endpoint_path) in PROTOCOLS.items():
+            site = site.replace(f"127.0.0.1:{port}", f"127.0.0.1:{ports[endpoint_path]}")
         if source == "xhttp_link":
-            from paneld import nginx_text
-            front_port, http_port = free_port(), free_port()
-            site = nginx_text("vpn.example.com", True)
-            site = re.sub(r"^\s*listen \[::\]:[^\n]*\n", "", site, flags=re.MULTILINE)
-            site = site.replace("listen 80;", f"listen 127.0.0.1:{http_port};").replace("listen 443 ssl http2;", f"listen 127.0.0.1:{front_port} ssl http2;")
-            site = site.replace("/etc/letsencrypt/live/vpn.example.com/fullchain.pem", str(cert)).replace("/etc/letsencrypt/live/vpn.example.com/privkey.pem", str(key))
-            for protocol, (port, endpoint_path) in PROTOCOLS.items():
-                site = site.replace(f"127.0.0.1:{port}", f"127.0.0.1:{ports[endpoint_path]}")
             site = site.replace("127.0.0.1:10004", f"127.0.0.1:{ports[XHTTP_PATH]}")
-            config = tmp_path / "nginx.conf"
-            user = "user root root;\n" if os.geteuid() == 0 else ""
-            temp_paths = "\n".join(f"{part}_temp_path {tmp_path}/{part};" for part in ("client_body", "proxy", "fastcgi", "scgi", "uwsgi"))
-            config.write_text(user + f"master_process off;\npid {tmp_path}/nginx.pid;\nerror_log {tmp_path}/nginx-error.log;\nevents {{}}\nhttp {{access_log off;\n{temp_paths}\n{site}\n}}")
-            front_log = (tmp_path / "nginx-console.log").open("w")
-            front_proc = subprocess.Popen([nginx, "-p", str(tmp_path), "-c", str(config), "-g", "daemon off;"], stdout=front_log, stderr=front_log)
-            wait_port(front_port, front_proc)
+        config = tmp_path / "nginx.conf"
+        user = "user root root;\n" if os.geteuid() == 0 else ""
+        temp_paths = "\n".join(f"{part}_temp_path {tmp_path}/{part};" for part in ("client_body", "proxy", "fastcgi", "scgi", "uwsgi"))
+        config.write_text(user + f"master_process off;\npid {tmp_path}/nginx.pid;\nerror_log {tmp_path}/nginx-error.log;\nevents {{}}\nhttp {{access_log off;\n{temp_paths}\n{site}\n}}")
+        front_log = (tmp_path / "nginx-console.log").open("w")
+        front_proc = subprocess.Popen([nginx, "-p", str(tmp_path), "-c", str(config), "-g", "daemon off;"], stdout=front_log, stderr=front_log)
+        wait_port(front_port, front_proc)
         for protocol in (["vless-xhttp"] if source == "xhttp_link" else PROTOCOLS):
             cfg = client_config(protocol, row, "vpn.example.com", DEFAULT_DNS) if source == "json" else imported_profile_from_uri(share_link(protocol, row, "vpn.example.com"))
             cfg["log"]["loglevel"] = "debug"
@@ -212,10 +179,14 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
                         if not data: break
                         response += data
                     assert b"NOWAY verified transport test" in response, protocol
+            except Exception as exc:
+                log.flush(); server_log.flush(); front_log.flush()
+                logs = "\n".join(f"{p.name}:\n{p.read_text()}" for p in tmp_path.glob("*.log"))
+                raise AssertionError(f"{protocol} transport failed:\n{logs}") from exc
             finally:
                 proc.terminate(); proc.wait(timeout=5); log.close()
     finally:
         if front_proc is not None:
             front_proc.terminate(); front_proc.wait(timeout=5); front_log.close()
         server_proc.terminate(); server_proc.wait(timeout=5); server_log.close()
-        tls.shutdown(); tls.server_close(); http.shutdown(); http.server_close()
+        http.shutdown(); http.server_close()

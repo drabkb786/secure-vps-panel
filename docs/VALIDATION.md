@@ -13,7 +13,7 @@ Checked in the development environment on 27 October 2026 (Asia/Karachi).
 - Real Xray accepted the generated server configs, an empty-account config, all
   three WS client configs and the additional VLESS XHTTP client config.
 - A local end-to-end test exercised **each of VLESS, VMess and Trojan** using real
-  Xray server/client processes: loopback SOCKS → verified TLS/WebSocket bridge →
+  Xray server/client processes: loopback SOCKS → real Nginx TLS/WebSocket →
   Xray → a local HTTP fixture. TLS verification stayed enabled; a test CA was
   trusted explicitly. Only the test config allowed that fixture's loopback port;
   production routing continues to block private targets.

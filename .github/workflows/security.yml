@@ -36,15 +36,15 @@ jobs:
         run: |
           sudo mkdir -p /usr/local/lib/abdulbasit
           sudo bash scripts/install-xray.sh
-      - name: Real Xray config and TLS / WebSocket transport tests
-        env:
-          XRAY_TEST_BINARY: /usr/local/lib/abdulbasit/xray
-        run: pytest -q tests/test_xray_core.py
-      - name: Parse generated Nginx HTTP and TLS sites
+      - name: Install Nginx for gateway integration tests
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y nginx
-          NGINX_TEST_BINARY=/usr/sbin/nginx XRAY_TEST_BINARY=/usr/local/lib/abdulbasit/xray pytest -q tests/test_nginx.py tests/test_xray_core.py -k 'nginx or xhttp_link'
+      - name: Real Xray config and Nginx TLS / WS / XHTTP transport tests
+        env:
+          XRAY_TEST_BINARY: /usr/local/lib/abdulbasit/xray
+          NGINX_TEST_BINARY: /usr/sbin/nginx
+        run: pytest -q tests/test_nginx.py tests/test_xray_core.py
       - name: Verify sing-box and Mihomo client exports
         run: |
           python scripts/fetch-test-clients.py --directory "$RUNNER_TEMP/noway-test-clients"
