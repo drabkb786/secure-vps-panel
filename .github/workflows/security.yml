@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install test dependency
-        run: python -m pip install --disable-pip-version-check pytest zxing-cpp pillow numpy
+        run: python -m pip install --disable-pip-version-check pytest zxing-cpp pillow numpy 'wsproto==1.2.0' 'websockets==16.0' 'paramiko==3.5.1'
       - name: Python compile
         run: python -m py_compile src/*.py
       - name: Unit tests
@@ -45,6 +45,10 @@ jobs:
           XRAY_TEST_BINARY: /usr/local/lib/abdulbasit/xray
           NGINX_TEST_BINARY: /usr/sbin/nginx
         run: pytest -q tests/test_nginx.py tests/test_xray_core.py
+      - name: Build verified official Dropbear and test SSH through Nginx
+        run: |
+          bash scripts/fetch-test-dropbear.sh "$RUNNER_TEMP/noway-dropbear"
+          DROPBEAR_TEST_BINARY="$RUNNER_TEMP/noway-dropbear/dropbear-2026.94/dropbear" DROPBEARKEY_TEST_BINARY="$RUNNER_TEMP/noway-dropbear/dropbear-2026.94/dropbearkey" NGINX_TEST_BINARY=/usr/sbin/nginx pytest -q tests/test_dropbear_native.py
       - name: Verify sing-box and Mihomo client exports
         run: |
           python scripts/fetch-test-clients.py --directory "$RUNNER_TEMP/noway-test-clients"

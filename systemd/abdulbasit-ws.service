@@ -10,6 +10,9 @@ ExecStart=/usr/bin/python3 /usr/local/lib/abdulbasit/ws_proxy.py
 Restart=on-failure
 RestartSec=2s
 UMask=0077
+MemoryMax=256M
+TasksMax=256
+LimitNOFILE=1024
 
 NoNewPrivileges=yes
 PrivateTmp=yes

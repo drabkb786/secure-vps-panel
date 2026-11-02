@@ -67,7 +67,7 @@ fi
 log "Installing required packages without performing an unattended full system upgrade"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates nginx dropbear certbot python3 procps passwd iproute2 iputils-ping fail2ban curl dnsutils openssl
+apt-get install -y --no-install-recommends ca-certificates nginx dropbear certbot python3 python3-wsproto procps passwd iproute2 iputils-ping fail2ban curl dnsutils openssl
 python3 - <<'PY' || die "Python 3.10 or newer is required (use Ubuntu 22.04+/Debian 12+ or install a supported Python)"
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
@@ -167,6 +167,7 @@ install -m 0755 -o root -g root "$PROJECT_DIR/src/panelctl.py" "$INSTALL_DIR/pan
 install -m 0755 -o root -g root "$PROJECT_DIR/src/tgbot.py" "$INSTALL_DIR/tgbot.py"
 install -m 0755 -o root -g root "$PROJECT_DIR/src/ws_proxy.py" "$INSTALL_DIR/ws_proxy.py"
 install -m 0755 -o root -g root "$PROJECT_DIR/src/session_enforcer.py" "$INSTALL_DIR/session_enforcer.py"
+install -m 0755 -o root -g root "$PROJECT_DIR/src/dropbear_sessions.py" "$INSTALL_DIR/dropbear_sessions.py"
 install -m 0755 -o root -g root "$PROJECT_DIR/scripts/tunnel-shell" "$INSTALL_DIR/tunnel-shell"
 if ! grep -Fxq "$INSTALL_DIR/tunnel-shell" /etc/shells; then
   printf '\n%s\n' "$INSTALL_DIR/tunnel-shell" >> /etc/shells
@@ -213,12 +214,15 @@ fi
 
 log "Backing up and configuring Dropbear on ports 109 and 447"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+dropbear_was_active=0
+systemctl is-active --quiet dropbear && dropbear_was_active=1
+dropbear_previous="$BACKUP_DIR/dropbear.default.$timestamp"
 if [[ -f /etc/default/dropbear ]]; then
-  cp -a /etc/default/dropbear "$BACKUP_DIR/dropbear.default.$timestamp"
+  cp -a /etc/default/dropbear "$dropbear_previous"
 fi
 for port in 109 447; do
   conflict="$(ss -H -ltnp "sport = :$port" 2>/dev/null || true)"
-  if [[ -n "$conflict" && "$conflict" != *dropbear* ]]; then
+  if [[ -n "$conflict" ]] && printf '%s\n' "$conflict" | grep -qv '"dropbear"'; then
     die "Port $port is already occupied by another service"
   fi
 done
@@ -226,17 +230,36 @@ cat > /etc/default/dropbear <<'EOF'
 # Managed by Abdul Basit Secure VPS Panel
 NO_START=0
 DROPBEAR_PORT=109
-DROPBEAR_EXTRA_ARGS="-p 447 -b /etc/abdulbasit/ssh-banner.txt -w -K 30 -I 1800"
-DROPBEAR_BANNER="/etc/abdulbasit/ssh-banner.txt"
+DROPBEAR_EXTRA_ARGS="-p 447 -b /etc/abdulbasit/ssh-banner.txt -w -k -T 3 -K 30 -I 1800 -W 131072"
+DROPBEAR_BANNER=""
 EOF
 chmod 0644 /etc/default/dropbear
 if [[ ! -f "$CONFIG_DIR/ssh-banner.txt" ]]; then
   printf '%s\n' 'NOWAY / Private VPS access' 'Authorized accounts only.' > "$CONFIG_DIR/ssh-banner.txt"
 fi
 chmod 0644 "$CONFIG_DIR/ssh-banner.txt"
+dropbear_ready() {
+  systemctl is-active --quiet dropbear || return 1
+  local port
+  for port in 109 447; do
+    ss -H -ltnp "sport = :$port" | grep -q '"dropbear"' || return 1
+  done
+}
+if ! systemctl restart dropbear || ! dropbear_ready; then
+  warn "Dropbear configuration failed; restoring previous defaults"
+  if [[ -f "$dropbear_previous" ]]; then
+    cp -a "$dropbear_previous" /etc/default/dropbear
+  else
+    rm -f /etc/default/dropbear
+  fi
+  if [[ "$dropbear_was_active" == 1 ]]; then
+    systemctl restart dropbear || warn "Previous Dropbear service could not be restored; normal OpenSSH is unchanged"
+  else
+    systemctl stop dropbear || true
+  fi
+  die "Dropbear did not open both managed ports; previous configuration restored"
+fi
 systemctl enable dropbear
-systemctl restart dropbear
-systemctl is-active --quiet dropbear || die "Dropbear failed to start; restore from $BACKUP_DIR if needed"
 
 if [[ -f /etc/fail2ban/filter.d/dropbear.conf ]]; then
   log "Enabling Fail2ban protection for direct Dropbear ports"
@@ -245,6 +268,7 @@ if [[ -f /etc/fail2ban/filter.d/dropbear.conf ]]; then
 enabled = true
 port = 109,447
 backend = systemd
+ignoreip = 127.0.0.1/8 ::1
 maxretry = 5
 findtime = 10m
 bantime = 1h

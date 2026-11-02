@@ -12,7 +12,7 @@ def render(data, live, *, color=False):
     online = live.get("xray", {})
     ips = str(len({x["ip"] for x in online.get("connections", [])})) if online.get("available") else "unavailable"
     p = palette
-    print(f"{p['green']}N / NOWAY{p['reset']}   VPS CONTROL ROOM   {p['muted']}v3.2 · Abdul Basit{p['reset']}\n")
+    print(f"{p['green']}N / NOWAY{p['reset']}   VPS CONTROL ROOM   {p['muted']}v3.3 · Abdul Basit{p['reset']}\n")
     print(f"{p['cyan']}{safe(system['hostname'])}{p['reset']}  /  {safe(data['domain'])}")
     print(f"Memory {gb(system['memory_total'] - system['memory_available'])} / {gb(system['memory_total'])}    Xray payload {gb(measured)}")
     print(f"Profiles {len(accounts)}    SSH accounts {len(data['users'])}    Authenticated recent IPs {ips}")

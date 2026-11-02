@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.3.0 — Dropbear transport and verified sessions
+
+- Consolidate the v3.2 panel and both Actions v7 dependency PRs on `main`;
+  preserve the older CDN draft branch as a documented future port.
+- Add real RFC 6455 binary SSH transport at `/ssh/ws` using the maintained
+  wsproto parser, retaining legacy raw Upgrade at `/` and `/ssh/raw`.
+- Bound threads before dispatch, enforce an absolute header deadline, reject
+  ambiguous handshakes and handle framing/close/backpressure without data loss.
+- Attribute older root-owned forwarding sessions from trusted final auth
+  journal records and modern sessions from verified process UIDs. Pin kernel
+  identities with pidfds before enforcement; keep the oldest connections.
+- Add explicit Dropbear listener/version/session diagnostics, reverse-forward
+  denial, three authentication tries, a 128-KiB receive window, loopback-safe
+  Fail2ban configuration and installer defaults rollback.
+- Add independent WebSocket regressions and opt-in official Dropbear/Nginx
+  integration checks for auth, host keys, TCP forwarding and tunnel-only policy.
+
 ## 3.2.0 — operations desk and measured usage
 
 - Map the reference screenshot's 20 controls to original NOWAY browser/terminal

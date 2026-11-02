@@ -9,68 +9,27 @@ account because of a transient overage.
 from __future__ import annotations
 
 import logging
-import os
 import pwd
-import signal
-import subprocess
 import time
 from datetime import date
-from pathlib import Path
 
 from common import USERS_DIR, read_json
+import dropbear_sessions
 
 LOG = logging.getLogger("abdulbasit-session-enforcer")
 INTERVAL = 5
 
 
 def dropbear_pids_by_uid() -> dict[int, list[int]]:
-    result = subprocess.run(
-        ["/bin/ps", "-eo", "pid=,euid=,comm="],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
-    )
-    mapping: dict[int, list[int]] = {}
-    for line in result.stdout.splitlines():
-        parts = line.split(None, 2)
-        if len(parts) != 3 or "dropbear" not in parts[2].lower():
-            continue
-        try:
-            pid, uid = int(parts[0]), int(parts[1])
-        except ValueError:
-            continue
-        mapping.setdefault(uid, []).append(pid)
-    for pids in mapping.values():
-        pids.sort()
-    return mapping
+    return {uid: [p.pid for p in rows] for uid, rows in dropbear_sessions.snapshot(USERS_DIR)["sessions"].items()}
 
 
 def is_expected_dropbear(pid: int, expected_uid: int) -> bool:
-    try:
-        if Path(f"/proc/{pid}").stat().st_uid != expected_uid:
-            return False
-        comm = Path(f"/proc/{pid}/comm").read_text(encoding="utf-8", errors="ignore").strip().lower()
-        return "dropbear" in comm
-    except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
-        return False
+    return any(p.pid == pid for p in dropbear_sessions.snapshot(USERS_DIR)["sessions"].get(expected_uid, []))
 
 
 def terminate(pids: list[int], expected_uid: int) -> None:
-    verified = [pid for pid in pids if is_expected_dropbear(pid, expected_uid)]
-    for pid in verified:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
-    time.sleep(1)
-    for pid in verified:
-        if not is_expected_dropbear(pid, expected_uid):
-            continue
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+    dropbear_sessions.terminate(pids, expected_uid, USERS_DIR)
 
 
 def enforce_once() -> None:

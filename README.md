@@ -1,4 +1,4 @@
-# NOWAY VPS Control Room v3.2.0
+# NOWAY VPS Control Room v3.3.0
 
 > Browser dashboard, SSH/Dropbear, VLESS/VMess/Trojan, optional VLESS XHTTP, live subscriptions, QR, client configs and private recovery for Ubuntu/Debian VPS servers.
 
@@ -9,7 +9,7 @@
 | Owner and Maintainer | **Abdul Basit** |
 | GitHub Account | `drabkb786` |
 | Repository | `drabkb786/secure-vps-panel` |
-| Version | `3.2.0` |
+| Version | `3.3.0` |
 | Default Telegram Super Admin ID | `6408975845` |
 | Supported OS | Ubuntu 22.04/24.04 and Debian 12+ |
 | Required Python | Python 3.10 or newer |
@@ -25,6 +25,7 @@ Yeh browser aur terminal dono se khulta hai. Naya NOWAY dashboard `https://YOUR-
 **v3.2 setup, migration, Xray exports aur limitations:** [Web + Xray guide](docs/WEB_XRAY.md).
 **Implementation sequence aur next phases:** [Roadmap](docs/ROADMAP.md).
 **Verification evidence:** [Validation](docs/VALIDATION.md).
+**Dropbear fixes, standard WebSocket and session attribution:** [SSH transport guide](docs/DROPBEAR.md).
 **Screenshot ke 20 controls, traffic, SlowDNS aur maintenance:** [Operations guide](docs/OPERATIONS.md).
 **10 GitHub panels + 2 upstream references ka comparison:** [Research and upgrade decisions](docs/PANEL_RESEARCH.md).
 
@@ -41,6 +42,13 @@ packet-loss test, custom Dropbear banner aur root-only maintenance. Xray quotas
 one-minute sampling par enforce hote hain; SSH GB ab bhi metadata hai. Public
 SlowDNS ko actual NS delegation/UDP firewall setup chahiye. Details aur complete
 20-option mapping operations guide mein hain.
+
+**v3.3:** standard binary WebSocket SSH `/ssh/ws`, existing legacy `/` and
+`/ssh/raw` routes, bounded bridge workers/queues, stricter handshake validation,
+old/new Dropbear session attribution and pidfd-safe enforcement. Installer adds
+`python3-wsproto`, disables reverse forwarding, limits auth retries and rolls back
+Dropbear defaults if either managed listener fails. Detailed limits, source
+research and native test scope are in the SSH transport guide.
 
 Panel automatically:
 
