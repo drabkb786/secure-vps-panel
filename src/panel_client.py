@@ -13,7 +13,7 @@ MAX_RESPONSE = 1024 * 1024
 
 def request(command: str, **params: Any) -> dict[str, Any]:
     payload = json.dumps({"command": command, "params": params}, separators=(",", ":")).encode("utf-8") + b"\n"
-    if len(payload) > 16 * 1024:
+    if len(payload) > (512 * 1024 if command == "backup_restore" else 16 * 1024):
         raise RuntimeError("Request is too large")
 
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:

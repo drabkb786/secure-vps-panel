@@ -1,5 +1,66 @@
 # Changelog
 
+## 3.2.0 — operations desk and measured usage
+
+- Map the reference screenshot's 20 controls to original NOWAY browser/terminal
+  workflows; add profile filters, daily-action cards and dedicated operations screens.
+- Add exact 24-hour Xray trial timestamps, measured per-profile traffic, sampled
+  GB quota enforcement, reset baselines and credential-preserving lock/unlock.
+- Add a private UNIX-socket StatsService and persistent authoritative counters,
+  authenticated recent IPs and separately labelled gateway peers. Overwrite and
+  test forwarded headers through the real Nginx gateway.
+- Add SSH lock/expiry enforcement, preserve manual locks during renewals, and
+  provide transactional Dropbear banners and redacted configuration viewing.
+- Add bounded logs, packet-loss/latency checks, doctor inspection/repair and
+  config-checked managed gateway restarts.
+- Add authenticated Xray UDP policy and optional official dnstt DNS tunnelling,
+  pinned/checksum-verified build tooling, an isolated service, delegation/port
+  checks and private key handling. Existing DNS services are not overwritten.
+- Add root-terminal cache/journal maintenance, checkpointed reinstall and scoped
+  uninstall with typed confirmation. Destructive maintenance is absent from HTTP APIs.
+- Extend private Xray recovery to quotas, trials, usage and damaged counter-state
+  recovery. Test real UDP traffic, native statistics/IPs and official dnstt TCP round trips.
+
+## 3.1.0 — subscriptions, client formats and recovery
+
+- Compared 10 relevant GitHub panels/installers and two upstream references;
+  recorded feature decisions, source snapshots and license metadata in `docs/PANEL_RESEARCH.md`.
+- Added per-profile live subscription URLs with hashed tokens, one-time display,
+  rotation/revocation, expiry/disable enforcement, format selection and bounded public requests.
+- Added browser-local QR generation and WS/TLS sing-box and Mihomo/Clash.Meta exports.
+- Added scoped private Xray backups and root-only transactional restore, including
+  pre-restore recovery copies and recovery from corrupt metadata.
+- Added optional VLESS XHTTP with streaming Nginx proxying, HTTP/2 and explicit
+  ALPN; existing WS profiles and credentials are retained.
+- Fail closed on unreadable/invalid JSON stores instead of silently replacing
+  existing accounts/settings with defaults.
+- Validate imported XHTTP links through real Xray/Nginx, native client parsers,
+  QR decoding and subscription/recovery regressions. See `docs/VALIDATION.md`.
+
+## Direct-link audit — v3 follow-up
+
+- Added plain `xray-link` and `xray-export --links` output, protocol TXT exports,
+  explicit protocol copy buttons, copy-all and Telegram retrieval of existing profiles.
+- Return import links immediately when creating a profile; report offline-core
+  warnings separately from credential validity and public network reachability.
+- Fix explicit re-enable of stopped services, verify core listeners after startup,
+  preserve marker permissions on rollback, and retain successful account creation
+  when a subsequent dashboard refresh fails.
+- Test the generated URIs by independently importing them and using real Xray
+  TLS/WebSocket connections. Local validation: 70 Python tests + 2 JavaScript tests.
+
+## 3.0.0 — NOWAY VPS Control Room
+
+- Added an authenticated, responsive browser dashboard, DNS/SSL controls and diagnostics.
+- Added isolated Xray VLESS, VMess and Trojan WS/TLS profiles, account expiry timer,
+  transactional updates, import links, JSON files and authenticated ZIP exports.
+- Added checksum-verified pinned Xray installation, CLI/menu commands and upgrade support.
+- Fixed port-header false conflicts, Nginx/domain save order, stale services on upgrade,
+  bot token restart, shadow-utils lock files, tunnel-account shells, expiry boundaries,
+  and SSH relay partial writes/backpressure.
+- Added authentication/CSRF/IPC/rollback regressions and optional real-core transport checks.
+- See `docs/WEB_XRAY.md` for setup and `docs/ROADMAP.md` for remaining phases.
+
 ## 2.1.0 — Abdul Basit personalized release
 
 - Rebranded all user-facing text and internal service identifiers to Abdul Basit.

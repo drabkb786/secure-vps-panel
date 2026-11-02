@@ -10,7 +10,7 @@ import base64
 import hashlib
 import ipaddress
 import logging
-import select
+import selectors
 import socket
 import socketserver
 import threading
@@ -79,6 +79,8 @@ def parse_request(raw_header: bytes) -> tuple[str, dict[str, str]]:
         raise ValueError("A WebSocket Upgrade request is required")
     if headers.get("content-length", "0") not in {"", "0"}:
         raise ValueError("Request bodies are not accepted")
+    if "transfer-encoding" in headers:
+        raise ValueError("Transfer encoding is not accepted")
     return parts[1], headers
 
 
@@ -104,29 +106,56 @@ def switching_protocols(headers: dict[str, str]) -> bytes:
 def relay(left: socket.socket, right: socket.socket) -> None:
     sockets = [left, right]
     last_activity = time.monotonic()
+    pending = {left: bytearray(), right: bytearray()}
+    reading = set(sockets)
+    write_closed: set[socket.socket] = set()
     for sock in sockets:
         sock.setblocking(False)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-
-    while True:
-        timeout = max(0.0, IDLE_TIMEOUT - (time.monotonic() - last_activity))
-        if timeout == 0:
-            return
-        readable, _, exceptional = select.select(sockets, [], sockets, min(timeout, 30.0))
-        if exceptional:
-            return
-        if not readable:
-            continue
-        for source in readable:
-            destination = right if source is left else left
-            try:
-                payload = source.recv(65536)
-            except BlockingIOError:
-                continue
-            if not payload:
+    with selectors.DefaultSelector() as selector:
+        while reading or any(pending.values()):
+            for sock in sockets:
+                other = right if sock is left else left
+                # Bound queued data and resume reads only after the peer drains it.
+                events = selectors.EVENT_READ if sock in reading and len(pending[other]) < 256 * 1024 else 0
+                if pending[sock]:
+                    events |= selectors.EVENT_WRITE
+                try:
+                    selector.get_key(sock)
+                    if events:
+                        selector.modify(sock, events)
+                    else:
+                        selector.unregister(sock)
+                except KeyError:
+                    if events:
+                        selector.register(sock, events)
+                if sock not in reading and not pending[other] and other not in write_closed:
+                    other.shutdown(socket.SHUT_WR)
+                    write_closed.add(other)
+            timeout = max(0.0, IDLE_TIMEOUT - (time.monotonic() - last_activity))
+            if timeout == 0:
                 return
-            destination.sendall(payload)
-            last_activity = time.monotonic()
+            for key, events in selector.select(min(timeout, 30.0)):
+                source = key.fileobj
+                destination = right if source is left else left
+                if events & selectors.EVENT_READ:
+                    try:
+                        payload = source.recv(65536)
+                    except BlockingIOError:
+                        payload = None
+                    if payload == b"":
+                        reading.discard(source)
+                    elif payload:
+                        pending[destination].extend(payload)
+                        last_activity = time.monotonic()
+                if events & selectors.EVENT_WRITE:
+                    try:
+                        sent = source.send(pending[source])
+                    except BlockingIOError:
+                        continue
+                    if sent:
+                        del pending[source][:sent]
+                        last_activity = time.monotonic()
 
 
 class Handler(socketserver.BaseRequestHandler):

@@ -11,6 +11,9 @@ LEGACY_CONFIG_DIR="/etc/raretriccks"
 DOMAIN=""
 EMAIL=""
 NON_INTERACTIVE=0
+WITH_XRAY=0
+WITH_DNSTT=0
+XRAY_VERSION=""
 DEFAULT_SUPER_ADMIN_ID="6408975845"
 
 log() { printf '\033[0;34m[INFO]\033[0m %s\n' "$*"; }
@@ -21,7 +24,8 @@ trap 'die "Installation failed near line $LINENO. Existing SSH port 22 was not i
 
 usage() {
   cat <<'EOF'
-Usage: sudo bash install.sh [--domain vpn.example.com] [--email admin@example.com] [--non-interactive]
+Usage: sudo bash install.sh [--domain vpn.example.com] [--email admin@example.com]
+                           [--with-xray] [--with-dnstt] [--xray-version vX.Y.Z] [--non-interactive]
 EOF
 }
 
@@ -30,6 +34,9 @@ while [[ $# -gt 0 ]]; do
     --domain) DOMAIN="${2:-}"; shift 2 ;;
     --email) EMAIL="${2:-}"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;
+    --with-xray) WITH_XRAY=1; shift ;;
+    --with-dnstt) WITH_DNSTT=1; shift ;;
+    --xray-version) XRAY_VERSION="${2:-}"; WITH_XRAY=1; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
@@ -60,7 +67,7 @@ fi
 log "Installing required packages without performing an unattended full system upgrade"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates nginx dropbear certbot python3 procps passwd iproute2 fail2ban
+apt-get install -y --no-install-recommends ca-certificates nginx dropbear certbot python3 procps passwd iproute2 iputils-ping fail2ban curl dnsutils openssl
 python3 - <<'PY' || die "Python 3.10 or newer is required (use Ubuntu 22.04+/Debian 12+ or install a supported Python)"
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
@@ -77,10 +84,26 @@ getent group abdulbasit >/dev/null || groupadd --system abdulbasit
 if ! id abdulbasit-bot >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit abdulbasit-bot
 fi
+if ! id abdulbasit-web >/dev/null 2>&1; then
+  useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit abdulbasit-web
+fi
+getent group abdulbasit-xray >/dev/null || groupadd --system abdulbasit-xray
+getent group abdulbasit-dnstt >/dev/null || groupadd --system abdulbasit-dnstt
+if ! id abdulbasit-dnstt >/dev/null 2>&1; then
+  useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit-dnstt abdulbasit-dnstt
+fi
+if ! id abdulbasit-xray >/dev/null 2>&1; then
+  useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit-xray abdulbasit-xray
+fi
 
 install -d -m 0750 -o root -g abdulbasit "$CONFIG_DIR" "$CONFIG_DIR/users"
 install -d -m 0700 -o root -g root "$BACKUP_DIR"
 install -d -m 0755 -o root -g root "$INSTALL_DIR" /var/www/letsencrypt
+install -d -m 0750 -o root -g abdulbasit-xray /etc/abdulbasit-xray
+install -d -m 0755 -o root -g root "$INSTALL_DIR/web"
+if [[ -f "$INSTALL_DIR/paneld.py" ]]; then
+  cp -a "$INSTALL_DIR" "$BACKUP_DIR/app.$(date -u +%Y%m%dT%H%M%SZ)"
+fi
 
 # Personalized owner bootstrap. The numeric Telegram ID is not a bot token or password.
 if [[ -L "$CONFIG_DIR/super_admin.conf" || ( -e "$CONFIG_DIR/super_admin.conf" && ! -f "$CONFIG_DIR/super_admin.conf" ) ]]; then
@@ -144,6 +167,34 @@ install -m 0755 -o root -g root "$PROJECT_DIR/src/panelctl.py" "$INSTALL_DIR/pan
 install -m 0755 -o root -g root "$PROJECT_DIR/src/tgbot.py" "$INSTALL_DIR/tgbot.py"
 install -m 0755 -o root -g root "$PROJECT_DIR/src/ws_proxy.py" "$INSTALL_DIR/ws_proxy.py"
 install -m 0755 -o root -g root "$PROJECT_DIR/src/session_enforcer.py" "$INSTALL_DIR/session_enforcer.py"
+install -m 0755 -o root -g root "$PROJECT_DIR/scripts/tunnel-shell" "$INSTALL_DIR/tunnel-shell"
+if ! grep -Fxq "$INSTALL_DIR/tunnel-shell" /etc/shells; then
+  printf '\n%s\n' "$INSTALL_DIR/tunnel-shell" >> /etc/shells
+fi
+PYTHONPATH="$INSTALL_DIR" python3 - <<'PY'
+import pwd, subprocess
+from common import USERS_DIR, ValidationError, read_json, validate_username
+for path in USERS_DIR.glob('*.json'):
+    data = read_json(path, {})
+    try:
+        name = validate_username(str(data.get('username', path.stem)))
+        account = pwd.getpwnam(name)
+    except (ValidationError, KeyError):
+        continue
+    if account.pw_shell == '/bin/false' and account.pw_uid != 0:
+        subprocess.run(['/usr/sbin/usermod', '--shell', '/usr/local/lib/abdulbasit/tunnel-shell', name], check=True)
+PY
+for module in web_auth web_server xray_manager diagnostics client_formats profile_backup operations traffic slowdns maintenance terminal_ui; do
+  install -m 0755 -o root -g root "$PROJECT_DIR/src/$module.py" "$INSTALL_DIR/$module.py"
+done
+install -m 0755 -o root -g root "$PROJECT_DIR/scripts/install-dnstt.sh" "$INSTALL_DIR/install-dnstt.sh"
+install -m 0644 -o root -g root "$PROJECT_DIR/src/web/"* "$INSTALL_DIR/web/"
+if [[ $WITH_XRAY -eq 1 ]]; then
+  bash "$PROJECT_DIR/scripts/install-xray.sh" "$XRAY_VERSION"
+fi
+if [[ $WITH_DNSTT -eq 1 ]]; then
+  bash "$PROJECT_DIR/scripts/install-dnstt.sh"
+fi
 install -m 0755 -o root -g root "$PROJECT_DIR/menu.sh" /usr/local/sbin/abdulbasit-menu
 ln -sfn /usr/local/sbin/abdulbasit-menu /usr/local/bin/menu
 ln -sfn /usr/local/sbin/abdulbasit-menu /usr/bin/menu
@@ -166,7 +217,7 @@ if [[ -f /etc/default/dropbear ]]; then
   cp -a /etc/default/dropbear "$BACKUP_DIR/dropbear.default.$timestamp"
 fi
 for port in 109 447; do
-  conflict="$(ss -ltnp "sport = :$port" 2>/dev/null || true)"
+  conflict="$(ss -H -ltnp "sport = :$port" 2>/dev/null || true)"
   if [[ -n "$conflict" && "$conflict" != *dropbear* ]]; then
     die "Port $port is already occupied by another service"
   fi
@@ -175,12 +226,14 @@ cat > /etc/default/dropbear <<'EOF'
 # Managed by Abdul Basit Secure VPS Panel
 NO_START=0
 DROPBEAR_PORT=109
-DROPBEAR_EXTRA_ARGS="-p 447 -b /etc/issue.net -w -K 30 -I 1800"
-DROPBEAR_BANNER="/etc/issue.net"
+DROPBEAR_EXTRA_ARGS="-p 447 -b /etc/abdulbasit/ssh-banner.txt -w -K 30 -I 1800"
+DROPBEAR_BANNER="/etc/abdulbasit/ssh-banner.txt"
 EOF
 chmod 0644 /etc/default/dropbear
-: > /etc/issue.net
-chmod 0644 /etc/issue.net
+if [[ ! -f "$CONFIG_DIR/ssh-banner.txt" ]]; then
+  printf '%s\n' 'NOWAY / Private VPS access' 'Authorized accounts only.' > "$CONFIG_DIR/ssh-banner.txt"
+fi
+chmod 0644 "$CONFIG_DIR/ssh-banner.txt"
 systemctl enable dropbear
 systemctl restart dropbear
 systemctl is-active --quiet dropbear || die "Dropbear failed to start; restore from $BACKUP_DIR if needed"
@@ -215,11 +268,29 @@ rm -f /etc/fail2ban/jail.d/raretriccks-dropbear.local
 systemctl daemon-reload
 
 log "Installing hardened systemd services"
-for unit in "$PROJECT_DIR"/systemd/*.service; do
+for unit in "$PROJECT_DIR"/systemd/*.service "$PROJECT_DIR"/systemd/*.timer; do
   install -m 0644 -o root -g root "$unit" "/etc/systemd/system/$(basename "$unit")"
 done
 systemctl daemon-reload
-systemctl enable --now abdulbasit-paneld abdulbasit-ws abdulbasit-session-enforcer
+systemctl enable abdulbasit-paneld abdulbasit-ws abdulbasit-session-enforcer abdulbasit-web abdulbasit-xray
+systemctl restart abdulbasit-paneld abdulbasit-ws abdulbasit-session-enforcer abdulbasit-web
+for attempt in {1..30}; do
+  [[ -S /run/abdulbasit/paneld.sock ]] && break
+  sleep 0.2
+done
+[[ -S /run/abdulbasit/paneld.sock ]] || die "Panel daemon socket not ready; inspect journalctl -u abdulbasit-paneld"
+systemctl enable --now abdulbasit-xray-expiry.timer
+if [[ -f /etc/abdulbasit-dnstt/config.json ]]; then
+  if "$INSTALL_DIR/panelctl.py" slowdns-status | python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin).get("enabled") else 1)'; then
+    systemctl enable abdulbasit-dnstt
+    systemctl restart abdulbasit-dnstt
+    systemctl is-active --quiet abdulbasit-dnstt || die "Configured SlowDNS service failed to start"
+  fi
+fi
+if [[ -f /etc/abdulbasit-xray/enabled ]]; then
+  "$INSTALL_DIR/panelctl.py" xray-sync
+  systemctl restart abdulbasit-xray
+fi
 
 log "Installing Certbot deploy hook (reloads Nginx only after a successful renewal)"
 install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
@@ -235,6 +306,9 @@ if systemctl list-unit-files | grep -q '^certbot.timer'; then
   systemctl enable --now certbot.timer
 fi
 
+if [[ -z "$DOMAIN" && -s "$CONFIG_DIR/domain.conf" ]]; then
+  DOMAIN="$(cat "$CONFIG_DIR/domain.conf")"
+fi
 if [[ -n "$DOMAIN" ]]; then
   log "Validating domain and writing rollback-safe Nginx configuration"
   "$INSTALL_DIR/panelctl.py" set-domain "$DOMAIN"
@@ -247,6 +321,9 @@ if [[ -n "$DOMAIN" ]]; then
 fi
 
 systemctl enable abdulbasit-bot >/dev/null 2>&1 || true
+if [[ -s "$CONFIG_DIR/bot_token.conf" ]]; then
+  systemctl restart abdulbasit-bot
+fi
 
 log "Running local syntax and security checks"
 python3 -m py_compile "$INSTALL_DIR"/*.py
@@ -260,9 +337,20 @@ cat <<'EOF'
 Open the panel with:
   menu
 
+Create or reset your browser login (no default password):
+  abdulbasit-panelctl configure-web
+
+Browser dashboard:
+  https://YOUR-DOMAIN/panel/
+
+Install the optional Xray core with:
+  bash install.sh --with-xray --domain YOUR-DOMAIN
+After TLS succeeds, enable it from the dashboard or:
+  abdulbasit-panelctl xray-enable
+
 Public/provider firewall ports required:
   22/tcp (server administration), 80/tcp, 443/tcp, 109/tcp, 447/tcp
 
-Port 2082 is intentionally bound only to 127.0.0.1 and must NOT be opened publicly.
+Internal ports 2082, 9090 and 10001-10003 must NOT be opened publicly.
 Configure Telegram from: menu → Telegram bot → Configure token and Super Admin
 EOF

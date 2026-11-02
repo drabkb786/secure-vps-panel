@@ -1,0 +1,33 @@
+[Unit]
+Description=NOWAY VPS web dashboard (loopback behind Nginx TLS)
+After=network.target abdulbasit-paneld.service
+Wants=abdulbasit-paneld.service
+
+[Service]
+Type=simple
+User=abdulbasit-web
+Group=abdulbasit
+ExecStart=/usr/bin/python3 /usr/local/lib/abdulbasit/web_server.py
+Restart=on-failure
+RestartSec=3s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+InaccessiblePaths=/etc/abdulbasit -/etc/abdulbasit-xray
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+LimitNOFILE=1024
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

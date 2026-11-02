@@ -11,12 +11,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install test dependency
-        run: python -m pip install --disable-pip-version-check pytest
+        run: python -m pip install --disable-pip-version-check pytest zxing-cpp pillow numpy
       - name: Python compile
         run: python -m py_compile src/*.py
       - name: Unit tests
@@ -24,7 +24,43 @@ jobs:
       - name: Dependency-free static audit
         run: python scripts/static-audit.py
       - name: Bash syntax
-        run: bash -n install.sh menu.sh scripts/security-check.sh
+        run: bash -n install.sh menu.sh scripts/*.sh scripts/tunnel-shell
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dashboard JavaScript syntax
+        run: node --check src/web/app.js
+      - name: Dashboard mutation result regressions
+        run: node --test tests/test_web_client.js
+      - name: Install checksum-verified official Xray core
+        run: |
+          sudo mkdir -p /usr/local/lib/abdulbasit
+          sudo bash scripts/install-xray.sh
+      - name: Install Nginx for gateway integration tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y nginx
+      - name: Real Xray config and Nginx TLS / WS / XHTTP transport tests
+        env:
+          XRAY_TEST_BINARY: /usr/local/lib/abdulbasit/xray
+          NGINX_TEST_BINARY: /usr/sbin/nginx
+        run: pytest -q tests/test_nginx.py tests/test_xray_core.py
+      - name: Verify sing-box and Mihomo client exports
+        run: |
+          python scripts/fetch-test-clients.py --directory "$RUNNER_TEMP/noway-test-clients"
+          SINGBOX_TEST_BINARY="$RUNNER_TEMP/noway-test-clients/singbox" MIHOMO_TEST_BINARY="$RUNNER_TEMP/noway-test-clients/mihomo" pytest -q tests/test_client_formats.py
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Build pinned official dnstt and test real DNS transport
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOSUMDB: sum.golang.org
+        run: |
+          export GOBIN="$RUNNER_TEMP/noway-dnstt"
+          go install www.bamsoftware.com/git/dnstt.git/dnstt-server@v1.20260501.0 www.bamsoftware.com/git/dnstt.git/dnstt-client@v1.20260501.0
+          DNSTT_TEST_SERVER="$GOBIN/dnstt-server" DNSTT_TEST_CLIENT="$GOBIN/dnstt-client" pytest -q tests/test_slowdns.py
       - name: Reject common committed secrets and unsafe subprocess shells
         shell: bash
         run: |

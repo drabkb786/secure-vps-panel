@@ -1,6 +1,6 @@
-# Abdul Basit Secure VPS Panel v2.1.0
+# NOWAY VPS Control Room v3.2.0
 
-> Secure SSH/Dropbear, HTTP WebSocket, TLS WebSocket, user-management, session-limit, SSL and Telegram administration panel for Ubuntu/Debian VPS servers.
+> Browser dashboard, SSH/Dropbear, VLESS/VMess/Trojan, optional VLESS XHTTP, live subscriptions, QR, client configs and private recovery for Ubuntu/Debian VPS servers.
 
 ## Project information
 
@@ -9,7 +9,7 @@
 | Owner and Maintainer | **Abdul Basit** |
 | GitHub Account | `drabkb786` |
 | Repository | `drabkb786/secure-vps-panel` |
-| Version | `2.1.0` |
+| Version | `3.2.0` |
 | Default Telegram Super Admin ID | `6408975845` |
 | Supported OS | Ubuntu 22.04/24.04 and Debian 12+ |
 | Required Python | Python 3.10 or newer |
@@ -20,7 +20,27 @@
 
 ## Panel kya karta hai?
 
-Yeh terminal-based VPS management panel hai. Browser dashboard nahi hai. Installation ke baad VPS terminal mein `menu` command se khulta hai.
+Yeh browser aur terminal dono se khulta hai. Naya NOWAY dashboard `https://YOUR-DOMAIN/panel/` par milta hai; purana `menu` aur Telegram workflow bhi available hai. Browser access ke liye `abdulbasit-panelctl configure-web` se apna admin login set karein.
+
+**v3.2 setup, migration, Xray exports aur limitations:** [Web + Xray guide](docs/WEB_XRAY.md).
+**Implementation sequence aur next phases:** [Roadmap](docs/ROADMAP.md).
+**Verification evidence:** [Validation](docs/VALIDATION.md).
+**Screenshot ke 20 controls, traffic, SlowDNS aur maintenance:** [Operations guide](docs/OPERATIONS.md).
+**10 GitHub panels + 2 upstream references ka comparison:** [Research and upgrade decisions](docs/PANEL_RESEARCH.md).
+
+v3.1 mein profile-wise live subscription URL (rotation/revoke), local QR codes,
+sing-box JSON, Mihomo/Clash.Meta YAML, private Xray backup/root-CLI restore aur
+optional VLESS XHTTP add hain. XHTTP, Xray/URI exports mein hai; sing-box/Mihomo
+exports WS/TLS use karte hain. Backup sirf Xray accounts/settings ka hai; SSH OS
+users, certificate private keys aur admin/bot credentials ismein shamil nahi.
+
+**v3.2:** naya operations dashboard aur terminal menu, exact 24-hour Xray trials,
+measured Xray GB limits/reset, authenticated recent IPs, SSH/Xray lock/unlock,
+UDP policy, optional official dnstt SlowDNS, doctor/repair, bounded error logs,
+packet-loss test, custom Dropbear banner aur root-only maintenance. Xray quotas
+one-minute sampling par enforce hote hain; SSH GB ab bhi metadata hai. Public
+SlowDNS ko actual NS delegation/UDP firewall setup chahiye. Details aur complete
+20-option mapping operations guide mein hain.
 
 Panel automatically:
 
@@ -202,7 +222,7 @@ Prompts mein:
 ```text
 GitHub.com
 HTTPS
-Login with a web browser
+Login with an SSH client (legacy example)
 ```
 
 Phir repository clone karein:
