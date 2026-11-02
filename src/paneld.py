@@ -271,29 +271,9 @@ def list_users(_: dict[str, Any]) -> dict[str, Any]:
 
 
 def session_processes() -> dict[str, list[int]]:
-    result = run([binary("ps"), "-eo", "pid=,euid=,comm="])
-    by_uid: dict[int, list[int]] = {}
-    for line in result.stdout.splitlines():
-        parts = line.split(None, 2)
-        if len(parts) != 3:
-            continue
-        pid_text, uid_text, comm = parts
-        if "dropbear" not in comm.lower():
-            continue
-        try:
-            by_uid.setdefault(int(uid_text), []).append(int(pid_text))
-        except ValueError:
-            continue
-    sessions: dict[str, list[int]] = {}
-    for path in USERS_DIR.glob("*.json"):
-        data = read_json(path, {})
-        username = str(data.get("username", path.stem))
-        try:
-            uid = pwd.getpwnam(username).pw_uid
-        except KeyError:
-            continue
-        sessions[username] = sorted(by_uid.get(uid, []))
-    return sessions
+    import dropbear_sessions
+    state = dropbear_sessions.snapshot(USERS_DIR)
+    return {state["users"][uid]: [p.pid for p in rows] for uid, rows in state["sessions"].items()}
 
 
 def list_sessions(_: dict[str, Any]) -> dict[str, Any]:

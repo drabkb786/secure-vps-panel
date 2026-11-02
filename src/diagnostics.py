@@ -46,6 +46,23 @@ def report(_: dict) -> dict:
         checks.append({"name": name, "ok": bool(ok), "detail": detail, "hint": hint if not ok else ""})
     ok, detail = command([shutil.which("nginx") or "/usr/sbin/nginx", "-t"])
     add("Nginx configuration", ok, detail, "Resolve the reported config conflict before reloading Nginx.")
+    ok, detail = command([shutil.which("dropbear") or "/usr/sbin/dropbear", "-V"])
+    add("Dropbear binary", ok, detail, "Install/update the distribution's maintained dropbear package.")
+    for port in (109, 447):
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=2) as peer:
+                peer.settimeout(2)
+                banner = peer.recv(255).decode("ascii", errors="replace").strip()
+            ok = banner.startswith("SSH-2.0-dropbear_")
+        except OSError as exc:
+            ok, banner = False, type(exc).__name__
+        add(f"Dropbear SSH greeting :{port}", ok, banner, "Check Dropbear status, listener conflicts and /etc/default/dropbear.")
+    import dropbear_sessions
+    sessions = dropbear_sessions.snapshot()
+    add("Dropbear session attribution", sessions["journal_ok"] and not sessions["unattributed_root_processes"],
+        f"{sum(len(p) for p in sessions['sessions'].values())} authenticated managed sessions; "
+        f"{sessions['unattributed_root_processes']} unattributed root connections (may be pre-authentication)",
+        "Older Dropbear builds need readable systemd authentication journals; missing/rotated records can leave sessions uncounted.")
     ports = {"SSH upgrade proxy": 2082, "Web dashboard": 9090}
     if settings()["enabled"]:
         ports.update({p.upper(): value[0] for p, value in PROTOCOLS.items()})

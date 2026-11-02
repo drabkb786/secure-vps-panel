@@ -1,4 +1,27 @@
-# v3.2 validation
+# Validation
+
+## v3.3 Dropbear checks — 2 November 2026 (Asia/Karachi)
+
+- Added 30 Python cases for independent WebSocket transport, authenticated
+  session attribution, process identity/signals and three native SSH routes.
+- Local base suite: 150 passing cases, 12 optional native cases skipped. Both
+  JavaScript regressions, compilation, Bash/JS syntax, static audit and whitespace
+  checks pass. Native Xray/client/DNS stages remain configured in CI.
+- The real-socket bridge suite round-trips 4 MiB with independent WebSocket
+  framing, fragmentation, ping/pong and backpressure. It also checks protocol
+  errors, message limits, header deadlines, worker saturation and raw compatibility.
+- Official Dropbear 2026.94 is built unchanged from the upstream tarball, SHA256
+  `e098034a843699200c8c977a991fff73159735bf795d5f72ef672c41a6b1ae81`.
+  Local authentication reached upstream's privilege switch; this container
+  rejects the required `initgroups` operation. Full direct/legacy/WSS native
+  tests therefore run on the GitHub Ubuntu runner. They use temporary keys,
+  verify SSH host keys and TLS, transfer 4 MiB per route and reject unauthorized
+  keys, reverse forwarding and interactive command execution.
+- No live VPS accounts, services, host keys, DNS, firewall or installer/rollback
+  have been exercised. SSH quotas remain metadata; session attribution has the
+  documented journal/parent-process limits in [DROPBEAR.md](DROPBEAR.md).
+
+## v3.2 evidence
 
 Checked in the development environment on 27 October 2026 (Asia/Karachi).
 
