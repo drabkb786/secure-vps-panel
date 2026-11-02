@@ -27,6 +27,8 @@ def client(monkeypatch):
             if params.get("token") != "A" * 43:
                 raise RuntimeError("Subscription unavailable")
             return {"name": "basit", "expiry": "2099-01-01", "content": "fixture-subscription", "content_type": "text/plain; charset=utf-8"}
+        if command == "cloudfront_setup":
+            return {"files": {"parameters.private.json": "private-origin-fixture"}}
         if command == "backup_export":
             return {"backup": {"schema": "noway-xray-backup-v1", "accounts": []}}
         return {"ok": True, "test_result": command}
@@ -147,7 +149,7 @@ def test_live_subscription_requires_bearer_token_but_not_an_admin_cookie(client)
     assert code == 200 and body == b"fixture-subscription"
     assert headers["Cache-Control"] == "no-store" and headers["profile-update-interval"] == "6"
     assert "expire=" in headers["subscription-userinfo"]
-    assert client.calls[-1] == ("subscription_get", {"token": "A" * 43, "format": "base64"})
+    assert client.calls[-1] == ("subscription_get", {"token": "A" * 43, "format": "base64", "route": "direct"})
     assert client("sub/" + "B" * 43)[0] == 404
     assert client("sub/short")[0] == 404
     assert client("sub/" + "A" * 43, forwarded="http")[0] == 426
@@ -183,3 +185,19 @@ def test_new_ip_entries_remain_bounded_after_global_public_rate_limit():
     for i in range(3000):
         store.public_allowed(f"fixture-{i}")
     assert len(store.public_attempts) <= 2048 and len(store.public_total) == 300
+
+
+def test_cloudfront_private_setup_and_route_dispatch(client):
+    assert client("api/cloudfront-setup")[0] == 401
+    cookie, csrf = login(client)
+    code, body, headers = client("api/cloudfront-setup", cookie=cookie)
+    assert code == 200 and headers["Cache-Control"] == "no-store"
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        assert archive.read("parameters.private.json") == b"private-origin-fixture"
+    assert client.calls[-1] == ("cloudfront_setup", {"_web_revision": "revision1"})
+    assert client("api/export?name=basit&route=cloudfront", cookie=cookie)[0] == 200
+    assert client.calls[-1][1]["route"] == "cloudfront"
+    assert client("sub/" + "A" * 43 + "?route=cloudfront")[0] == 200
+    assert client.calls[-1][1]["route"] == "cloudfront"
+    assert client("api/command", {"command": "cloudfront_configure", "params": {"enabled": True}}, cookie=cookie)[0] == 403
+    assert client("api/command", {"command": "cloudfront_setup"}, cookie=cookie, csrf=csrf)[0] == 403

@@ -24,6 +24,7 @@ from pathlib import Path
 from urllib.parse import quote, urlencode, urlsplit
 
 from client_formats import clash_config, singbox_config
+import cdn_manager
 import profile_backup
 import traffic
 
@@ -162,10 +163,11 @@ def server_config(config: dict, rows: list[dict]) -> dict:
     }
 
 
-def client_config(protocol: str, row: dict, domain: str, dns: dict) -> dict:
+def client_config(protocol: str, row: dict, domain: str, dns: dict, prefix: str = "") -> dict:
     xhttp = protocol == "vless-xhttp"
     protocol = "vless" if xhttp else protocol
     _, path = PROTOCOLS[protocol]
+    path = prefix + path
     credential = {"password": row["trojan_password"]} if protocol == "trojan" else {"id": row["uuid"], "encryption": "none"} if protocol == "vless" else {"id": row["uuid"], "security": "auto", "alterId": 0}
     proxy_settings = {"servers": [{"address": domain, "port": 443, **credential}]} if protocol == "trojan" else {"vnext": [{"address": domain, "port": 443, "users": [credential]}]}
     return {
@@ -177,13 +179,13 @@ def client_config(protocol: str, row: dict, domain: str, dns: dict) -> dict:
             "streamSettings": {
                 "network": "xhttp" if xhttp else "ws", "security": "tls",
                 "tlsSettings": {"serverName": domain, "allowInsecure": False, "alpn": ["h2"] if xhttp else ["http/1.1"]},
-                **({"xhttpSettings": {"path": XHTTP_PATH, "host": domain, "mode": "packet-up"}} if xhttp else {"wsSettings": {"path": path, "host": domain}}),
+                **({"xhttpSettings": {"path": XHTTP_PATH, "host": domain, "mode": "packet-up"}} if xhttp else {"wsSettings": {"path": path, "host": domain, **({"heartbeatPeriod": 25} if prefix else {})}}),
             },
         }],
     }
 
 
-def share_link(protocol: str, row: dict, domain: str) -> str:
+def share_link(protocol: str, row: dict, domain: str, prefix: str = "") -> str:
     xhttp = protocol == "vless-xhttp"
     if protocol not in PROTOCOLS and not xhttp:
         raise ValidationError("Choose vless, vmess or trojan")
@@ -191,6 +193,7 @@ def share_link(protocol: str, row: dict, domain: str) -> str:
     label = f"NOWAY-{row['name']}-{protocol.upper()}"
     protocol = "vless" if xhttp else protocol
     _, path = PROTOCOLS[protocol]
+    path = prefix + path
     if protocol == "vmess":
         data = {"v": "2", "ps": label, "add": domain, "port": "443", "id": row["uuid"], "aid": "0", "scy": "auto", "net": "ws", "type": "none", "host": domain, "path": path, "tls": "tls", "sni": domain, "alpn": "http/1.1"}
         return "vmess://" + base64.b64encode(json.dumps(data, separators=(",", ":")).encode()).decode()
@@ -389,11 +392,11 @@ class Manager:
         return {"account": public_account(row), "links": self.profile_links(row, domain, settings())}
 
     @staticmethod
-    def profile_links(row: dict, domain: str, config: dict) -> dict:
+    def profile_links(row: dict, domain: str, config: dict, prefix: str = "") -> dict:
         variants = list(row["protocols"])
-        if config.get("xhttp_enabled") and "vless" in variants:
+        if not prefix and config.get("xhttp_enabled") and "vless" in variants:
             variants.append("vless-xhttp")
-        return {p: share_link(p, row, domain) for p in variants}
+        return {p: share_link(p, row, domain, prefix) for p in variants}
 
     def update(self, params: dict) -> dict:
         self.collect_usage()
@@ -439,16 +442,20 @@ class Manager:
         row = next((x for x in accounts() if x["name"] == name), None)
         if row is None or not active(row):
             raise ValidationError("Account is missing, disabled or expired")
-        links = self.profile_links(row, domain, cfg)
+        route = params.get("route", "direct")
+        domain, prefix = cdn_manager.delivery(route, domain)
+        links = self.profile_links(row, domain, cfg, prefix)
         text = "\n".join(links.values()) + "\n"
-        files = {f"{name}-{p}.json": json.dumps(client_config(p, row, domain, cfg["dns"]), indent=2) + "\n" for p in links}
-        files[f"{name}-singbox.json"] = json.dumps(singbox_config(row, domain), indent=2) + "\n"
-        files[f"{name}-clash.yaml"] = json.dumps(clash_config(row, domain), indent=2) + "\n"
+        files = {f"{name}-{p}.json": json.dumps(client_config(p, row, domain, cfg["dns"], prefix), indent=2) + "\n" for p in links}
+        files[f"{name}-singbox.json"] = json.dumps(singbox_config(row, domain, prefix), indent=2) + "\n"
+        files[f"{name}-clash.yaml"] = json.dumps(clash_config(row, domain, prefix), indent=2) + "\n"
         files.update({f"{name}-{p}.txt": link + "\n" for p, link in links.items()})
         files.update({"links.txt": text, "subscription.txt": base64.b64encode(text.encode()).decode() + "\n"})
         running = self.health_probe()
         warnings = [] if running else ["The link is configured, but Xray is not currently ready. Enable/restart Xray and run diagnostics before connecting."]
-        return {"name": name, "links": links, "files": files,
+        if prefix:
+            warnings.append("CloudFront delivery: run endpoint checks and a real client transfer; AWS deployment and speed are not verified by this export.")
+        return {"name": name, "route": route, "links": links, "files": files,
                 "readiness": {"core_ready": running, "public_reachability": "not_checked", "warnings": warnings}}
 
     def subscription_rotate(self, params: dict) -> dict:
@@ -463,7 +470,7 @@ class Manager:
         row["subscription_issued_at"] = datetime.now(timezone.utc).isoformat()
         atomic_write_json(ACCOUNTS_FILE, rows)
         url = f"https://{domain}/panel/sub/{token}"
-        return {"name": name, "url": url, "formats": {p: url + "?format=" + p for p in ("base64", "plain", "xray", "clash", "singbox")},
+        return {"name": name, "url": url, "cloudfront_url": url + "?route=cloudfront", "formats": {p: url + "?format=" + p for p in ("base64", "plain", "xray", "clash", "singbox")},
                 "notice": "This URL is shown once. Rotation revokes the old URL; previously downloaded proxy credentials are unchanged."}
 
     def subscription_revoke(self, params: dict) -> dict:
@@ -487,16 +494,18 @@ class Manager:
             raise ValidationError("Subscription unavailable")
         domain = validate_domain(read_text(DOMAIN_FILE))
         format_name = params.get("format", "base64")
-        links = self.profile_links(row, domain, cfg)
+        route = params.get("route", "direct")
+        domain, prefix = cdn_manager.delivery(route, domain)
+        links = self.profile_links(row, domain, cfg, prefix)
         plain = "\n".join(links.values()) + "\n"
         if format_name in ("plain", "base64"):
             content = plain if format_name == "plain" else base64.b64encode(plain.encode()).decode() + "\n"
             mime = "text/plain; charset=utf-8"
         elif format_name == "xray":
-            content = json.dumps([client_config(p, row, domain, cfg["dns"]) for p in links], indent=2)
+            content = json.dumps([client_config(p, row, domain, cfg["dns"], prefix) for p in links], indent=2)
             mime = "application/json"
         elif format_name in ("clash", "singbox"):
-            content = json.dumps((clash_config if format_name == "clash" else singbox_config)(row, domain), indent=2)
+            content = json.dumps((clash_config if format_name == "clash" else singbox_config)(row, domain, prefix), indent=2)
             mime = "text/yaml; charset=utf-8" if format_name == "clash" else "application/json"
         else:
             raise ValidationError("Unsupported subscription format")

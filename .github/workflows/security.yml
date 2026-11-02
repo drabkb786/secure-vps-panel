@@ -16,11 +16,15 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install test dependency
-        run: python -m pip install --disable-pip-version-check pytest zxing-cpp pillow numpy 'wsproto==1.2.0' 'websockets==16.0' 'paramiko==3.5.1'
+        run: python -m pip install --disable-pip-version-check pytest zxing-cpp pillow numpy 'wsproto==1.2.0' 'websockets==16.0' 'paramiko==3.5.1' cfn-lint
       - name: Python compile
         run: python -m py_compile src/*.py
       - name: Unit tests
         run: pytest -q
+      - name: Validate generated AWS CloudFormation
+        run: |
+          PYTHONPATH=src python -c 'import json, cdn_manager; print(json.dumps(cdn_manager.template()))' > "$RUNNER_TEMP/cloudfront.json"
+          cfn-lint -t "$RUNNER_TEMP/cloudfront.json"
       - name: Dependency-free static audit
         run: python scripts/static-audit.py
       - name: Bash syntax

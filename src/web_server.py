@@ -26,7 +26,7 @@ COOKIE = "noway_session"
 MAX_BODY = 16 * 1024
 SESSION_TTL = 8 * 3600
 IDLE_TTL = 30 * 60
-COMMANDS = {
+COMMANDS = {"cloudfront_configure", "cloudfront_check",
     "create_user", "delete_user", "renew_user", "set_sessions", "set_quota",
     "set_domain", "issue_cert", "restart_service", "dns_lookup", "dns_set",
     "xray_configure", "xray_create", "xray_update", "subscription_rotate", "subscription_revoke",
@@ -201,7 +201,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/panel/api/health":
             self.json(200, {"ok": True})
             return
-        if url.path not in {"/panel/api/session", "/panel/api/state", "/panel/api/diagnostics", "/panel/api/export", "/panel/api/backup"}:
+        if url.path not in {"/panel/api/session", "/panel/api/state", "/panel/api/diagnostics", "/panel/api/export", "/panel/api/backup", "/panel/api/cloudfront-setup"}:
             self.json(404, {"error": "Not found"})
             return
         session = self.session()
@@ -213,6 +213,13 @@ class Handler(BaseHTTPRequestHandler):
             self.json(200, request("dashboard_status", _web_revision=session["revision"]))
         elif url.path == "/panel/api/diagnostics":
             self.json(200, request("diagnostics", _web_revision=session["revision"]))
+        elif url.path == "/panel/api/cloudfront-setup":
+            result = request("cloudfront_setup", _web_revision=session["revision"])
+            stream = io.BytesIO()
+            with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+                for name, content in result["files"].items():
+                    archive.writestr(name, content)
+            self.reply(200, stream.getvalue(), "application/zip", {"Content-Disposition": 'attachment; filename="NOWAY-cloudfront-private.zip"'})
         elif url.path == "/panel/api/backup":
             data = request("backup_export", _web_revision=session["revision"])["backup"]
             self.reply(200, (json.dumps(data, indent=2) + "\n").encode(), headers={"Content-Disposition": 'attachment; filename="NOWAY-xray-backup.json"'})
@@ -225,7 +232,7 @@ class Handler(BaseHTTPRequestHandler):
             if format_name not in {"json", "zip", "link"}:
                 self.json(400, {"error": "Choose json, zip or link export format"})
                 return
-            result = request("xray_export", name=query.get("name", [""])[0], _web_revision=session["revision"])
+            result = request("xray_export", name=query.get("name", [""])[0], route=query.get("route", ["direct"])[0], _web_revision=session["revision"])
             if format_name == "link":
                 protocol = query.get("protocol", [""])[0]
                 if protocol not in {"vless", "vmess", "trojan", "vless-xhttp"} or protocol not in result["links"]:
@@ -259,7 +266,7 @@ class Handler(BaseHTTPRequestHandler):
         default = "clash" if "clash" in agent or "mihomo" in agent else "singbox" if "sing-box" in agent or "singbox" in agent else "base64"
         format_name = query.get("format", [default])[0]
         try:
-            result = request("subscription_get", token=token, format=format_name)
+            result = request("subscription_get", token=token, format=format_name, route=query.get("route", ["direct"])[0])
         except RuntimeError:
             self.json(404, {"error": "Subscription unavailable"})
             return

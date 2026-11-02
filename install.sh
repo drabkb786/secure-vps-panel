@@ -185,7 +185,7 @@ for path in USERS_DIR.glob('*.json'):
     if account.pw_shell == '/bin/false' and account.pw_uid != 0:
         subprocess.run(['/usr/sbin/usermod', '--shell', '/usr/local/lib/abdulbasit/tunnel-shell', name], check=True)
 PY
-for module in web_auth web_server xray_manager diagnostics client_formats profile_backup operations traffic slowdns maintenance terminal_ui; do
+for module in web_auth web_server xray_manager diagnostics client_formats cdn_manager profile_backup operations traffic slowdns maintenance terminal_ui; do
   install -m 0755 -o root -g root "$PROJECT_DIR/src/$module.py" "$INSTALL_DIR/$module.py"
 done
 install -m 0755 -o root -g root "$PROJECT_DIR/scripts/install-dnstt.sh" "$INSTALL_DIR/install-dnstt.sh"

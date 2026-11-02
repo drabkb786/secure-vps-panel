@@ -75,8 +75,10 @@ class WebSocketSocket:
         self._closed = True; self.ws.close()
 
 
-@pytest.mark.parametrize("route", ["direct", "legacy", "wss"])
+@pytest.mark.parametrize("route", ["direct", "legacy", "wss", "cloudfront"])
 def test_real_dropbear_auth_forwarding_and_tunnel_only_policy(tmp_path, keydir, monkeypatch, route):
+    from cloudfront_fixture import enable_origin, edge_server
+    secret = enable_origin(tmp_path, monkeypatch) if route == "cloudfront" else ""
     import paramiko
     from websockets.sync.client import connect
     client_key = paramiko.RSAKey.generate(2048)
@@ -89,7 +91,7 @@ def test_real_dropbear_auth_forwarding_and_tunnel_only_policy(tmp_path, keydir, 
     expected_hostkey = base64.b64decode(public.split()[1])
     db_port, http_port, tls_port = (free_port() for _ in range(3))
     cert, cert_key = tmp_path / "cert.pem", tmp_path / "cert.key"
-    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(cert_key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com", "-addext", "subjectAltName=DNS:vpn.example.com"], check=True, capture_output=True, timeout=20)
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(cert_key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com", "-addext", "subjectAltName=DNS:vpn.example.com,DNS:d123example.cloudfront.net"], check=True, capture_output=True, timeout=20)
     db_log = (tmp_path / "dropbear.log").open("w+")
     forced_shell = tmp_path / "tunnel-shell"
     forced_shell.write_bytes((Path(__file__).resolve().parents[1] / "scripts/tunnel-shell").read_bytes())
@@ -112,6 +114,9 @@ def test_real_dropbear_auth_forwarding_and_tunnel_only_policy(tmp_path, keydir, 
             site = site.replace("127.0.0.1:2082", f"127.0.0.1:{bridge_port}")
             site = site.replace("/etc/letsencrypt/live/vpn.example.com/fullchain.pem", str(cert))
             site = site.replace("/etc/letsencrypt/live/vpn.example.com/privkey.pem", str(cert_key))
+            if route == "cloudfront":
+                edge_port = free_port()
+                site += edge_server(edge_port, tls_port, cert, cert_key, secret)
             config = tmp_path / "nginx.conf"
             config.write_text(("user root root;\n" if os.geteuid() == 0 else "") +
                 f"pid {tmp_path}/nginx.pid;\nerror_log {tmp_path}/nginx.log;\nevents {{}}\nhttp {{\naccess_log off;\n" +
@@ -131,7 +136,9 @@ def test_real_dropbear_auth_forwarding_and_tunnel_only_policy(tmp_path, keydir, 
                 assert response.startswith(b"HTTP/1.1 101 ")
             else:
                 context = ssl.create_default_context(cafile=str(cert))
-                ws = connect(f"wss://vpn.example.com:{tls_port}/ssh/ws", sock=socket.create_connection(("127.0.0.1", tls_port), timeout=5),
+                peer_port = edge_port if route == "cloudfront" else tls_port
+                url = f"wss://d123example.cloudfront.net:{edge_port}/cloudfront/ssh/ws" if route == "cloudfront" else f"wss://vpn.example.com:{tls_port}/ssh/ws"
+                ws = connect(url, sock=socket.create_connection(("127.0.0.1", peer_port), timeout=5),
                     ssl=context, compression=None, proxy=None, subprotocols=["binary"])
                 peer = WebSocketSocket(ws)
             transport = paramiko.Transport(peer)

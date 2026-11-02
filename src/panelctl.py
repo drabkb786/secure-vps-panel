@@ -119,13 +119,36 @@ def parser() -> argparse.ArgumentParser:
     slow = sub.add_parser("slowdns-enable"); slow.add_argument("--zone", required=True); slow.add_argument("--ns-host", required=True); slow.add_argument("--port", type=int, default=53)
     udp = sub.add_parser("xray-udp"); udp.add_argument("mode", choices=["on", "off"])
     maintenance = sub.add_parser("maintenance"); maintenance.add_argument("operation", choices=["memory", "clean-logs", "reinstall", "uninstall"]); maintenance.add_argument("--source", type=Path); maintenance.add_argument("--reclaim", action="store_true")
+    for action in ("cloudfront-status", "cloudfront-check", "cloudfront-disable"):
+        sub.add_parser(action)
+    cf = sub.add_parser("cloudfront-enable", help="Prepare TLS origin or attach a CloudFront distribution")
+    cf.add_argument("--endpoint", default=None)
+    cf.add_argument("--price-class", choices=["PriceClass_All", "PriceClass_200", "PriceClass_100"], default=None)
+    setup = sub.add_parser("cloudfront-setup", help="Save private CloudFormation setup ZIP; AWS charges apply")
+    setup.add_argument("--output", type=Path, required=True)
+    for command in (export, link):
+        command.add_argument("--route", choices=["direct", "cloudfront"], default="direct")
     return p
 
 
 def main() -> int:
     args = parser().parse_args()
     try:
-        if args.action == "maintenance":
+        if args.action in {"cloudfront-status", "cloudfront-check"}:
+            result = request(args.action.replace("-", "_"))
+        elif args.action in {"cloudfront-enable", "cloudfront-disable"}:
+            params = {"enabled": args.action == "cloudfront-enable"}
+            for key in ("endpoint", "price_class"):
+                if getattr(args, key, None) is not None: params[key] = getattr(args, key)
+            result = request("cloudfront_configure", **params)
+        elif args.action == "cloudfront-setup":
+            data = request("cloudfront_setup")
+            # Exclusive creation prevents overwriting a file or following a symlink.
+            fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as stream, zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+                for name, content in data["files"].items(): archive.writestr(name, content)
+            result = {"saved": str(args.output), "notice": "Private origin secret included; keep this ZIP out of git and public sharing"}
+        elif args.action == "maintenance":
             import maintenance
             result = maintenance.run(args.operation, source=args.source, reclaim=args.reclaim, confirm=input)
         elif args.action == "slowdns-install":
@@ -239,7 +262,7 @@ def main() -> int:
         elif args.action == "xray-delete":
             result = request("xray_update", name=args.name, action="delete")
         elif args.action in {"xray-export", "xray-link"}:
-            result = request("xray_export", name=args.name)
+            result = request("xray_export", name=args.name, route=args.route)
             for warning in result.get("readiness", {}).get("warnings", []):
                 print(f"WARNING: {warning}", file=sys.stderr)
             if args.action == "xray-link":

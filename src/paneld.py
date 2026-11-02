@@ -28,6 +28,7 @@ import web_auth
 import xray_manager
 import operations
 import slowdns
+import cdn_manager
 
 from common import (
     ADMIN_IDS_FILE,
@@ -310,6 +311,7 @@ def domain_conflicts(domain: str) -> list[str]:
 
 def nginx_text(domain: str, tls: bool) -> str:
     """Keep legacy SSH upgrades; route browsers and real Xray WebSockets separately."""
+    cdn = cdn_manager.settings()
     def locations(secure: bool) -> str:
         blocks = """
     location ^~ /.well-known/acme-challenge/ {
@@ -396,7 +398,7 @@ def nginx_text(domain: str, tls: bool) -> str:
         limit_conn abdulbasit_per_ip 40;
     }
 """
-        return blocks
+        return blocks + cdn_manager.nginx_locations(cdn, secure)
 
     def server(secure: bool) -> str:
         port = 443 if secure else 80
@@ -414,6 +416,7 @@ server {{
     listen {port}{suffix};
 {ipv6}    server_name {domain};
     server_tokens off;
+    if ($noway_cf_forbidden) {{ return 403; }}
     client_header_timeout 10s;
     client_body_timeout 10s;
     client_max_body_size 16k;
@@ -431,7 +434,7 @@ map $http_upgrade $abdulbasit_root_upstream {
     ~*websocket 127.0.0.1:2082;
 }
 limit_conn_zone $binary_remote_addr zone=abdulbasit_per_ip:10m;
-""" + server(False) + (server(True) if tls else "")
+""" + cdn_manager.nginx_maps(cdn) + server(False) + (server(True) if tls else "")
 
 
 def install_nginx_config(domain: str) -> bool:
@@ -439,7 +442,7 @@ def install_nginx_config(domain: str) -> bool:
     tls = (cert_dir / "fullchain.pem").is_file() and (cert_dir / "privkey.pem").is_file()
     NGINX_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     old = NGINX_CONFIG.read_text(encoding="utf-8") if NGINX_CONFIG.exists() else None
-    atomic_write(NGINX_CONFIG, nginx_text(domain, tls), 0o644)
+    atomic_write(NGINX_CONFIG, nginx_text(domain, tls), 0o600)
     try:
         run([binary("nginx"), "-t"])
         run([binary("systemctl"), "reload-or-restart", "nginx"])
@@ -447,7 +450,7 @@ def install_nginx_config(domain: str) -> bool:
         if old is None:
             NGINX_CONFIG.unlink(missing_ok=True)
         else:
-            atomic_write(NGINX_CONFIG, old, 0o644)
+            atomic_write(NGINX_CONFIG, old, 0o600)
         subprocess.run([binary("nginx"), "-t"], capture_output=True, text=True, check=False)
         subprocess.run([binary("systemctl"), "reload-or-restart", "nginx"], capture_output=True, text=True, check=False)
         raise
@@ -461,6 +464,8 @@ def set_domain(params: dict[str, Any]) -> dict[str, Any]:
         raise ValidationError("Domain already appears in another Nginx config: " + ", ".join(conflicts[:3]))
     ACME_ROOT.mkdir(parents=True, exist_ok=True)
     previous = read_text(DOMAIN_FILE)
+    if cdn_manager.settings()["enabled"] and domain != previous:
+        raise ValidationError("Disable CloudFront before changing its origin domain")
     if xray_manager.settings()["enabled"] and previous and domain != previous:
         raise ValidationError("Disable Xray before changing its domain, then issue SSL and enable it again")
     tls = install_nginx_config(domain)
@@ -578,14 +583,20 @@ def dashboard_status(params: dict[str, Any]) -> dict[str, Any]:
         key, value = line.split(":", 1)
         mem[key] = int(value.strip().split()[0]) * 1024
     return {**service_status(params), **XRAY.status(params), **list_users(params), **list_sessions(params),
-            "slowdns": SLOWDNS.status({}), "traffic": {"sampled_at": xray_manager.traffic.state().get("sampled_at"), "scope": "Xray payload bytes; SSH GB remains metadata"},
+            "slowdns": SLOWDNS.status({}), "cloudfront": CLOUDFRONT.status(), "traffic": {"sampled_at": xray_manager.traffic.state().get("sampled_at"), "scope": "Xray payload bytes; SSH GB remains metadata"},
             "system": {"hostname": socket.gethostname(), "load": list(os.getloadavg()),
                        "cpu_count": os.cpu_count(), "uptime_seconds": float(Path("/proc/uptime").read_text().split()[0]),
                        "disk_total": stat.total, "disk_used": stat.used,
                        "memory_total": mem.get("MemTotal", 0), "memory_available": mem.get("MemAvailable", 0)}}
 
 
+CLOUDFRONT = cdn_manager.Manager(install_nginx_config)
+
 HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "cloudfront_status": CLOUDFRONT.status,
+    "cloudfront_configure": CLOUDFRONT.configure,
+    "cloudfront_setup": CLOUDFRONT.setup,
+    "cloudfront_check": CLOUDFRONT.check,
     "create_user": create_user,
     "delete_user": delete_user,
     "renew_user": renew_user,
@@ -635,7 +646,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "slowdns_check": SLOWDNS.check,
 }
 
-WEB_COMMANDS = {"web_auth", "web_revision", "dashboard_status", "diagnostics", "dns_lookup", "dns_set",
+WEB_COMMANDS = {"cloudfront_status", "cloudfront_configure", "cloudfront_setup", "cloudfront_check", "web_auth", "web_revision", "dashboard_status", "diagnostics", "dns_lookup", "dns_set",
                 "xray_status", "xray_configure", "xray_create", "xray_update", "xray_export", "subscription_rotate", "subscription_revoke", "subscription_get", "backup_export",
                 "create_user", "delete_user", "renew_user", "set_sessions", "set_quota", "list_users",
                 "list_sessions", "service_status", "restart_service", "set_domain", "issue_cert"}
