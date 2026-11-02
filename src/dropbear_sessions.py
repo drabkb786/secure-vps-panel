@@ -58,6 +58,8 @@ def managed_uids(directory: Path = USERS_DIR) -> dict[int, str]:
     for path in directory.glob("*.json"):
         try:
             row = read_json(path, {})
+            if not isinstance(row, dict):
+                continue
             name = validate_username(str(row.get("username", path.stem)))
             if name != path.stem:
                 continue

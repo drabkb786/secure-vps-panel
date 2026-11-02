@@ -62,6 +62,7 @@ def test_snapshot_counts_root_and_uid_sessions_but_not_listener_or_standalone(tm
 
 
 def test_only_registered_tunnel_users_can_be_managed(tmp_path, monkeypatch):
+    (tmp_path / "invalid.json").write_text("[]")
     for name in ("basit", "admin", "system", "mismatch"):
         (tmp_path / (name + ".json")).write_text('{"username":"' + ("basit" if name == "mismatch" else name) + '"}')
     monkeypatch.setattr(ds.pwd, "getpwnam", lambda name: SimpleNamespace(
