@@ -35,6 +35,8 @@ RESERVED_USERS = {
     "nobody", "systemd-network", "systemd-timesync", "messagebus", "syslog",
     "_apt", "tss", "uuidd", "tcpdump", "sshd", "landscape", "pollinate",
     "abdulbasit-bot",
+    "abdulbasit-web", "abdulbasit-xray",
+    "abdulbasit-dnstt",
 }
 
 
@@ -121,7 +123,7 @@ def validate_bot_token(value: str) -> str:
 
 
 def validate_service(value: str) -> str:
-    allowed = {"nginx", "dropbear", "abdulbasit-ws", "abdulbasit-session-enforcer", "abdulbasit-bot", "abdulbasit-paneld"}
+    allowed = {"nginx", "dropbear", "abdulbasit-ws", "abdulbasit-session-enforcer", "abdulbasit-bot", "abdulbasit-paneld", "abdulbasit-web", "abdulbasit-xray", "abdulbasit-dnstt"}
     if value not in allowed:
         raise ValidationError("Service is not in the allowed service list")
     return value

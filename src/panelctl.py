@@ -6,6 +6,9 @@ import argparse
 import getpass
 import json
 import sys
+import os
+import zipfile
+from pathlib import Path
 from typing import Any
 
 from common import DEFAULT_SUPER_ADMIN_ID
@@ -63,13 +66,96 @@ def parser() -> argparse.ArgumentParser:
     remove_admin.add_argument("telegram_id")
 
     sub.add_parser("list-admins")
+    sub.add_parser("configure-web", help="Create/reset browser login; run as root")
+    sub.add_parser("diagnostics")
+    lookup = sub.add_parser("dns-lookup")
+    lookup.add_argument("--domain", default="")
+    dns = sub.add_parser("dns-set")
+    dns.add_argument("--server", action="append", required=True)
+    dns.add_argument("--strategy", choices=["UseIP", "UseIPv4", "UseIPv6"], default="UseIPv4")
+    for action in ("xray-status", "xray-disable", "xray-sync"):
+        sub.add_parser(action)
+    enable = sub.add_parser("xray-enable")
+    enable.add_argument("--xhttp", action=argparse.BooleanOptionalAction, default=None, help="Enable/disable the additional VLESS XHTTP TLS endpoint")
+    profile = sub.add_parser("xray-create")
+    profile.add_argument("name")
+    profile.add_argument("--days", type=int, default=30)
+    profile.add_argument("--quota", default="Unlimited")
+    profile.add_argument("--protocol", action="append", choices=["vless", "vmess", "trojan"])
+    renew_profile = sub.add_parser("xray-renew")
+    renew_profile.add_argument("name")
+    renew_profile.add_argument("--days", type=int, required=True)
+    delete_profile = sub.add_parser("xray-delete")
+    delete_profile.add_argument("name")
+    export = sub.add_parser("xray-export")
+    export.add_argument("name")
+    format_group = export.add_mutually_exclusive_group()
+    format_group.add_argument("--zip", type=Path, help="Save a private ZIP with all client profiles")
+    format_group.add_argument("--links", action="store_true", help="Print only the import links, one per line")
+    link = sub.add_parser("xray-link", help="Print one direct import URI without JSON wrapping")
+    link.add_argument("name")
+    link.add_argument("--protocol", choices=["vless", "vmess", "trojan", "vless-xhttp"], default="vless")
+    for action in ("subscription-rotate", "subscription-revoke"):
+        command = sub.add_parser(action)
+        command.add_argument("name")
+    backup = sub.add_parser("backup")
+    backup.add_argument("--output", type=Path, required=True)
+    restore = sub.add_parser("restore")
+    restore.add_argument("path", type=Path)
+    restore.add_argument("--yes", action="store_true", help="Confirm replacement of Xray profiles/settings")
+    trial = sub.add_parser("xray-trial")
+    trial.add_argument("name")
+    trial.add_argument("--quota", default="1")
+    for action in ("xray-lock", "xray-unlock", "xray-reset-usage", "lock-user", "unlock-user"):
+        sub.add_parser(action).add_argument("name")
+    quota_profile = sub.add_parser("xray-quota")
+    quota_profile.add_argument("name"); quota_profile.add_argument("--quota", required=True)
+    for action in ("traffic", "connections", "doctor", "restart-managed", "config-view", "memory-report", "banner", "slowdns-status", "slowdns-check", "slowdns-disable", "slowdns-install"):
+        command = sub.add_parser(action)
+        if action == "doctor": command.add_argument("--repair", action="store_true")
+    packet = sub.add_parser("packet-test"); packet.add_argument("--target", choices=["1.1.1.1", "8.8.8.8"], default="1.1.1.1")
+    logs = sub.add_parser("logs"); logs.add_argument("--service", default="abdulbasit-xray"); logs.add_argument("--level", choices=["error", "all"], default="error")
+    banner = sub.add_parser("set-banner"); banner.add_argument("path", type=Path)
+    slow = sub.add_parser("slowdns-enable"); slow.add_argument("--zone", required=True); slow.add_argument("--ns-host", required=True); slow.add_argument("--port", type=int, default=53)
+    udp = sub.add_parser("xray-udp"); udp.add_argument("mode", choices=["on", "off"])
+    maintenance = sub.add_parser("maintenance"); maintenance.add_argument("operation", choices=["memory", "clean-logs", "reinstall", "uninstall"]); maintenance.add_argument("--source", type=Path); maintenance.add_argument("--reclaim", action="store_true")
     return p
 
 
 def main() -> int:
     args = parser().parse_args()
     try:
-        if args.action == "create-user":
+        if args.action == "maintenance":
+            import maintenance
+            result = maintenance.run(args.operation, source=args.source, reclaim=args.reclaim, confirm=input)
+        elif args.action == "slowdns-install":
+            if os.geteuid() != 0: raise RuntimeError("Core installation requires the root terminal")
+            import subprocess
+            process = subprocess.run(["/bin/bash", str(Path(__file__).parent / "install-dnstt.sh")], check=False, timeout=900)
+            if process.returncode: raise RuntimeError("Official core installation failed; review the installer output")
+            result = {"installed": True}
+        elif args.action in {"xray-lock", "xray-unlock", "xray-reset-usage", "xray-quota"}:
+            action = "reset_usage" if args.action == "xray-reset-usage" else "quota" if args.action == "xray-quota" else "toggle"
+            params = {"name": args.name, "action": action}
+            if action == "toggle": params["enabled"] = args.action == "xray-unlock"
+            if action == "quota": params["quota_gb"] = args.quota
+            result = request("xray_update", **params)
+        elif args.action == "xray-trial":
+            result = request("xray_create", name=args.name, days=1, trial=True, quota_gb=args.quota)
+        elif args.action in {"lock-user", "unlock-user"}:
+            result = request("set_user_lock", username=args.name, enabled=args.action == "unlock-user")
+        elif args.action in {"traffic", "connections", "restart-managed", "config-view", "memory-report", "banner", "slowdns-status", "slowdns-check"}:
+            mapping = {"traffic": "traffic_sample", "connections": "live_connections", "restart-managed": "restart_managed", "config-view": "config_view", "memory-report": "memory_report", "banner": "banner_get"}
+            result = request(mapping.get(args.action, args.action.replace("-", "_")))
+        elif args.action == "doctor": result = request("doctor", repair=args.repair)
+        elif args.action == "packet-test": result = request("packet_test", target=args.target)
+        elif args.action == "logs": result = request("live_logs", service=args.service, level=args.level)
+        elif args.action == "set-banner": result = request("banner_set", text=args.path.read_text())
+        elif args.action in {"slowdns-enable", "slowdns-disable"}:
+            result = request("slowdns_configure", **({"enabled": True, "zone": args.zone, "ns_host": args.ns_host, "port": args.port} if args.action == "slowdns-enable" else {"enabled": False}))
+        elif args.action == "xray-udp":
+            result = request("xray_configure", enabled=True, udp_enabled=args.mode == "on")
+        elif args.action == "create-user":
             password = getpass.getpass("Password (minimum 12 characters): ")
             confirmation = getpass.getpass("Confirm password: ")
             if password != confirmation:
@@ -105,11 +191,78 @@ def main() -> int:
             result = request("remove_admin", admin_id=args.telegram_id)
         elif args.action == "list-admins":
             result = request("list_admins")
+        elif args.action == "configure-web":
+            if os.geteuid() != 0:
+                raise RuntimeError("Run configure-web as root")
+            username = input("Web admin username [noway]: ").strip() or "noway"
+            password = getpass.getpass("Web admin password (minimum 12 characters): ")
+            if password != getpass.getpass("Confirm web password: "):
+                raise RuntimeError("Passwords do not match")
+            result = request("configure_web", username=username, password=password)
+        elif args.action == "diagnostics":
+            result = request("diagnostics")
+        elif args.action == "dns-lookup":
+            result = request("dns_lookup", domain=args.domain)
+        elif args.action == "dns-set":
+            result = request("dns_set", servers=args.server, query_strategy=args.strategy)
+        elif args.action in {"xray-status", "xray-sync"}:
+            result = request(args.action.replace("-", "_"))
+        elif args.action in {"xray-enable", "xray-disable"}:
+            params = {"enabled": args.action == "xray-enable"}
+            if args.action == "xray-enable" and args.xhttp is not None:
+                params["xhttp_enabled"] = args.xhttp
+            result = request("xray_configure", **params)
+        elif args.action in {"subscription-rotate", "subscription-revoke"}:
+            result = request(args.action.replace("-", "_"), name=args.name)
+        elif args.action == "backup":
+            data = request("backup_export")["backup"]
+            fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as handle:
+                json.dump(data, handle, indent=2); handle.write("\n")
+            result = {"saved": str(args.output), "scope": data.get("scope")}
+        elif args.action == "restore":
+            if os.geteuid() != 0:
+                raise RuntimeError("Restore requires the root CLI")
+            if not args.path.is_file() or args.path.stat().st_size > 256 * 1024:
+                raise RuntimeError("Choose a regular backup JSON file, at most 256 KiB")
+            data = json.loads(args.path.read_text())
+            if not args.yes and input("Replace current Xray profiles/settings? Type RESTORE: ").strip() != "RESTORE":
+                raise RuntimeError("Restore cancelled")
+            result = request("backup_restore", backup=data)
+        elif args.action == "xray-create":
+            params = {"name": args.name, "days": args.days, "quota_gb": args.quota}
+            if args.protocol:
+                params["protocols"] = args.protocol
+            result = request("xray_create", **params)
+        elif args.action == "xray-renew":
+            result = request("xray_update", name=args.name, action="renew", days=args.days)
+        elif args.action == "xray-delete":
+            result = request("xray_update", name=args.name, action="delete")
+        elif args.action in {"xray-export", "xray-link"}:
+            result = request("xray_export", name=args.name)
+            for warning in result.get("readiness", {}).get("warnings", []):
+                print(f"WARNING: {warning}", file=sys.stderr)
+            if args.action == "xray-link":
+                link = result["links"].get(args.protocol)
+                if not link:
+                    raise RuntimeError(f"{args.protocol.upper()} is not enabled for this account")
+                print(link)
+                return 0
+            if args.links:
+                print("\n".join(result["links"].values()))
+                return 0
+            if args.zip:
+                # Exclusive creation avoids clobbering an existing file or following a symlink.
+                fd = os.open(args.zip, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as handle, zipfile.ZipFile(handle, "w", zipfile.ZIP_DEFLATED) as archive:
+                    for name, content in result["files"].items():
+                        archive.writestr(name, content)
+                result = {"saved": str(args.zip)}
         else:
             raise RuntimeError("Unknown action")
         print_json(result)
         return 0
-    except (RuntimeError, KeyboardInterrupt) as exc:
+    except (RuntimeError, OSError, ValueError, KeyboardInterrupt) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

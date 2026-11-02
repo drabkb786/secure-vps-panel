@@ -129,6 +129,7 @@ class Bot:
         rows = [
             [{"text": "👤 Users", "callback_data": "menu_users"}, {"text": "📋 User List", "callback_data": "list_users"}],
             [{"text": "🟢 Sessions", "callback_data": "list_sessions"}, {"text": "📊 Service Status", "callback_data": "status"}],
+            [{"text": "🔗 Xray Links", "callback_data": "menu_xray"}],
         ]
         if super_admin:
             rows.append([{"text": "🔐 Super Admin", "callback_data": "menu_super"}])
@@ -186,6 +187,13 @@ class Bot:
         elif data == "menu_users":
             self.set_state(chat_id)
             self.edit(chat_id, message_id, "<b>👤 User Management</b>\nSession limit means concurrent Dropbear sessions, not unique IP addresses.", self.users_keyboard())
+        elif data == "menu_xray":
+            self.show_xray_profiles(chat_id, message_id)
+        elif data == "xray_find":
+            self.set_state(chat_id, "xray_export_name")
+            self.edit(chat_id, message_id, "Enter the Xray profile name to get its direct import links:")
+        elif data.startswith("xray_export:"):
+            self.show_xray_links(chat_id, message_id, data.split(":", 1)[1])
         elif data == "menu_super":
             if not self.is_super(chat_id):
                 return
@@ -248,6 +256,35 @@ class Bot:
             except RuntimeError as exc:
                 self.edit(chat_id, message_id, f"❌ {html.escape(str(exc))}", self.super_keyboard())
 
+    def show_xray_profiles(self, chat_id: str, message_id: int) -> None:
+        self.set_state(chat_id)
+        try:
+            rows = self.panel("xray_status").get("accounts", [])
+            active_rows = [row for row in rows if row.get("active")]
+            keyboard = {"inline_keyboard": [
+                [{"text": row["name"], "callback_data": f"xray_export:{row['name']}"}] for row in active_rows[:20]
+            ] + [[{"text": "🔎 Find by name", "callback_data": "xray_find"}], [{"text": "⬅️ Main", "callback_data": "menu_main"}]]}
+            self.edit(chat_id, message_id, "<b>🔗 Xray import links</b>\nSelect a profile to get its VLESS, VMess and/or Trojan links.\nCreate profiles from the dashboard or CLI.\n" + (f"\nShowing {min(20, len(active_rows))} of {len(active_rows)} eligible profiles." if active_rows else "\nNo eligible Xray profiles found."), keyboard)
+        except RuntimeError as exc:
+            self.edit(chat_id, message_id, f"❌ {html.escape(str(exc))}", self.main_keyboard(self.is_super(chat_id)))
+
+    def show_xray_links(self, chat_id: str, message_id: int | None, name: str) -> None:
+        self.set_state(chat_id)
+        def display(text: str, keyboard: dict) -> None:
+            if message_id is None:
+                self.send(chat_id, text, keyboard)
+            else:
+                self.edit(chat_id, message_id, text, keyboard)
+        try:
+            result = self.panel("xray_export", name=name)
+            lines = [f"<b>🔗 {html.escape(result['name'])}</b>", "Treat import links as account passwords."]
+            for protocol, link in result["links"].items():
+                lines.append(f"\n<b>{html.escape(protocol.upper())}</b>\n<code>{html.escape(link)}</code>")
+            lines.extend(f"\n⚠️ {html.escape(w)}" for w in result.get("readiness", {}).get("warnings", []))
+            display("\n".join(lines), {"inline_keyboard": [[{"text": "⬅️ Xray profiles", "callback_data": "menu_xray"}]]})
+        except RuntimeError as exc:
+            display(f"❌ {html.escape(str(exc))}", self.main_keyboard(self.is_super(chat_id)))
+
     def show_users(self, chat_id: str, message_id: int) -> None:
         try:
             users = self.panel("list_users").get("users", [])
@@ -309,7 +346,9 @@ class Bot:
             return
         value = text.strip()
         try:
-            if step == "create_username":
+            if step == "xray_export_name":
+                self.show_xray_links(chat_id, None, value)
+            elif step == "create_username":
                 self.set_state(chat_id, "create_password", username=value)
                 self.send(chat_id, "Send a strong password (minimum 12 characters). The bot will delete that password message after reading it.")
             elif step == "create_password":

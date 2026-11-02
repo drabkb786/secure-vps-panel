@@ -19,7 +19,9 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectHome=yes
 ProtectSystem=full
-ReadWritePaths=/etc/abdulbasit /etc/nginx/conf.d /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /var/www/letsencrypt /etc/passwd /etc/shadow /etc/group -/etc/gshadow -/etc/subuid -/etc/subgid
+# shadow-utils needs temporary/lock files beside /etc/passwd and /etc/shadow.
+# Binding only the individual files read-write breaks useradd/usermod.
+ReadWritePaths=/etc /var/lib/letsencrypt /var/log/letsencrypt /var/www/letsencrypt
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

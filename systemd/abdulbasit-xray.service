@@ -1,0 +1,35 @@
+[Unit]
+Description=NOWAY managed Xray core (VLESS / VMess / Trojan)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/abdulbasit-xray/enabled
+
+[Service]
+Type=simple
+User=abdulbasit-xray
+Group=abdulbasit-xray
+ExecStart=/usr/local/lib/abdulbasit/xray run -config /etc/abdulbasit-xray/config.json
+Restart=on-failure
+RestartSec=3s
+UMask=0077
+RuntimeDirectory=abdulbasit-xray
+RuntimeDirectoryMode=0700
+ReadWritePaths=/run/abdulbasit-xray
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+InaccessiblePaths=/etc/abdulbasit
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
