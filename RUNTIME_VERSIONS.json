@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "verified_at": "2026-11-03",
+  "components": {
+    "nginx": {
+      "version": "1.30.6",
+      "url": "https://github.com/nginx/nginx/releases/download/release-1.30.6/nginx-1.30.6.tar.gz",
+      "sha256": "3cf46f5ed7504d460125866b7bea99fb357f31d887e2e63b35503310e9b8b6c8",
+      "source": "https://nginx.org/en/download.html"
+    },
+    "openssl": {
+      "version": "3.5.9",
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+      "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a",
+      "source": "https://openssl-library.org/source/"
+    },
+    "python": {
+      "version": "3.15.2",
+      "url": "https://www.python.org/ftp/python/3.15.2/Python-3.15.2.tar.xz",
+      "sha256": "8b5536d280142ecf6cdfe15d12a21ba1c65e300bbf7b28a8d0cdb849575797de",
+      "source": "https://www.python.org/downloads/release/python-3152/"
+    },
+    "certbot": {
+      "version": "5.9.0",
+      "url": "https://github.com/certbot/certbot/releases/download/v5.9.0/certbot-5.9.0.tar.gz",
+      "sha256": "bf7d096c8b7e595d8c8dd2c1374db2bd11f53ea33d1748aaea805e81007710d8",
+      "source": "https://github.com/certbot/certbot/releases/tag/v5.9.0"
+    },
+    "acme": {
+      "version": "5.9.0",
+      "url": "https://github.com/certbot/certbot/releases/download/v5.9.0/acme-5.9.0.tar.gz",
+      "sha256": "bbfd9cf42797b5378a05833c0fd917de9418b69e03cbdb39abb7e85e5532fe75",
+      "source": "https://github.com/certbot/certbot/releases/tag/v5.9.0"
+    },
+    "fail2ban": {
+      "version": "1.1.1",
+      "url": "https://github.com/fail2ban/fail2ban/releases/download/1.1.1/fail2ban_1.1.1-1.upstream2_all.deb",
+      "sha256": "3510ee97a0a3cfdf4c1d7dcaeb15a36a1f7aaf6a488f18373c97561c55754019",
+      "source": "https://github.com/fail2ban/fail2ban/releases/tag/1.1.1"
+    }
+  }
+}

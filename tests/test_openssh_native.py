@@ -74,7 +74,9 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
         return transport, channel
     try:
         first, channel = login(socket.create_connection(("127.0.0.1", 109), timeout=5))
-        with tempfile.TemporaryDirectory(prefix="noway-native-", dir="/run") as directory:
+        # /run may be mounted noexec on hosted runners. The ASKPASS helper must
+        # execute, while remaining outside home directories hidden by services.
+        with tempfile.TemporaryDirectory(prefix="noway-native-", dir="/usr/local/lib") as directory:
             root = Path(directory); cert = root / "cert.pem"; key = root / "key.pem"
             subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com", "-addext", "subjectAltName=DNS:vpn.example.com"], check=True, capture_output=True, timeout=20)
             monkeypatch.setattr(paneld, "ipv6_enabled", lambda: False)
@@ -86,7 +88,7 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
             config = root / "nginx.conf"
             config.write_text(f"user root root;\npid {root}/nginx.pid;\nerror_log {root}/nginx.log;\nevents {{}}\nhttp {{access_log off;\n" +
                               "\n".join(f"{part}_temp_path {root}/{part};" for part in ("client_body", "proxy", "fastcgi", "scgi", "uwsgi")) + site + "\n}")
-            nginx = subprocess.Popen(["/usr/sbin/nginx", "-p", directory, "-c", str(config), "-g", "daemon off;"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            nginx = subprocess.Popen([os.environ.get("NGINX_TEST_BINARY", "/usr/sbin/nginx"), "-p", directory, "-c", str(config), "-g", "daemon off;"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_port(tls_port, nginx)
             monkeypatch.setenv("SSL_CERT_FILE", str(cert))
             # The installed web worker must trust only Nginx's private marker,
@@ -113,7 +115,11 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
             log = (root / "ssh-client.log").open("w+")
             env = dict(os.environ, SSH_ASKPASS=str(askpass), SSH_ASKPASS_REQUIRE="force", DISPLAY=":0")
             ssh_client = subprocess.Popen(["ssh", "-N", "-D", f"127.0.0.1:{socks_port}", "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + str(known), "-o", "ExitOnForwardFailure=yes", "-o", "ProxyCommand=" + proxy_command, name + "@vpn.example.com"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log, env=env)
-            wait_port(socks_port, ssh_client)
+            try:
+                wait_port(socks_port, ssh_client)
+            except AssertionError as exc:
+                log.flush()
+                pytest.fail(f"{exc}\nOpenSSH/adapter output:\n" + (root / "ssh-client.log").read_text())
             import struct
             from test_xray_core import read_exact
             with socket.create_connection(("127.0.0.1", socks_port), timeout=10) as peer:

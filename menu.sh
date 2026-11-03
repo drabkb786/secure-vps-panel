@@ -191,7 +191,7 @@ transport_menu() {
 
 while true; do
   clear
-  python3 /usr/local/lib/abdulbasit/terminal_ui.py
+  /usr/local/lib/abdulbasit/python /usr/local/lib/abdulbasit/terminal_ui.py
   read -r -p 'Choose a control [00-23]: ' choice
   case "$choice" in
     1|01) read -r -p 'Profile name: ' name; read -r -p 'Days [30]: ' days; read -r -p 'GB limit / Unlimited [Unlimited]: ' quota; run_ctl xray-create "$name" --days "${days:-30}" --quota "${quota:-Unlimited}"; pause ;;
