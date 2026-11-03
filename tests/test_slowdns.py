@@ -50,6 +50,38 @@ def test_failed_dns_restart_restores_previous_runtime_and_preserves_keys(dns_man
     assert not slowdns.SETTINGS_FILE.exists()
 
 
+@pytest.mark.parametrize("opens", [True, False])
+def test_slow_listener_keeps_config_until_ready_or_timeout(dns_manager, monkeypatch, opens):
+    slowdns.BINARY.touch(); slowdns.CONFIG_DIR.mkdir()
+    slowdns.PRIVATE_KEY.write_text("private-key-fixture"); slowdns.PUBLIC_KEY.write_text("a" * 64)
+    now, probes, calls = [0.0], [0], []
+    monkeypatch.setattr(slowdns.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(slowdns.time, "sleep", lambda delay: now.__setitem__(0, now[0] + delay))
+    def run(args, **kw):
+        calls.append(args)
+        if "-Hlunp" in args and slowdns.RUNTIME_FILE.exists():
+            config = json.loads(slowdns.RUNTIME_FILE.read_text())
+            assert config["enabled"] and config["zone"] == "tunnel.example.com"
+            probes[0] += 1
+            return SimpleNamespace(stdout="dnstt-server" if opens and probes[0] >= 3 else "")
+        return SimpleNamespace(stdout="")
+    dns_manager.run = run
+    params = {"enabled": True, "zone": "tunnel.example.com", "ns_host": "ns1.example.com"}
+    if opens:
+        assert dns_manager.configure(params)["enabled"]
+        assert probes[0] == 3 and now[0] > 0
+        assert json.loads(slowdns.SETTINGS_FILE.read_text())["enabled"]
+        assert any("enable" in call for call in calls)
+    else:
+        with pytest.raises(RuntimeError, match="within 10 seconds"):
+            dns_manager.configure(params)
+        assert now[0] >= 10 and probes[0] > 1
+        assert not slowdns.RUNTIME_FILE.exists() and not slowdns.SETTINGS_FILE.exists()
+        assert not any("enable" in call for call in calls)
+        assert any("disable" in call for call in calls)
+    assert slowdns.PRIVATE_KEY.read_text() == "private-key-fixture"
+
+
 @pytest.mark.skipif(not os.environ.get("DNSTT_TEST_SERVER") or not os.environ.get("DNSTT_TEST_CLIENT"), reason="Supply official dnstt server/client binaries")
 def test_real_official_dnstt_udp_tunnel_forwards_bidirectional_tcp(tmp_path):
     server, client = os.environ["DNSTT_TEST_SERVER"], os.environ["DNSTT_TEST_CLIENT"]
