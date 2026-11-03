@@ -1,4 +1,4 @@
-# NOWAY VPS Control Room v3.3.0
+# NOWAY VPS Control Room v3.4.0
 
 > Browser dashboard, SSH/Dropbear, VLESS/VMess/Trojan, optional VLESS XHTTP, live subscriptions, QR, client configs and private recovery for Ubuntu/Debian VPS servers.
 
@@ -9,7 +9,7 @@
 | Owner and Maintainer | **Abdul Basit** |
 | GitHub Account | `drabkb786` |
 | Repository | `drabkb786/secure-vps-panel` |
-| Version | `3.3.0` |
+| Version | `3.4.0` |
 | Default Telegram Super Admin ID | `6408975845` |
 | Supported OS | Ubuntu 22.04/24.04 and Debian 12+ |
 | Required Python | Python 3.10 or newer |
@@ -25,6 +25,8 @@ Yeh browser aur terminal dono se khulta hai. Naya NOWAY dashboard `https://YOUR-
 **v3.2 setup, migration, Xray exports aur limitations:** [Web + Xray guide](docs/WEB_XRAY.md).
 **Implementation sequence aur next phases:** [Roadmap](docs/ROADMAP.md).
 **Verification evidence:** [Validation](docs/VALIDATION.md).
+**CloudFront setup, direct/CDN links and performance scope:** [CloudFront guide](docs/CLOUDFRONT.md).
+**External GitHub/AWS comparison:** [CloudFront research](docs/CLOUDFRONT_RESEARCH.md).
 **Dropbear fixes, standard WebSocket and session attribution:** [SSH transport guide](docs/DROPBEAR.md).
 **Screenshot ke 20 controls, traffic, SlowDNS aur maintenance:** [Operations guide](docs/OPERATIONS.md).
 **10 GitHub panels + 2 upstream references ka comparison:** [Research and upgrade decisions](docs/PANEL_RESEARCH.md).

@@ -104,8 +104,13 @@ def imported_profile_from_uri(link):
                            "streamSettings": stream}]}
 
 
-@pytest.mark.parametrize("source", ["json", "import_link", "xhttp_link"])
-def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
+@pytest.mark.parametrize("source", ["json", "import_link", "xhttp_link", "cloudfront_json", "cloudfront_link"])
+def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, monkeypatch):
+    from cloudfront_fixture import enable_origin, edge_server
+    cdn = source.startswith("cloudfront")
+    secret = enable_origin(tmp_path, monkeypatch) if cdn else ""
+    domain = "d123example.cloudfront.net" if cdn else "vpn.example.com"
+    prefix = "/cloudfront" if cdn else ""
     """Exercise SOCKS -> Xray -> verified TLS/Nginx -> Xray -> local HTTP.
 
     Only this test config permits its loopback HTTP destination; production
@@ -142,7 +147,7 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
     server_cfg["outbounds"][0]["settings"]["finalRules"].append({"action": "allow", "network": "udp", "ip": ["127.0.0.1"], "port": str(udp.server_address[1])})
 
     key, cert = tmp_path / "key.pem", tmp_path / "cert.pem"
-    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com", "-addext", "subjectAltName=DNS:vpn.example.com"], check=True, capture_output=True, timeout=20)
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com", "-addext", "subjectAltName=DNS:vpn.example.com,DNS:d123example.cloudfront.net"], check=True, capture_output=True, timeout=20)
     path = tmp_path / "server.json"; path.write_text(json.dumps(server_cfg))
     server_proc, server_log = start_core(path)
     front_proc = front_log = None
@@ -160,6 +165,9 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
             site = site.replace(f"127.0.0.1:{port}", f"127.0.0.1:{ports[endpoint_path]}")
         if source == "xhttp_link":
             site = site.replace("127.0.0.1:10004", f"127.0.0.1:{ports[XHTTP_PATH]}")
+        if cdn:
+            edge_port = free_port()
+            site += edge_server(edge_port, front_port, cert, key, secret)
         config = tmp_path / "nginx.conf"
         user = "user root root;\n" if os.geteuid() == 0 else ""
         temp_paths = "\n".join(f"{part}_temp_path {tmp_path}/{part};" for part in ("client_body", "proxy", "fastcgi", "scgi", "uwsgi"))
@@ -168,13 +176,13 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source):
         front_proc = subprocess.Popen([nginx, "-p", str(tmp_path), "-c", str(config), "-g", "daemon off;"], stdout=front_log, stderr=front_log)
         wait_port(front_port, front_proc)
         for protocol in (["vless-xhttp"] if source == "xhttp_link" else PROTOCOLS):
-            cfg = client_config(protocol, row, "vpn.example.com", DEFAULT_DNS) if source == "json" else imported_profile_from_uri(share_link(protocol, row, "vpn.example.com"))
+            cfg = client_config(protocol, row, domain, DEFAULT_DNS, prefix) if source in ("json", "cloudfront_json") else imported_profile_from_uri(share_link(protocol, row, domain, prefix))
             cfg["log"]["loglevel"] = "debug"
             proxy = cfg["outbounds"][0]; proxy["streamSettings"]["tlsSettings"]["certificates"] = [{"certificateFile": str(cert), "usage": "verify"}]
             transport_settings = proxy["streamSettings"].get("wsSettings", proxy["streamSettings"].get("xhttpSettings"))
             transport_settings.setdefault("headers", {}).update({"X-Forwarded-For": "203.0.113.66", "X-Noway-Gateway": "client-spoof"})
             endpoint = proxy["settings"]["servers" if protocol == "trojan" else "vnext"][0]
-            endpoint.update({"address": "127.0.0.1", "port": front_port})
+            endpoint.update({"address": "127.0.0.1", "port": edge_port if cdn else front_port})
             port = free_port(); cfg["inbounds"][0]["port"] = port
             config_path = tmp_path / f"{protocol}-client.json"; config_path.write_text(json.dumps(cfg))
             proc, log = start_core(config_path)

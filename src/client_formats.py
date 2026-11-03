@@ -4,13 +4,13 @@ from __future__ import annotations
 PATHS = {"vless": "/vless", "vmess": "/vmess", "trojan": "/trojan"}
 
 
-def singbox_config(row: dict, domain: str) -> dict:
+def singbox_config(row: dict, domain: str, prefix: str = "") -> dict:
     proxies = []
     for protocol in row["protocols"]:
         proxy = {"type": protocol, "tag": f"NOWAY-{row['name']}-{protocol}",
                  "server": domain, "server_port": 443,
                  "tls": {"enabled": True, "server_name": domain, "insecure": False, "alpn": ["http/1.1"]},
-                 "transport": {"type": "ws", "path": PATHS[protocol], "headers": {"Host": domain}}}
+                 "transport": {"type": "ws", "path": prefix + PATHS[protocol], "headers": {"Host": domain}}}
         if protocol == "trojan":
             proxy["password"] = row["trojan_password"]
         else:
@@ -24,14 +24,14 @@ def singbox_config(row: dict, domain: str) -> dict:
             "route": {"final": "NOWAY"}}
 
 
-def clash_config(row: dict, domain: str) -> dict:
+def clash_config(row: dict, domain: str, prefix: str = "") -> dict:
     """Returned JSON is also valid YAML, accepted by Mihomo/Clash.Meta."""
     proxies = []
     for protocol in row["protocols"]:
         proxy = {"name": f"NOWAY-{row['name']}-{protocol}", "type": protocol,
                  "server": domain, "port": 443, "tls": True, "skip-cert-verify": False,
                  "network": "ws", "udp": True, "alpn": ["http/1.1"],
-                 "ws-opts": {"path": PATHS[protocol], "headers": {"Host": domain}}}
+                 "ws-opts": {"path": prefix + PATHS[protocol], "headers": {"Host": domain}}}
         proxy["sni" if protocol == "trojan" else "servername"] = domain
         if protocol == "trojan":
             proxy["password"] = row["trojan_password"]

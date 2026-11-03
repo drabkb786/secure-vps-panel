@@ -1,5 +1,43 @@
 # Validation
 
+
+## v3.4 CloudFront checks — 3 November 2026 (Asia/Karachi)
+
+Implementation commit: `bb7a937e25204e0a9b34d7bbc42dc5f6dfe73c54`.
+[Successful native CI run](https://github.com/drabkb786/secure-vps-panel/actions/runs/41477363151)
+([job](https://github.com/drabkb786/secure-vps-panel/actions/runs/41477363151/job/125386352819)).
+
+- Base Python suite: **167 passed, 16 optional native tests skipped**.
+- Nginx + real Xray stage: **9 passed**, including guarded-origin HTTP checks and
+  VLESS/VMess/Trojan payloads through the local two-hop TLS edge simulation from
+  generated JSON and independently decoded import URIs.
+- Official Dropbear native stage: **4 passed** (direct, legacy raw upgrade, WSS
+  and local CloudFront-like two-hop WSS); checks correct/wrong keys, host key,
+  4 MiB TCP forwarding and denied shell/reverse forwarding.
+- Native client config parsers: **3 passed**; official dnstt: **4 passed**.
+  These stages repeat four tests already in the base suite: total coverage is
+  **183 unique Python tests**, plus **2 JavaScript regressions**.
+- Generated CloudFormation passed `cfn-lint`. Python/JavaScript/Bash syntax and
+  the dependency-free static audit passed.
+- Browser QA with clearly labeled synthetic data: CloudFront settings save and
+  status, generated SSH WSS address, Direct → CloudFront export selection, all
+  three visible URI formats and route-aware TXT/ZIP controls verified. This
+  fixture is outside the production checkout and is not shipped as an auth bypass.
+- Five alternating 4 MiB loopback benchmark rounds: old 16 KiB/default-Nagle
+  profile median **41.96 MiB/s**; 64 KiB/TCP_NODELAY profile **133.76 MiB/s**.
+  [Raw samples and scope](cloudfront-bridge-benchmark.json). This is bridge
+  overhead, not SSH encryption throughput, AWS throughput or an internet speed guarantee.
+
+**Not performed:** deployment to the user's VPS, creation of an actual AWS
+CloudFront distribution, or a live WAN benchmark. Native two-hop tests simulate
+edge behavior locally and do not claim AWS acceptance. Use the
+[deployment guide](CLOUDFRONT.md), then the panel's endpoint check and an actual
+client login/file transfer on the deployed system.
+
+Screenshot below is **QA example data**, not a live AWS endpoint:
+
+![CloudFront dashboard with QA example data](noway-cloudfront-preview.jpg)
+
 ## v3.3 Dropbear checks — 2 November 2026 (Asia/Karachi)
 
 - Added 30 Python cases for independent WebSocket transport, authenticated

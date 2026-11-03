@@ -30,6 +30,8 @@ MAX_HEADER: Final = 16 * 1024
 HEADER_TIMEOUT: Final = 10
 IDLE_TIMEOUT: Final = 3600
 MAX_CONNECTIONS: Final = 200
+IO_CHUNK = 64 * 1024
+TCP_NODELAY = True
 MAX_PENDING: Final = 256 * 1024
 MAX_MESSAGE: Final = 8 * 1024 * 1024
 WS_PATH: Final = "/ssh/ws"
@@ -261,7 +263,7 @@ def relay_websocket(client: socket.socket, target: socket.socket, ws: WSConnecti
                 sock = key.fileobj
                 if events & selectors.EVENT_READ:
                     try:
-                        data = sock.recv(16384)
+                        data = sock.recv(IO_CHUNK)
                     except BlockingIOError:
                         data = None
                     if data == b"":
@@ -304,6 +306,8 @@ class Handler(socketserver.BaseRequestHandler):
             real_ip = client_ip(self.client_address[0], headers)
             response_status = b"502 Bad Gateway"
             target = socket.create_connection((TARGET_HOST, TARGET_PORT), timeout=10)
+            for tcp in (self.request, target):
+                tcp.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, int(TCP_NODELAY))
             response = ws.send(AcceptConnection(subprotocol=subprotocol)) if ws else switching_protocols(headers)
             self.request.sendall(response)
             upgraded = True

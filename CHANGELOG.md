@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.4.0 — CloudFront WS delivery and bridge tuning
+
+- Add guarded TLS CloudFront origin routes for VLESS, VMess, Trojan and binary WebSocket Dropbear, with a private CloudFormation setup export and restricted edge paths.
+- Add dashboard/CLI lifecycle, public endpoint handshake checks, Direct/CloudFront URI, QR, JSON, TXT, ZIP, sing-box, Mihomo and subscription routing.
+- Preserve direct access, credentials, quotas and existing subscription tokens; keep XHTTP direct.
+- Reduce bridge overhead with 64 KiB reads and TCP_NODELAY, retaining memory/connection bounds and authentication; include a reproducible comparison benchmark.
+- Add real Nginx guard tests and native Xray/Dropbear two-hop TLS simulations. AWS live deployment remains a separate operator check.
+- Document external GitHub/AWS sources, deployment costs, origin secret handling and measured-performance limits.
+
 ## 3.3.0 — Dropbear transport and verified sessions
 
 - Consolidate the v3.2 panel and both Actions v7 dependency PRs on `main`;

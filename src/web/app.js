@@ -61,7 +61,7 @@ function showApp(session) {
 function view(name) {
   document.querySelectorAll('.view').forEach(n => { n.hidden = n.id !== `view-${name}`; });
   document.querySelectorAll('.nav').forEach(n => n.classList.toggle('active', n.dataset.view === name));
-  setText('breadcrumb', {overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', diagnostics: 'Diagnostics', recovery: 'Backup & recovery', traffic: 'Traffic & connections', transports: 'UDP & SlowDNS', system: 'System toolbox', maintenance: 'Telegram & maintenance'}[name]);
+  setText('breadcrumb', {overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', cloudfront: 'CloudFront', diagnostics: 'Diagnostics', recovery: 'Backup & recovery', traffic: 'Traffic & connections', transports: 'UDP & SlowDNS', system: 'System toolbox', maintenance: 'Telegram & maintenance'}[name]);
 }
 const size = (value) => !Number.isFinite(value) ? '—' : value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)} GB` : `${(value / 1024 ** 2).toFixed(0)} MB`;
 const percent = (used, total) => total > 0 ? Math.max(0, Math.min(100, used / total * 100)) : 0;
@@ -132,6 +132,15 @@ function render() {
   $('toggle-xhttp').disabled = !s.network.enabled || $('toggle-xhttp').hasAttribute('aria-busy');
   setText('udp-state', s.network.udp_enabled === false ? 'UDP blocked' : 'UDP forwarding allowed');
   $('toggle-udp').disabled = !s.network.enabled;
+  const cf = s.cloudfront || {};
+  setText('cf-state', cf.stage === 'attached' ? 'Endpoint attached' : cf.stage === 'prepared' ? 'Origin prepared' : 'Disabled');
+  setText('cf-check-note', cf.last_check ? `${cf.last_check.ok ? 'Handshake checks passed' : 'Check needs attention'} · ${new Date(cf.last_check.checked_at).toLocaleString()}. Login and speed not tested.` : 'No endpoint check has run.');
+  if (!$('cloudfront-form').contains(document.activeElement)) { $('cf-endpoint').value = cf.endpoint || ''; $('cf-price').value = cf.price_class || 'PriceClass_All'; }
+  $('cf-check').disabled = !cf.enabled || !cf.endpoint || $('cf-check').hasAttribute('aria-busy');
+  $('cf-disable').disabled = !cf.enabled || $('cf-disable').hasAttribute('aria-busy');
+  $('cf-setup').hidden = !cf.enabled; $('cf-ssh').value = cf.ssh_url || '';
+  $('cf-paths').replaceChildren();
+  for (const [name, path] of Object.entries(cf.paths || {})) { const row = element('div', 'service-row'); row.append(element('strong', '', name.toUpperCase()), element('code', 'mono muted', path)); $('cf-paths').append(row); }
   const slow = s.slowdns || {};
   setText('slowdns-state', !slow.installed ? 'Core not installed' : slow.enabled ? 'Enabled' : 'Disabled');
   if (!$('slowdns-form').contains(document.activeElement)) { $('slowdns-zone').value = slow.zone || ''; $('slowdns-ns').value = slow.ns_host || ''; $('slowdns-port').value = slow.port || 53; }
@@ -160,8 +169,9 @@ function confirmAction(message) {
   setText('confirm-message', message); $('confirm-dialog').showModal();
   return new Promise(resolve => { confirmResolve = resolve; });
 }
-async function exportProfile(name) {
-  const result = await api(`export?name=${encodeURIComponent(name)}`);
+async function exportProfile(name, route = 'direct') {
+  const result = await api(`export?name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}`);
+  $('export-route').value = route;
   currentExport = result;
   const warnings = result.readiness?.warnings || [];
   setText('export-warning', warnings.join(' ')); $('export-warning').hidden = !warnings.length;
@@ -176,14 +186,14 @@ async function exportProfile(name) {
       const a = element('a'); a.href = url; a.download = `${name}-${protocol}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
     }, 'btn small'));
     const textFile = element('a', 'btn small', '↓ Link TXT');
-    textFile.href = API + `export?name=${encodeURIComponent(name)}&format=link&protocol=${encodeURIComponent(protocol)}`;
+    textFile.href = API + `export?name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}&format=link&protocol=${encodeURIComponent(protocol)}`;
     item.append(textFile, button('QR code', () => showQR(link), 'btn small')); container.append(item);
   });
   for (const [suffix, label] of [['singbox.json', 'sing-box JSON'], ['clash.yaml', 'Clash.Meta YAML']]) {
     const content = result.files[`${name}-${suffix}`];
     if (content) container.append(button(`↓ ${label}`, () => downloadText(content, `${name}-${suffix}`), 'btn small'));
   }
-  $('download-zip').href = API + `export?name=${encodeURIComponent(name)}&format=zip`; $('export-dialog').showModal();
+  $('download-zip').href = API + `export?name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}&format=zip`; if (!$('export-dialog').open) $('export-dialog').showModal();
 }
 function downloadText(content, filename) {
   const url = URL.createObjectURL(new Blob([content], {type: 'text/plain;charset=utf-8'}));
@@ -197,10 +207,19 @@ function openSubscription(row) {
   currentSubscription = {name: row.name, enabled: row.subscription_enabled};
   setText('subscription-title', `${row.name} · subscription`);
   setText('subscription-note', row.subscription_enabled ? 'A URL already exists. Its secret cannot be retrieved; rotate only if you need a replacement.' : 'No subscription URL is enabled for this profile.');
+  $('subscription-route').value = 'direct';
   $('subscription-url').value = ''; $('subscription-formats').replaceChildren();
   $('subscription-revoke').disabled = !row.subscription_enabled;
   $('subscription-copy').disabled = true; $('subscription-qr').disabled = true;
   $('subscription-dialog').showModal();
+}
+function renderSubscription() {
+  const result = currentSubscription?.result;
+  if (!result) return;
+  const extra = $('subscription-route').value === 'cloudfront' ? '&route=cloudfront' : '';
+  $('subscription-url').value = extra ? result.cloudfront_url : result.url;
+  const formats = $('subscription-formats'); formats.replaceChildren();
+  Object.entries(result.formats).forEach(([format, url]) => { const link = element('a', 'btn small', format); link.href = url + extra; link.target = '_blank'; link.rel = 'noreferrer'; formats.append(link); });
 }
 function bindForm(id, handler) {
   $(id).addEventListener('submit', event => { event.preventDefault(); busy($(id).querySelector('[type="submit"]'), () => handler(new FormData($(id)))); });
@@ -220,13 +239,10 @@ $('subscription-rotate').addEventListener('click', () => busy($('subscription-ro
   if (!await confirmAction('Create a replacement subscription URL? The old URL will stop updating. Proxy credentials already downloaded stay unchanged.')) return;
   const result = await command('subscription_rotate', {name}, 'Private subscription URL created');
   if (!currentSubscription) return;
-  currentSubscription = {name, enabled: true}; $('subscription-url').value = result.url;
+  currentSubscription = {name, enabled: true, result}; renderSubscription();
   $('subscription-revoke').disabled = false; $('subscription-copy').disabled = false; $('subscription-qr').disabled = false;
   setText('subscription-note', 'Save this URL now. Only its hash is stored; the full URL is shown once.');
-  const formats = $('subscription-formats'); formats.replaceChildren();
-  Object.entries(result.formats).forEach(([format, url]) => {
-    const link = element('a', 'btn small', format); link.href = url; link.target = '_blank'; link.rel = 'noreferrer'; formats.append(link);
-  });
+
 }));
 $('subscription-revoke').addEventListener('click', () => busy($('subscription-revoke'), async () => {
   if (!currentSubscription || !await confirmAction('Revoke this subscription URL? Previously imported proxy credentials are unchanged.')) return;
@@ -362,3 +378,16 @@ setInterval(() => { if (csrf && document.visibilityState === 'visible' && !docum
   try { const session = await api('session'); showApp(session); await refresh(); }
   catch (_) { showLogin(); }
 })();
+
+$('export-route').addEventListener('change', async () => {
+  const previous = currentExport;
+  if (!previous) return;
+  $('export-route').disabled = true;
+  try { await exportProfile(previous.name, $('export-route').value); }
+  catch (err) { $('export-route').value = previous.route || 'direct'; notify(err.message, true); }
+  finally { $('export-route').disabled = false; }
+});
+$('subscription-route').addEventListener('change', renderSubscription);
+bindForm('cloudfront-form', async data => { await command('cloudfront_configure', {enabled: true, endpoint: data.get('endpoint').trim(), price_class: data.get('price_class')}, 'CloudFront settings saved. Deploy the private AWS setup before checking the endpoint.'); });
+$('cf-disable').addEventListener('click', () => busy($('cf-disable'), async () => { if (await confirmAction('Disable CloudFront origin routes? Existing CDN tunnels may disconnect. AWS resources and billing must be managed in your AWS account.')) await command('cloudfront_configure', {enabled: false}, 'CloudFront routes disabled'); }));
+$('cf-check').addEventListener('click', () => busy($('cf-check'), async () => { notify('Checking TLS and four WebSocket routes…'); const result = await operation('cloudfront_check'); setText('cf-result', JSON.stringify(result, null, 2)); $('cf-result').hidden = false; await refresh(); }));
