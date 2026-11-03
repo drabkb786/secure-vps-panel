@@ -18,9 +18,10 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectHome=yes
-ProtectSystem=full
-# shadow-utils needs temporary/lock files beside /etc/passwd and /etc/shadow.
-# Binding only the individual files read-write breaks useradd/usermod.
+# Keep /usr and boot files read-only. This privileged daemon must write /etc:
+# shadow-utils needs sibling lock/temp files, and managed configs use rename.
+# Avoid competing read-only/full and read-write rules on the same /etc mount.
+ProtectSystem=yes
 ReadWritePaths=/etc /var/lib/letsencrypt /var/log/letsencrypt /var/www/letsencrypt
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
