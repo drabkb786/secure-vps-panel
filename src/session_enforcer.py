@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce per-account concurrent Dropbear session limits.
+"""Enforce per-account concurrent SSH session limits.
 
 The previous implementation called the limit an "IP limit" and locked the whole
 account after counting processes. This version is explicit: it limits concurrent

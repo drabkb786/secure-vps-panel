@@ -28,7 +28,7 @@ def initialize(run, binary):
     if KEY_FILE.exists():
         keys(); return
     output = run([str(binary), "x25519"], timeout=10).stdout
-    fields = dict(re.findall(r"^(PrivateKey|Private key|Password|PublicKey|Public key):\s*(\S+)\s*$", output, re.M))
+    fields = dict(re.findall(r"^(PrivateKey|Private key|Password|PublicKey|Public key)(?: \(PublicKey\))?:[ \t]*(\S+)[ \t]*$", output, re.M))
     private = fields.get("PrivateKey", fields.get("Private key", ""))
     public = fields.get("Password", fields.get("PublicKey", fields.get("Public key", "")))
     if not re.fullmatch(r"[A-Za-z0-9_-]{43}", private) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", public):

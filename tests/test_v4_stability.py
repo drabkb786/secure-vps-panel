@@ -29,6 +29,16 @@ def test_short_password_is_scoped_to_managed_ssh():
             common.validate_ssh_password(password)
 
 
+def test_official_x25519_new_and_legacy_labels(tmp_path, monkeypatch):
+    monkeypatch.setattr(reality_transport, "KEY_FILE", tmp_path / "reality.json")
+    for public_label in ("Password (PublicKey)", "Password", "PublicKey", "Public key"):
+        reality_transport.KEY_FILE.unlink(missing_ok=True)
+        run = lambda *a, **kw: SimpleNamespace(stdout="PrivateKey: " + "A" * 43 + "\n" + public_label + ": " + "B" * 43 + "\nHash32: " + "C" * 43 + "\n")
+        reality_transport.initialize(run, "/fixture/xray")
+        assert reality_transport.keys()["public"] == "B" * 43
+        assert reality_transport.KEY_FILE.stat().st_mode & 0o777 == 0o600
+
+
 def test_openssh_ignores_admin_cgroup_and_reused_pid(tmp_path, monkeypatch):
     process = tmp_path / "201"; process.mkdir()
     executable = Path("/usr/bin/true").resolve()

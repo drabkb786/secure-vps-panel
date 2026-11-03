@@ -391,12 +391,12 @@ $('doctor-repair').addEventListener('click', () => busy($('doctor-repair'), asyn
   if (await confirmAction('Restart failed managed services after validating Nginx? This can reconnect clients. DNS provider/firewall settings are not changed.')) showResult('Repair results', await operation('doctor', {repair: true}));
 }));
 $('restart-managed').addEventListener('click', () => busy($('restart-managed'), async () => {
-  if (await confirmAction('Restart the managed gateway, Dropbear and enabled transports? Connected clients may disconnect.')) { showResult('Gateway restart', await operation('restart_managed')); await refresh(); }
+  if (await confirmAction('Restart the managed gateway, SSH and enabled transports? Connected clients may disconnect.')) { showResult('Gateway restart', await operation('restart_managed')); await refresh(); }
 }));
 $('read-logs').addEventListener('click', () => busy($('read-logs'), async () => { const result = await operation('live_logs', {service: $('log-service').value, level: $('log-level').value}); showResult((result.service || $('log-service').value) + ' · journal', result.text || 'No matching journal entries.'); }));
 $('packet-test').addEventListener('click', () => busy($('packet-test'), async () => { notify('Sending 15 ICMP probes…'); const result = await operation('packet_test', {target: $('packet-target').value}); showResult('Packet test · ' + result.target, result.text + '\n\n' + result.note); }));
 $('load-banner').addEventListener('click', () => busy($('load-banner'), async () => { const result = await operation('banner_get'); $('banner-text').value = result.text; $('save-banner').disabled = false; }));
-bindForm('banner-form', async data => { if (await confirmAction('Save this Dropbear banner and restart managed SSH?')) await command('banner_set', {text: data.get('text')}, 'SSH banner saved'); });
+bindForm('banner-form', async data => { if (await confirmAction('Save this managed SSH banner?')) await command('banner_set', {text: data.get('text')}, 'SSH banner saved'); });
 $('toggle-udp').addEventListener('click', () => busy($('toggle-udp'), async () => { if (await confirmAction('Change authenticated UDP forwarding policy and restart Xray?')) await command('xray_configure', {enabled: true, udp_enabled: state.network.udp_enabled === false}, 'UDP policy saved'); }));
 bindForm('slowdns-form', async data => {
   if (await confirmAction('Enable the DNS tunnel on the selected UDP port? An official core, NS delegation and external firewall access are required.')) await command('slowdns_configure', {enabled: true, zone: data.get('zone'), ns_host: data.get('ns_host'), port: Number(data.get('port')), mtu: Number(data.get('mtu'))}, 'DNS tunnel enabled');

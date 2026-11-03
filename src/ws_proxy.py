@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Loopback-only Dropbear bridge: legacy HTTP Upgrade and RFC 6455 binary WS.
+"""Loopback-only SSH bridge: legacy HTTP Upgrade and RFC 6455 binary WS.
 
 This is intentionally not exposed directly to the Internet. Nginx terminates
 HTTP/TLS and forwards only to 127.0.0.1:2082.

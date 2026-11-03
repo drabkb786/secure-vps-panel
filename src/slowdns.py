@@ -1,4 +1,4 @@
-"""Optional official dnstt transport to authenticated local Dropbear, never a resolver."""
+"""Optional official dnstt transport to authenticated managed SSH, never a resolver."""
 from __future__ import annotations
 
 import grp

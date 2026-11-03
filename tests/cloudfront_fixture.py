@@ -23,7 +23,7 @@ def edge_server(port, origin_port, cert, key, secret, provider="cloudfront"):
     verify = "X-Noway-Bunny-Verify" if provider == "bunny" else "X-Noway-Origin-Verify"
     viewer = "X-Noway-Bunny-Viewer-IP" if provider == "bunny" else "X-Noway-Viewer-IP"
     return f'''server {{
-        listen 127.0.0.1:{port} ssl;
+        listen 127.0.0.1:{port} ssl http2;
         server_name d123example.cloudfront.net;
         ssl_certificate {cert}; ssl_certificate_key {key};
         location / {{
