@@ -403,7 +403,7 @@ def preflight():
         for parent in (directory, *directory.parents):
             info = parent.lstat()
             if stat.S_ISLNK(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
-                raise RuntimeError(f'Unsafe maintenance directory: {parent}')
+                raise RuntimeError(f'Unsafe maintenance directory: {parent} (uid={info.st_uid}, mode={stat.S_IMODE(info.st_mode):04o})')
     if (ROOT / 'current').exists() and not (ROOT / 'current').is_symlink():
         raise RuntimeError('Runtime current must be a managed symlink')
 

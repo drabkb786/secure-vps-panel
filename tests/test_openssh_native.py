@@ -86,7 +86,7 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
             config = root / "nginx.conf"
             config.write_text(f"user root root;\npid {root}/nginx.pid;\nerror_log {root}/nginx.log;\nevents {{}}\nhttp {{access_log off;\n" +
                               "\n".join(f"{part}_temp_path {root}/{part};" for part in ("client_body", "proxy", "fastcgi", "scgi", "uwsgi")) + site + "\n}")
-            nginx = subprocess.Popen(["/usr/sbin/nginx", "-p", directory, "-c", str(config), "-g", "daemon off;"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            nginx = subprocess.Popen([os.environ.get("NGINX_TEST_BINARY", "/usr/sbin/nginx"), "-p", directory, "-c", str(config), "-g", "daemon off;"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_port(tls_port, nginx)
             monkeypatch.setenv("SSL_CERT_FILE", str(cert))
             # The installed web worker must trust only Nginx's private marker,
