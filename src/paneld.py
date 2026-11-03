@@ -447,6 +447,7 @@ server {{
     listen {port}{suffix};
 {ipv6}    server_name {domain};
     server_tokens off;
+    proxy_headers_hash_bucket_size 128;
     if ($noway_cf_forbidden) {{ return 403; }}
     client_header_timeout 10s;
     client_body_timeout 10s;

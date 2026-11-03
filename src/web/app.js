@@ -73,7 +73,7 @@ const size = (value, unit = 'GB') => {
 const quotaLabel = (row) => row.quota_gb == null ? 'Unlimited' : `${row.quota_gb} ${row.quota_unit || 'GiB'}`;
 const profileStatus = (row) => row.enabled === false ? 'Locked' : row.meter_unavailable || row.ip_monitoring_failed ? 'Monitor unavailable' : row.quota_exhausted ? 'Quota reached' : row.ip_blocked_until && Date.parse(row.ip_blocked_until) > Date.now() ? 'IP limit · cooldown' : row.active ? 'Active' : 'Expired';
 function byteCell(row, field) {
-  const node = element('td', 'mono', size(row[field] || 0, row.quota_unit || 'GiB'));
+  const node = element('td', 'mono', size(row[field] || 0, row.quota_unit || 'GiB') + (field === 'used_bytes' ? ` / ${quotaLabel(row)}` : ''));
   node.title = `${row.exact_bytes?.[field] ?? row[field] ?? 0} bytes`;
   node.append(element('div', 'small muted', node.title));
   return node;
@@ -133,6 +133,7 @@ function render() {
     row.append(element('span', 'protocol-symbol', ['V', 'M', 'T', 'X'][i] || 'X'), detail, pill(s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'Ready' : 'Offline', s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'good' : '')); protocols.append(row);
   }
   profileRows('overview-profiles', s.accounts.slice(0, 4), false); renderProfiles(); renderTraffic();
+  setText('ssh-note', 'SSH byte metering is unavailable. Finite GB quotas are rejected. IP/session checks target 5 seconds plus processing time. Unknown sources cannot use an IP-limited account.' + (s.ssh_attribution?.journal_available === false ? ' Authentication journal unavailable: older root Dropbear sessions may be unattributable.' : '') + (s.ssh_attribution?.unattributed_root_processes ? ` ${s.ssh_attribution.unattributed_root_processes} root process(es) unattributed; some may still be authenticating.` : ''));
   const users = $('ssh-users'); users.replaceChildren();
   if (!s.users.length) emptyRow(users, 5, 'No SSH accounts yet. Create an account to grant access.');
   s.users.forEach(user => {
@@ -330,7 +331,7 @@ function renderTraffic() {
   setText('traffic-sampled', state.traffic?.sampled_at ? `Sampled ${new Date(state.traffic.sampled_at).toLocaleString()}` : 'No successful core sample yet');
   const body = $('traffic-profiles'); body.replaceChildren();
   if (!rows.length) emptyRow(body, 5, 'Create an Xray profile to measure its usage.');
-  rows.forEach(row => { const tr = element('tr'); tr.append(element('td', 'mono', row.name), byteCell(row, 'upload_bytes'), byteCell(row, 'download_bytes'), element('td', 'mono', `${size(row.used_bytes || 0, row.quota_unit || 'GiB')} / ${quotaLabel(row)}`), element('td', '', profileStatus(row))); body.append(tr); });
+  rows.forEach(row => { const tr = element('tr'); tr.append(element('td', 'mono', row.name), byteCell(row, 'upload_bytes'), byteCell(row, 'download_bytes'), Object.assign(byteCell(row, 'used_bytes'), {title: `${row.exact_bytes?.used_bytes ?? row.used_bytes ?? 0} bytes / ${quotaLabel(row)}`}), element('td', '', profileStatus(row))); body.append(tr); });
 }
 function showResult(title, result) {
   setText('result-title', title); setText('operation-result', typeof result === 'string' ? result : JSON.stringify(result, null, 2)); $('result-dialog').showModal();
@@ -360,7 +361,7 @@ $('sample-traffic').addEventListener('click', () => busy($('sample-traffic'), as
   const sample = await operation('traffic_sample'); await refresh();
   const live = await operation('live_connections');
   setText('traffic-note', sample.available ? (sample.note || 'Core sample updated. SSH usage is excluded.') : sample.reason);
-  const auth = live.xray?.connections || [], peers = live.gateway_peers || [];
+  const auth = [...new Map((live.xray?.connections || []).map(row => [`${row.name || row.email}:${row.ip}`, row])).values()], peers = live.gateway_peers || [];
   setText('online-total', live.xray?.available ? String(new Set(auth.map(row => row.ip)).size) : 'Unavailable');
   for (const [id, rows, authenticated] of [['authenticated-ips', auth, true], ['gateway-ips', peers, false]]) {
     const box = $(id); box.replaceChildren();
