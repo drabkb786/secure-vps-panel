@@ -50,8 +50,13 @@ install -m 0755 "$1" /usr/local/lib/abdulbasit/dnstt-server
 install -m 0644 systemd/abdulbasit-dnstt.service "$dns_unit"
 systemctl daemon-reload
 if ! timeout 40s env PYTHONPATH=/usr/local/lib/abdulbasit /usr/bin/python3 - <<'PY'
+import socket
 from panel_client import request
-result = request('slowdns_configure', enabled=True, zone='tunnel.example.com', ns_host='ns1.example.com', port=53)
+# Leave the runner's own DNS resolver untouched.
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+    probe.bind(('0.0.0.0', 0))
+    port = probe.getsockname()[1]
+result = request('slowdns_configure', enabled=True, zone='tunnel.example.com', ns_host='ns1.example.com', port=port)
 assert result['enabled'] and len(result['public_key']) == 64, result
 assert request('slowdns_status')['enabled']
 print('Production SlowDNS systemd unit: enable, UDP listener and saved config passed')
