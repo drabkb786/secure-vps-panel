@@ -113,7 +113,11 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
             log = (root / "ssh-client.log").open("w+")
             env = dict(os.environ, SSH_ASKPASS=str(askpass), SSH_ASKPASS_REQUIRE="force", DISPLAY=":0")
             ssh_client = subprocess.Popen(["ssh", "-N", "-D", f"127.0.0.1:{socks_port}", "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + str(known), "-o", "ExitOnForwardFailure=yes", "-o", "ProxyCommand=" + proxy_command, name + "@vpn.example.com"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log, env=env)
-            wait_port(socks_port, ssh_client)
+            try:
+                wait_port(socks_port, ssh_client)
+            except AssertionError as exc:
+                log.flush()
+                pytest.fail(f"{exc}\nOpenSSH/adapter output:\n" + (root / "ssh-client.log").read_text())
             import struct
             from test_xray_core import read_exact
             with socket.create_connection(("127.0.0.1", socks_port), timeout=10) as peer:

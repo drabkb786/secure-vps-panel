@@ -108,7 +108,9 @@ jobs:
           /opt/noway/runtime/current/bin/python3 -m venv "$RUNNER_TEMP/runtime-qa"
           "$RUNNER_TEMP/runtime-qa/bin/python" -m pip install pytest 'wsproto==1.2.0' 'websockets==16.0' 'paramiko==3.5.1' zxing-cpp pillow numpy
       - name: Full unit suite on upgraded Python and OpenSSL
-        run: '"$RUNNER_TEMP/runtime-qa/bin/python" -m pytest -q'
+        # These fixtures chown private config once panel service groups exist.
+        # Exercise them as root, matching the installed privileged daemon.
+        run: 'sudo "$RUNNER_TEMP/runtime-qa/bin/python" -m pytest -q'
       - name: Actual new Nginx, Xray and OpenSSH data transfer
         run: |
           sudo env GITHUB_ACTIONS=true OPENSSH_NATIVE_SYSTEMD=1 NGINX_TEST_BINARY=/opt/noway/runtime/current/bin/nginx XRAY_TEST_BINARY=/usr/local/lib/abdulbasit/xray "$RUNNER_TEMP/runtime-qa/bin/python" -m pytest -q tests/test_nginx.py tests/test_xray_core.py tests/test_openssh_native.py
