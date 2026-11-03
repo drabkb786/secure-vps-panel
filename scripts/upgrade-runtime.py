@@ -7,6 +7,7 @@ finish and pass compatibility checks before touching the current runtime.
 from __future__ import annotations
 
 import argparse
+import configparser
 import fcntl
 import hashlib
 import json
@@ -126,7 +127,8 @@ def script(path, command, environment=None):
 
 
 def build(manifest, jobs):
-    fingerprint = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()[:12]
+    recipe = Path(__file__).read_bytes()
+    fingerprint = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode() + recipe).hexdigest()[:12]
     existing = ROOT / 'releases' / fingerprint
     if (existing / 'READY').is_file():
         log('Verified runtime build already exists; checking versions again')
@@ -239,8 +241,23 @@ def verify_versions(release, manifest):
         raise RuntimeError('Nginx and Python must actually link to the selected OpenSSL LTS')
 
 
+def check_renewal_plugins(directory=Path('/etc/letsencrypt/renewal')):
+    # This installation intentionally contains Certbot's built-in authenticators.
+    # Refuse to strand pre-existing DNS/Nginx-plugin lineages during an upgrade.
+    for path in directory.glob('*.conf'):
+        config = configparser.ConfigParser(interpolation=None, strict=False)
+        config.read(path)
+        for field in ('authenticator', 'installer'):
+            plugin = config.get('renewalparams', field, fallback='').strip()
+            if plugin and plugin not in ('None', 'manual', 'standalone', 'webroot'):
+                raise RuntimeError(f'Existing certificate needs the {plugin} Certbot plugin; install and validate that plugin in the private venv before activation')
+
+
 def config_checks(release):
     log('Validating existing Nginx config, Fail2ban jails and panel modules before activation')
+    check_renewal_plugins()
+    if active('certbot.service'):
+        raise RuntimeError('A certificate renewal is running; retry after certbot.service finishes')
     run([release / 'bin/nginx', '-t'])
     run([release / 'bin/fail2ban-client', '-t'], timeout=30)
     run([release / 'bin/certbot', 'plugins', '--text'], timeout=30)

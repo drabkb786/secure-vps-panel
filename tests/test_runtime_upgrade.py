@@ -34,6 +34,16 @@ def test_corrupt_cached_source_is_rejected_without_running_build(tmp_path, monke
     runtime.verify_archive(path, hashlib.sha256(path.read_bytes()).hexdigest())
 
 
+@pytest.mark.parametrize('plugin', ['webroot', 'dns-cloudflare', 'nginx'])
+def test_existing_certificates_cannot_lose_required_renewal_plugin(tmp_path, plugin):
+    (tmp_path / 'example.conf').write_text('[renewalparams]\nauthenticator = ' + plugin + '\n')
+    if plugin == 'webroot':
+        runtime.check_renewal_plugins(tmp_path)
+    else:
+        with pytest.raises(RuntimeError, match='Existing certificate needs'):
+            runtime.check_renewal_plugins(tmp_path)
+
+
 @pytest.mark.parametrize('kind', ['path', 'symlink'])
 def test_source_extraction_cannot_escape_directory(tmp_path, kind):
     path = tmp_path / 'source.tar.gz'

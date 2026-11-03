@@ -97,6 +97,9 @@ jobs:
           sha256sum /usr/bin/python3 /usr/bin/openssl /usr/sbin/sshd /usr/sbin/nginx /usr/bin/certbot /usr/bin/fail2ban-server > "$RUNNER_TEMP/os-binaries.sha256"
       - name: Build and activate pinned private runtime
         run: |
+          # Hosted runners make /opt writable to their runner user. The runtime
+          # deliberately refuses writable interpreter ancestors on a real VPS.
+          sudo chmod 0755 /opt
           sudo install -d -o root -g root -m 0755 /opt/noway /opt/noway/runtime
           sudo stat -c '%U:%G %a %n' /opt /opt/noway /opt/noway/runtime
           sudo /usr/bin/python3 scripts/upgrade-runtime.py --apply --jobs 2

@@ -62,6 +62,8 @@ Failed work and build logs are retained under `/var/lib/noway-runtime/`. The
 current symlink changes only after version/linkage checks, panel imports, Nginx
 config validation and Fail2ban jail validation. Incompatible third-party Nginx
 dynamic modules block activation; they are never silently removed.
+Existing certificate lineages that require an additional DNS/Nginx Certbot
+plugin also block activation until that plugin is installed in the private venv.
 
 The upstream Fail2ban engine uses the OS Python so `python3-systemd` can read the
 journal with its matching native ABI. Existing Fail2ban filters, jail overrides,
