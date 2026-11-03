@@ -29,6 +29,9 @@ import xray_manager
 import operations
 import slowdns
 import cdn_manager
+import gateway_identity
+import ssh_identity
+from common import validate_max_ips
 
 from common import (
     ADMIN_IDS_FILE,
@@ -148,6 +151,9 @@ def create_user(params: dict[str, Any]) -> dict[str, Any]:
     days = validate_days(params.get("days"))
     max_sessions = validate_sessions(params.get("max_sessions"))
     quota_gb = validate_quota(params.get("quota_gb", "Unlimited"))
+    max_ips = validate_max_ips(params.get("max_ips", 0))
+    if quota_gb is not None:
+        raise ValidationError("SSH byte quotas are not supported by this Dropbear accounting backend. Use Unlimited, or a metered Xray profile; no unenforced quota will be saved.")
 
     if user_file(username).exists():
         raise ValidationError("This managed username already exists")
@@ -172,18 +178,26 @@ def create_user(params: dict[str, Any]) -> dict[str, Any]:
         "username": username,
         "expiry": expiry,
         "max_sessions": max_sessions,
+        "max_ips": max_ips,
         "quota_gb": quota_gb,
         "quota_enforced": False,
         "enabled": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     atomic_write_json(user_file(username), metadata, 0o600)
-    return {"user": metadata, "warning": "GB quota is stored as metadata only; the old inaccurate /proc I/O quota enforcement was removed."}
+    return {"user": metadata, "warning": "SSH byte usage is unavailable. IP limits use unique verified sources; unknown/SlowDNS sources cannot use an IP-limited account. Enforcement checks every five seconds."}
 
 
 def delete_user(params: dict[str, Any]) -> dict[str, Any]:
     username = validate_username(str(params.get("username", "")))
     managed_user(username)
+    import dropbear_sessions
+    try:
+        uid = pwd.getpwnam(username).pw_uid
+        current = dropbear_sessions.snapshot(USERS_DIR)["sessions"].get(uid, [])
+        dropbear_sessions.terminate([p.pid for p in current], uid, USERS_DIR)
+    except KeyError:
+        pass
     subprocess.run([binary("pkill"), "-TERM", "-u", username], capture_output=True, text=True, check=False)
     result = subprocess.run([binary("userdel"), "--force", username], capture_output=True, text=True, check=False)
     if result.returncode not in (0, 6):
@@ -213,9 +227,11 @@ def set_sessions(params: dict[str, Any]) -> dict[str, Any]:
     limit = validate_sessions(params.get("max_sessions"))
     data = managed_user(username)
     data["max_sessions"] = limit
+    if "max_ips" in params:
+        data["max_ips"] = validate_max_ips(params["max_ips"])
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     atomic_write_json(user_file(username), data, 0o600)
-    return {"username": username, "max_sessions": limit}
+    return {"username": username, "max_sessions": limit, "max_ips": data.get("max_ips", 0)}
 
 
 def set_user_lock(params):
@@ -243,6 +259,8 @@ def set_user_lock(params):
 def set_quota(params: dict[str, Any]) -> dict[str, Any]:
     username = validate_username(str(params.get("username", "")))
     quota = validate_quota(params.get("quota_gb", "Unlimited"))
+    if quota is not None:
+        raise ValidationError("SSH byte quotas are unavailable; refusing to save a limit that cannot be enforced. Use a metered Xray profile.")
     data = managed_user(username)
     data["quota_gb"] = quota
     data["quota_enforced"] = False
@@ -266,6 +284,7 @@ def list_users(_: dict[str, Any]) -> dict[str, Any]:
             exists = False
             uid = None
         item = dict(data)
+        item.update(quota_enforced=False, usage_available=False)
         item.update({"exists": exists, "uid": uid, "shadow_expiry": get_shadow_expiry(username) if exists else None})
         users.append(item)
     return {"users": users}
@@ -278,8 +297,17 @@ def session_processes() -> dict[str, list[int]]:
 
 
 def list_sessions(_: dict[str, Any]) -> dict[str, Any]:
-    sessions = session_processes()
-    return {"sessions": [{"username": name, "count": len(pids), "pids": pids} for name, pids in sorted(sessions.items()) if pids]}
+    import dropbear_sessions
+    observed = dropbear_sessions.snapshot(USERS_DIR)
+    sessions = {observed["users"][uid]: [p.pid for p in rows] for uid, rows in observed["sessions"].items()}
+    ips = ssh_identity.session_ips(sessions)
+    return {"sessions": [{"username": name, "count": len(pids), "pids": pids,
+                          "ips": sorted({ips[pid] for pid in pids if ips.get(pid)}),
+                          "unknown_ip_sessions": sum(not ips.get(pid) for pid in pids)}
+                         for name, pids in sorted(sessions.items()) if pids],
+            "ssh_attribution": {"journal_available": observed["journal_ok"],
+                                "unattributed_root_processes": observed["unattributed_root_processes"],
+                                "note": "Unattributed root processes can include pre-authentication sessions. Older Dropbear builds depend on trusted journal records."}}
 
 
 def ipv6_enabled() -> bool:
@@ -398,6 +426,9 @@ def nginx_text(domain: str, tls: bool) -> str:
         limit_conn abdulbasit_per_ip 40;
     }
 """
+        if secure:
+            for protocol, (port, _) in {**xray_manager.PROTOCOLS, "xhttp": (10004, "/xhttp/")}.items():
+                blocks = blocks.replace(f"proxy_pass http://127.0.0.1:{port};", f"proxy_pass http://127.0.0.1:{port}{gateway_identity.backend_path(protocol)};")
         return blocks + cdn_manager.nginx_locations(cdn, secure)
 
     def server(secure: bool) -> str:
@@ -434,7 +465,7 @@ map $http_upgrade $abdulbasit_root_upstream {
     ~*websocket 127.0.0.1:2082;
 }
 limit_conn_zone $binary_remote_addr zone=abdulbasit_per_ip:10m;
-""" + cdn_manager.nginx_maps(cdn) + server(False) + (server(True) if tls else "")
+""" + cdn_manager.nginx_maps(cdn) + (server(False) + (server(True) if tls else "")).replace("X-Noway-Gateway 1;", gateway_identity.header_name() + " 1;")
 
 
 def install_nginx_config(domain: str) -> bool:
@@ -583,7 +614,7 @@ def dashboard_status(params: dict[str, Any]) -> dict[str, Any]:
         key, value = line.split(":", 1)
         mem[key] = int(value.strip().split()[0]) * 1024
     return {**service_status(params), **XRAY.status(params), **list_users(params), **list_sessions(params),
-            "slowdns": SLOWDNS.status({}), "cloudfront": CLOUDFRONT.status(), "traffic": {"sampled_at": xray_manager.traffic.state().get("sampled_at"), "scope": "Xray payload bytes; SSH GB remains metadata"},
+            "slowdns": SLOWDNS.status({}), "cloudfront": CLOUDFRONT.status(), "traffic": {"sampled_at": xray_manager.traffic.state().get("sampled_at"), "scope": "Xray payload bytes; SSH byte metering unavailable", "sample_interval_seconds": 5},
             "system": {"hostname": socket.gethostname(), "load": list(os.getloadavg()),
                        "cpu_count": os.cpu_count(), "uptime_seconds": float(Path("/proc/uptime").read_text().split()[0]),
                        "disk_total": stat.total, "disk_used": stat.used,

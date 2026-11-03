@@ -15,6 +15,7 @@ from datetime import date
 
 from common import USERS_DIR, read_json
 import dropbear_sessions
+import ssh_identity
 
 LOG = logging.getLogger("abdulbasit-session-enforcer")
 INTERVAL = 5
@@ -34,9 +35,13 @@ def terminate(pids: list[int], expected_uid: int) -> None:
 
 def enforce_once() -> None:
     by_uid = dropbear_pids_by_uid()
+    # One kernel socket snapshot per cycle, separate from authenticated identity.
+    ips = ssh_identity.session_ips(by_uid)
     today = date.today()
     for path in sorted(USERS_DIR.glob("*.json")):
         data = read_json(path, {})
+        if not isinstance(data, dict) or data.get("username", path.stem) != path.stem:
+            continue
         username = str(data.get("username", path.stem))
         try:
             uid = pwd.getpwnam(username).pw_uid
@@ -50,7 +55,7 @@ def enforce_once() -> None:
         try:
             expired = date.fromisoformat(expiry_text) <= today
         except ValueError:
-            expired = False
+            expired = True
         if expired or data.get("enabled", True) is False:
             LOG.warning("Terminating %d expired sessions for %s", len(pids), username)
             terminate(pids, uid)
@@ -61,8 +66,22 @@ def enforce_once() -> None:
         except (TypeError, ValueError):
             limit = 1
         limit = min(max(limit, 1), 20)
-        if len(pids) > limit:
-            excess = pids[limit:]
+        excess = pids[limit:]
+        try:
+            from common import validate_max_ips
+            ip_limit = validate_max_ips(data.get("max_ips", 0))
+        except ValueError:
+            ip_limit = 1
+        admitted = set()
+        for pid in pids[:limit]:
+            if not ip_limit:
+                break
+            address = ips.get(pid)
+            if address is None or (address not in admitted and len(admitted) >= ip_limit):
+                excess.append(pid)
+            else:
+                admitted.add(address)
+        if excess:
             LOG.warning("Terminating %d excess sessions for %s (limit=%d)", len(excess), username, limit)
             terminate(excess, uid)
 

@@ -17,6 +17,8 @@ import socketserver
 import threading
 import time
 from typing import Final
+import gateway_identity
+import ssh_identity
 
 from wsproto import ConnectionType, WSConnection
 from wsproto.events import AcceptConnection, BytesMessage, CloseConnection, Ping, Request, TextMessage
@@ -117,9 +119,10 @@ def parse_request(raw_header: bytes) -> tuple[str, dict[str, str]]:
 
 
 def client_ip(peer_ip: str, headers: dict[str, str]) -> str:
-    # Advisory logging only: local SSH forwarding can also reach this listener.
-    # Never use this forwarded value for authentication or account/IP limits.
-    candidate = headers.get("x-forwarded-for", headers.get("x-real-ip", peer_ip)).split(",", 1)[0].strip()
+    # A public constant header is forgeable through a local SSH forward.
+    if headers.get(gateway_identity.header_name().lower()) != "1":
+        return peer_ip
+    candidate = headers.get("x-forwarded-for", peer_ip)
     try:
         return str(ipaddress.ip_address(candidate))
     except ValueError:
@@ -289,6 +292,7 @@ def relay_websocket(client: socket.socket, target: socket.socket, ws: WSConnecti
 class Handler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         target: socket.socket | None = None
+        peer_record = None
         upgraded = False
         response_status = b"400 Bad Request"
         try:
@@ -306,6 +310,7 @@ class Handler(socketserver.BaseRequestHandler):
             real_ip = client_ip(self.client_address[0], headers)
             response_status = b"502 Bad Gateway"
             target = socket.create_connection((TARGET_HOST, TARGET_PORT), timeout=10)
+            peer_record = ssh_identity.register(target, real_ip, headers.get(gateway_identity.header_name().lower()) == "1")
             for tcp in (self.request, target):
                 tcp.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, int(TCP_NODELAY))
             response = ws.send(AcceptConnection(subprotocol=subprotocol)) if ws else switching_protocols(headers)
@@ -316,7 +321,7 @@ class Handler(socketserver.BaseRequestHandler):
                 relay_websocket(self.request, target, ws, remainder)
             else:
                 relay(self.request, target, remainder)
-        except (ConnectionError, OSError, ValueError, LocalProtocolError, RemoteProtocolError) as exc:
+        except (ConnectionError, OSError, ValueError, RuntimeError, LocalProtocolError, RemoteProtocolError) as exc:
             LOG.warning("Rejected/closed tunnel from %s: %s", self.client_address[0], exc)
             try:
                 if not upgraded:
@@ -324,6 +329,11 @@ class Handler(socketserver.BaseRequestHandler):
             except OSError:
                 pass
         finally:
+            if peer_record is not None:
+                try:
+                    peer_record.unlink(missing_ok=True)
+                except OSError:
+                    LOG.warning("Could not remove closed gateway peer record")
             if target is not None:
                 try:
                     target.close()

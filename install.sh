@@ -88,6 +88,7 @@ if ! id abdulbasit-web >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit abdulbasit-web
 fi
 getent group abdulbasit-xray >/dev/null || groupadd --system abdulbasit-xray
+getent group abdulbasit-gateway >/dev/null || groupadd --system abdulbasit-gateway
 getent group abdulbasit-dnstt >/dev/null || groupadd --system abdulbasit-dnstt
 if ! id abdulbasit-dnstt >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid abdulbasit-dnstt abdulbasit-dnstt
@@ -185,9 +186,10 @@ for path in USERS_DIR.glob('*.json'):
     if account.pw_shell == '/bin/false' and account.pw_uid != 0:
         subprocess.run(['/usr/sbin/usermod', '--shell', '/usr/local/lib/abdulbasit/tunnel-shell', name], check=True)
 PY
-for module in web_auth web_server xray_manager diagnostics client_formats cdn_manager profile_backup operations traffic slowdns maintenance terminal_ui; do
+for module in web_auth web_server xray_manager diagnostics client_formats cdn_manager profile_backup operations traffic slowdns maintenance terminal_ui gateway_identity ssh_identity; do
   install -m 0755 -o root -g root "$PROJECT_DIR/src/$module.py" "$INSTALL_DIR/$module.py"
 done
+python3 "$INSTALL_DIR/gateway_identity.py"
 install -m 0755 -o root -g root "$PROJECT_DIR/scripts/install-dnstt.sh" "$INSTALL_DIR/install-dnstt.sh"
 install -m 0644 -o root -g root "$PROJECT_DIR/src/web/"* "$INSTALL_DIR/web/"
 if [[ $WITH_XRAY -eq 1 ]]; then
@@ -304,6 +306,7 @@ for attempt in {1..30}; do
 done
 [[ -S /run/abdulbasit/paneld.sock ]] || die "Panel daemon socket not ready; inspect journalctl -u abdulbasit-paneld"
 systemctl enable --now abdulbasit-xray-expiry.timer
+systemctl restart abdulbasit-xray-expiry.timer
 if [[ -f /etc/abdulbasit-dnstt/config.json ]]; then
   if "$INSTALL_DIR/panelctl.py" slowdns-status | python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin).get("enabled") else 1)'; then
     systemctl enable abdulbasit-dnstt
@@ -312,8 +315,7 @@ if [[ -f /etc/abdulbasit-dnstt/config.json ]]; then
   fi
 fi
 if [[ -f /etc/abdulbasit-xray/enabled ]]; then
-  "$INSTALL_DIR/panelctl.py" xray-sync
-  systemctl restart abdulbasit-xray
+  "$INSTALL_DIR/panelctl.py" xray-enable
 fi
 
 log "Installing Certbot deploy hook (reloads Nginx only after a successful renewal)"

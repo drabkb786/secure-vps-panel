@@ -14,6 +14,7 @@ import secrets
 import socket
 import ssl
 import time
+import gateway_identity
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -82,6 +83,11 @@ map "$noway_cf_header_present:$noway_cf_path" $noway_cf_forbidden {{
     default 0;
     "1:0" 1;
 }}
+map $http_x_noway_viewer_ip $noway_cf_viewer_ip {{
+    default "";
+    ~^[0-9.]+$ $http_x_noway_viewer_ip;
+    ~^[0-9A-Fa-f:]+$ $http_x_noway_viewer_ip;
+}}
 '''
 
 
@@ -93,6 +99,7 @@ def nginx_locations(cfg: dict, secure: bool) -> str:
             continue
         text += f'''    location = {path} {{
         if ($noway_cf_verified = 0) {{ return 403; }}
+        if ($noway_cf_viewer_ip = "") {{ return 503; }}
         access_log off;
         error_log /dev/null crit;
 '''
@@ -100,15 +107,15 @@ def nginx_locations(cfg: dict, secure: bool) -> str:
             text += '        default_type text/plain;\n        add_header X-Noway-CloudFront-Health 1 always;\n        return 200 "noway-cloudfront-origin-v1\\n";\n    }\n'
             continue
         port = {"vless": 10001, "vmess": 10002, "trojan": 10003, "ssh": 2082}[name]
-        target = "/ssh/ws" if name == "ssh" else "/" + name
+        target = "/ssh/ws" if name == "ssh" else gateway_identity.backend_path(name)
         text += f'''        proxy_pass http://127.0.0.1:{port}{target};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $abdulbasit_connection_upgrade;
         proxy_set_header X-Noway-Origin-Verify "";
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $noway_cf_viewer_ip;
+        proxy_set_header X-Real-IP $noway_cf_viewer_ip;
         proxy_set_header X-Noway-Gateway 1;
         proxy_set_header Cookie "";
         proxy_set_header Authorization "";
@@ -125,7 +132,7 @@ def template() -> dict:
     """Original CloudFormation from AWS documented resource schemas, not vendor code."""
     ref = lambda name: {"Ref": name}
     paths = json.dumps(list(PATHS.values()), separators=(",", ":"))
-    function = "function handler(event) { var r = event.request; var paths = " + paths + "; if ((r.method !== 'GET' && r.method !== 'HEAD') || paths.indexOf(r.uri) === -1) { return {statusCode: 403, statusDescription: 'Forbidden'}; } return r; }"
+    function = "function handler(event) { var r = event.request; var paths = " + paths + "; if ((r.method !== 'GET' && r.method !== 'HEAD') || paths.indexOf(r.uri) === -1) { return {statusCode: 403, statusDescription: 'Forbidden'}; } r.headers['x-noway-viewer-ip'] = {value: event.viewer.ip}; return r; }"
     return {
         "AWSTemplateFormatVersion": "2010-09-09",
         "Description": "NOWAY CloudFront WebSocket gateway; AWS usage charges apply. No admin or subscription delivery.",
@@ -137,7 +144,7 @@ def template() -> dict:
         "Resources": {
             "OriginPolicy": {"Type": "AWS::CloudFront::OriginRequestPolicy", "Properties": {"OriginRequestPolicyConfig": {
                 "Name": {"Fn::Sub": "${AWS::StackName}-ws"},
-                "HeadersConfig": {"HeaderBehavior": "whitelist", "Headers": ["Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Protocol", "Sec-WebSocket-Accept", "Sec-WebSocket-Extensions"]},
+                "HeadersConfig": {"HeaderBehavior": "whitelist", "Headers": ["Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Protocol", "Sec-WebSocket-Accept", "Sec-WebSocket-Extensions", "X-Noway-Viewer-IP"]},
                 "CookiesConfig": {"CookieBehavior": "none"}, "QueryStringsConfig": {"QueryStringBehavior": "all"},
             }}},
             "RouteGuard": {"Type": "AWS::CloudFront::Function", "Properties": {

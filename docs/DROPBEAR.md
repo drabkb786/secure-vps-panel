@@ -57,8 +57,10 @@ The enforcer retains older connections and removes excess newer connections on
 its five-second cycle. It uses pidfds to pin the verified process before TERM
 and KILL, so PID reuse cannot redirect a signal. It does not fall back to an
 unverified numeric PID when the kernel refuses pidfds. Account lock/expiry also
-use this attribution. This remains concurrent SSH connection limiting, not
-per-device/IP limits or exact SSH GB accounting.
+use this attribution. v3.5 additionally limits unique verified source IPs;
+multiple connections on one IP count once. Unknown sources (including SlowDNS)
+are disconnected when an IP cap is set. SSH GB metering remains unavailable.
+See [accuracy details](ACCURACY.md).
 
 Journal limits are explicit: startup queries at most 10,000 matching auth records
 from the current boot; verified live identities are cached in memory. Missing or

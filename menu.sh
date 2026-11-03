@@ -21,7 +21,7 @@ user_menu() {
 2) Delete managed user
 3) Renew user
 4) Set concurrent session limit
-5) Set quota metadata (not enforced)
+5) Clear legacy SSH quota note (GB metering unavailable)
 6) List users
 7) List active sessions
 8) Back
@@ -32,8 +32,8 @@ EOF
         read -r -p "Username: " username
         read -r -p "Validity days: " days
         read -r -p "Concurrent sessions [1-20]: " sessions
-        read -r -p "Quota metadata in GB or Unlimited: " quota
-        run_ctl create-user "$username" --days "$days" --sessions "$sessions" --quota "$quota"; pause ;;
+        read -r -p "Unique IP cap [0=Unlimited, 1-20]: " ips
+        run_ctl create-user "$username" --days "$days" --sessions "$sessions" --quota Unlimited --ips "$ips"; pause ;;
       2)
         read -r -p "Managed username to delete: " username
         read -r -p "Type DELETE to confirm: " confirm
@@ -44,10 +44,11 @@ EOF
         run_ctl renew-user "$username" --days "$days"; pause ;;
       4)
         read -r -p "Username: " username; read -r -p "New concurrent session limit: " sessions
-        run_ctl set-sessions "$username" --sessions "$sessions"; pause ;;
+        read -r -p "Unique IP cap [0=Unlimited, 1-20]: " ips
+        run_ctl set-sessions "$username" --sessions "$sessions" --ips "$ips"; pause ;;
       5)
-        read -r -p "Username: " username; read -r -p "Quota metadata (GB or Unlimited): " quota
-        run_ctl set-quota "$username" --quota "$quota"; pause ;;
+        read -r -p "Username: " username
+        run_ctl set-quota "$username" --quota Unlimited; pause ;;
       6) run_ctl list-users; pause ;;
       7) run_ctl list-sessions; pause ;;
       8) return ;;

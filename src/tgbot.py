@@ -360,7 +360,7 @@ class Bot:
                 self.send(chat_id, "Enter maximum concurrent sessions (1-20):")
             elif step == "create_sessions":
                 self.set_state(chat_id, "create_quota", username=state["username"], password=state["password"], days=state["days"], max_sessions=value)
-                self.send(chat_id, "Enter quota metadata in GB, or <code>Unlimited</code>. Accurate quota enforcement is disabled.")
+                self.send(chat_id, "Send <code>Unlimited</code>. SSH byte metering is unavailable; finite GB quotas are rejected. Use an Xray profile for GB limits.")
             elif step == "create_quota":
                 result = self.panel(
                     "create_user",
@@ -402,12 +402,12 @@ class Bot:
                 self.send(chat_id, f"✅ Session limit for <code>{html.escape(result['username'])}</code> is now {result['max_sessions']}.", self.users_keyboard())
             elif step == "quota_username":
                 self.set_state(chat_id, "quota_value", username=value)
-                self.send(chat_id, "Enter GB value or <code>Unlimited</code>:")
+                self.send(chat_id, "Send <code>Unlimited</code> to clear the legacy note. Finite SSH GB quotas cannot be enforced and are rejected.")
             elif step == "quota_value":
                 result = self.panel("set_quota", username=state["username"], quota_gb=value)
                 self.set_state(chat_id)
                 shown = "Unlimited" if result["quota_gb"] is None else f"{result['quota_gb']} GB"
-                self.send(chat_id, f"✅ Quota metadata for <code>{html.escape(result['username'])}</code>: {html.escape(shown)}. Enforcement remains disabled.", self.users_keyboard())
+                self.send(chat_id, f"✅ Legacy quota note for <code>{html.escape(result['username'])}</code>: {html.escape(shown)}. Enforcement remains disabled.", self.users_keyboard())
             elif step == "domain" and self.is_super(chat_id):
                 result = self.panel("set_domain", domain=value)
                 self.set_state(chat_id)

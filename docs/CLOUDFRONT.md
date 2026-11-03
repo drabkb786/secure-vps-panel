@@ -1,4 +1,8 @@
-# CloudFront + Dropbear delivery — v3.4
+# CloudFront + Dropbear delivery — v3.5
+
+**Upgrade:** update the AWS stack to the new viewer-IP Function/header policy
+before upgrading the VPS. Missing viewer identity is rejected with HTTP 503.
+See [migration and IP/GB accounting](ACCURACY.md).
 
 CloudFront is an optional **AWS WebSocket delivery route** for the existing VPS.
 It is not Cloudflare Workers, a replacement SSH server, or a universal speed boost.
@@ -128,7 +132,7 @@ and Xray backups. Back up the private CloudFront config separately if needed.
 | 502/504 | Public origin DNS, trusted origin certificate matching its hostname, firewall 443, backend service/listener |
 | Health passes but a tunnel fails | Enable its backend; verify account expiry/quota/credentials; inspect panel diagnostics |
 | Idle disconnect | Client SSH/WS keepalives and reconnect behavior; intermediary timeout still applies |
-| All users appear under an edge IP | Expected: this release records the TCP edge peer and does not trust viewer-supplied XFF as identity |
+| HTTP 503 after upgrade / edge IP shown | Update the distribution Function and origin header policy; v3.5 requires the edge-generated viewer IP and never trusts client-supplied XFF |
 | Lower speed than direct | Compare RTT, loss, CPU, client location, origin region and congestion; retain direct as an option |
 
 ## Verification and performance scope

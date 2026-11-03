@@ -127,7 +127,7 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, m
     if source == "xhttp_link": ports[XHTTP_PATH] = free_port()
     for inbound in server_cfg["inbounds"]:
         stream = inbound["streamSettings"]
-        inbound["port"] = ports[stream.get("wsSettings", stream.get("xhttpSettings"))["path"]]
+        inbound["port"] = ports[XHTTP_PATH if inbound["tag"] == "noway-xhttp" else "/" + inbound["protocol"]]
 
     class HTTPFixture(BaseHTTPRequestHandler):
         def log_message(self, *args): pass
@@ -200,6 +200,13 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, m
                         if not data: break
                         response += data
                     assert b"NOWAY verified transport test" in response, protocol
+                # A complete TCP transfer must match the core's integer payload
+                # counters byte-for-byte, including the HTTP bytes, excluding TLS.
+                email = f"{row['uuid']}-{'xhttp' if protocol == 'vless-xhttp' else protocol}@noway.local"
+                measured = subprocess.run([CORE, "api", "statsquery", "--server=unix://" + str(api_socket), "-pattern=user>>>"], check=True, capture_output=True, text=True, timeout=5)
+                counters = {item["name"]: int(item.get("value", 0)) for item in json.loads(measured.stdout).get("stat", [])}
+                assert counters[f"user>>>{email}>>>traffic>>>uplink"] == len(b"GET / HTTP/1.0\r\nHost: test.local\r\n\r\n")
+                assert counters[f"user>>>{email}>>>traffic>>>downlink"] == len(response)
                 # Exercise a real SOCKS5 UDP association through the same TLS
                 # transport. Only the fixture's loopback UDP port is allowed.
                 with socket.create_connection(("127.0.0.1", port), timeout=10) as control, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as packet:
@@ -213,9 +220,10 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, m
                     answer, _ = packet.recvfrom(65536); assert answer.endswith(payload)
                     measured = subprocess.run([CORE, "api", "statsquery", "--server=unix://" + str(api_socket), "-pattern=user>>>"], check=True, capture_output=True, text=True, timeout=5)
                     values = json.loads(measured.stdout).get("stat", [])
-                    assert any(int(x.get("value", 0)) > 0 and row["name"] in x["name"] for x in values)
+                    assert any(int(x.get("value", 0)) > 0 and row["uuid"] in x["name"] for x in values)
                     online = subprocess.run([CORE, "api", "statsonlineiplist", "--server=unix://" + str(api_socket), "-all"], check=True, capture_output=True, text=True, timeout=5)
                     assert "198.51.100.42" in online.stdout, online.stdout
+                    assert "203.0.113.66" not in online.stdout
             except Exception as exc:
                 log.flush(); server_log.flush(); front_log.flush()
                 logs = "\n".join(f"{p.name}:\n{p.read_text()}" for p in tmp_path.glob("*.log"))
