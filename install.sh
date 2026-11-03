@@ -100,6 +100,9 @@ fi
 install -d -m 0750 -o root -g abdulbasit "$CONFIG_DIR" "$CONFIG_DIR/users"
 install -d -m 0700 -o root -g root "$BACKUP_DIR"
 install -d -m 0755 -o root -g root "$INSTALL_DIR" /var/www/letsencrypt
+# systemd resolves mandatory ReadWritePaths before starting paneld. Certbot may
+# not create its work/log directories until the first certificate request.
+install -d -m 0700 -o root -g root /var/lib/letsencrypt /var/log/letsencrypt
 install -d -m 0750 -o root -g abdulbasit-xray /etc/abdulbasit-xray
 install -d -m 0755 -o root -g root "$INSTALL_DIR/web"
 if [[ -f "$INSTALL_DIR/paneld.py" ]]; then
