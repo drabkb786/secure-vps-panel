@@ -97,6 +97,9 @@ jobs:
       - name: Install panel with supported OS runtime first
         run: |
           sudo bash install.sh --non-interactive --with-xray
+          # No-domain installs leave a preinstalled/inactive Nginx unchanged.
+          # Start it explicitly so acceptance verifies a live service round-trip.
+          sudo systemctl start nginx
           sha256sum /usr/bin/python3 /usr/bin/openssl /usr/sbin/sshd /usr/sbin/nginx /usr/bin/certbot /usr/bin/fail2ban-server > "$RUNNER_TEMP/os-binaries.sha256"
       - name: Build and activate pinned private runtime
         run: |

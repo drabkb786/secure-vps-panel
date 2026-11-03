@@ -48,6 +48,8 @@ def test_actual_versions_preserved_configs_renewal_command_and_reversible_activa
         return result
     before = contents()
     state = json.loads(Path('/var/lib/noway-runtime/last-activation.json').read_text())
+    saved = json.loads((Path('/var/lib/noway-runtime/backups') / state['backup'] / 'state.json').read_text())
+    assert 'nginx' in saved['active'], 'Acceptance requires an active baseline Nginx service'
     run('/usr/bin/python3', ROOT / 'scripts/upgrade-runtime.py', '--rollback', state['backup'])
     assert not Path('/opt/noway/runtime/current').is_symlink()
     assert run('/usr/local/lib/abdulbasit/python', '--version') == run('/usr/bin/python3', '--version')
