@@ -69,6 +69,8 @@ jobs:
           export GOBIN="$RUNNER_TEMP/noway-dnstt"
           go install www.bamsoftware.com/git/dnstt.git/dnstt-server@v1.20260501.0 www.bamsoftware.com/git/dnstt.git/dnstt-client@v1.20260501.0
           DNSTT_TEST_SERVER="$GOBIN/dnstt-server" DNSTT_TEST_CLIENT="$GOBIN/dnstt-client" pytest -q tests/test_slowdns.py
+      - name: Fresh panel daemon startup with production systemd sandbox
+        run: sudo env GITHUB_ACTIONS=true bash scripts/test-paneld-systemd.sh
       - name: Reject common committed secrets and unsafe subprocess shells
         shell: bash
         run: |
