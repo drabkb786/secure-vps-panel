@@ -82,3 +82,40 @@ jobs:
           ! grep -RInE --exclude-dir=.git '[0-9]{6,12}:[A-Za-z0-9_-]{30,80}' .
           ! grep -RInE --include='*.py' 'shell[[:space:]]*=[[:space:]]*True' src
           ! grep -RInE --include='*.sh' 'chmod[[:space:]]+777' .
+
+  managed-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install panel with supported OS runtime first
+        run: |
+          sudo bash install.sh --non-interactive --with-xray
+          sha256sum /usr/bin/python3 /usr/bin/openssl /usr/sbin/sshd /usr/sbin/nginx /usr/bin/certbot /usr/bin/fail2ban-server > "$RUNNER_TEMP/os-binaries.sha256"
+      - name: Build and activate pinned private runtime
+        run: sudo /usr/bin/python3 scripts/upgrade-runtime.py --apply --jobs 2
+      - name: Prepare Python 3.15 test environment outside the production runtime
+        run: |
+          /opt/noway/runtime/current/bin/python3 -m venv "$RUNNER_TEMP/runtime-qa"
+          "$RUNNER_TEMP/runtime-qa/bin/python" -m pip install pytest 'wsproto==1.2.0' 'websockets==16.0' 'paramiko==3.5.1' zxing-cpp pillow numpy
+      - name: Full unit suite on upgraded Python and OpenSSL
+        run: '"$RUNNER_TEMP/runtime-qa/bin/python" -m pytest -q'
+      - name: Actual new Nginx, Xray and OpenSSH data transfer
+        run: |
+          sudo env GITHUB_ACTIONS=true OPENSSH_NATIVE_SYSTEMD=1 NGINX_TEST_BINARY=/opt/noway/runtime/current/bin/nginx XRAY_TEST_BINARY=/usr/local/lib/abdulbasit/xray "$RUNNER_TEMP/runtime-qa/bin/python" -m pytest -q tests/test_nginx.py tests/test_xray_core.py tests/test_openssh_native.py
+      - name: Verify rollback, reactivation, jails, renewal command and OS binaries
+        run: |
+          sudo env GITHUB_ACTIONS=true NOWAY_RUNTIME_NATIVE=1 "$RUNNER_TEMP/runtime-qa/bin/python" -m pytest -q tests/test_runtime_native.py
+          sha256sum --check "$RUNNER_TEMP/os-binaries.sha256"
+      - name: Runtime versions and service health
+        run: |
+          /usr/bin/python3 scripts/upgrade-runtime.py --status
+          sudo abdulbasit-security-check
+      - name: Build failure details
+        if: failure()
+        run: |
+          sudo find /opt/noway/runtime -name build.log -exec tail -n 70 {} \;
+          sudo journalctl -u nginx -u fail2ban -u abdulbasit-paneld -u abdulbasit-ws -u abdulbasit-web -n 65 --no-pager

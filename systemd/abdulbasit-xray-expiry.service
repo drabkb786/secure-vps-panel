@@ -6,7 +6,7 @@ Wants=abdulbasit-paneld.service
 [Service]
 Type=oneshot
 User=root
-ExecStart=/usr/bin/python3 /usr/local/lib/abdulbasit/panelctl.py xray-sync
+ExecStart=/usr/local/lib/abdulbasit/python /usr/local/lib/abdulbasit/panelctl.py xray-sync
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict

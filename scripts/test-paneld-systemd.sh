@@ -24,6 +24,7 @@ getent group abdulbasit >/dev/null || groupadd --system abdulbasit
 install -d -m 0755 /usr/local/lib/abdulbasit /etc/abdulbasit/users /var/www/letsencrypt
 install -d -m 0700 /var/lib/letsencrypt /var/log/letsencrypt
 install -m 0755 src/*.py /usr/local/lib/abdulbasit/
+install -m 0755 scripts/panel-python /usr/local/lib/abdulbasit/python
 install -m 0644 systemd/abdulbasit-paneld.service "$unit"
 systemctl daemon-reload
 systemctl start abdulbasit-paneld.service

@@ -13,6 +13,7 @@ EMAIL=""
 NON_INTERACTIVE=0
 WITH_XRAY=0
 WITH_DNSTT=0
+UPGRADE_RUNTIME=0
 SSH_BACKEND=openssh
 XRAY_VERSION=""
 DEFAULT_SUPER_ADMIN_ID="6408975845"
@@ -26,7 +27,7 @@ trap 'die "Installation failed near line $LINENO. Existing SSH port 22 was not i
 usage() {
   cat <<'EOF'
 Usage: sudo bash install.sh [--domain vpn.example.com] [--email admin@example.com]
-                           [--ssh-backend openssh|dropbear] [--with-xray] [--with-dnstt] [--xray-version vX.Y.Z] [--non-interactive]
+                           [--ssh-backend openssh|dropbear] [--with-xray] [--with-dnstt] [--upgrade-runtime] [--xray-version vX.Y.Z] [--non-interactive]
 EOF
 }
 
@@ -38,6 +39,7 @@ while [[ $# -gt 0 ]]; do
     --with-xray) WITH_XRAY=1; shift ;;
     --ssh-backend) SSH_BACKEND="${2:-}"; shift 2 ;;
     --with-dnstt) WITH_DNSTT=1; shift ;;
+    --upgrade-runtime) UPGRADE_RUNTIME=1; shift ;;
     --xray-version) XRAY_VERSION="${2:-}"; WITH_XRAY=1; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
@@ -109,6 +111,7 @@ install -d -m 0755 -o root -g root "$INSTALL_DIR" /var/www/letsencrypt
 install -d -m 0700 -o root -g root /var/lib/letsencrypt /var/log/letsencrypt
 install -d -m 0750 -o root -g abdulbasit-xray /etc/abdulbasit-xray
 install -d -m 0755 -o root -g root "$INSTALL_DIR/web"
+install -m 0755 -o root -g root "$PROJECT_DIR/scripts/panel-python" "$INSTALL_DIR/python"
 if [[ -f "$INSTALL_DIR/paneld.py" ]]; then
   cp -a "$INSTALL_DIR" "$BACKUP_DIR/app.$(date -u +%Y%m%dT%H%M%SZ)"
 fi
@@ -210,7 +213,7 @@ ln -sfn /usr/local/sbin/abdulbasit-menu /usr/local/bin/menu
 ln -sfn /usr/local/sbin/abdulbasit-menu /usr/bin/menu
 cat > /usr/local/sbin/abdulbasit-panelctl <<'EOF'
 #!/usr/bin/env bash
-exec /usr/bin/python3 /usr/local/lib/abdulbasit/panelctl.py "$@"
+exec /usr/local/lib/abdulbasit/python /usr/local/lib/abdulbasit/panelctl.py "$@"
 EOF
 chmod 0755 /usr/local/sbin/abdulbasit-panelctl
 install -m 0755 -o root -g root "$PROJECT_DIR/scripts/security-check.sh" /usr/local/sbin/abdulbasit-security-check
@@ -346,7 +349,11 @@ install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
 cat > /etc/letsencrypt/renewal-hooks/deploy/abdulbasit-nginx-reload <<'EOF'
 #!/usr/bin/env bash
 set -e
-/usr/sbin/nginx -t
+if [[ -x /opt/noway/runtime/current/bin/nginx ]]; then
+  /opt/noway/runtime/current/bin/nginx -t
+else
+  /usr/sbin/nginx -t
+fi
 /bin/systemctl reload nginx
 EOF
 chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/abdulbasit-nginx-reload
@@ -379,6 +386,12 @@ python3 -m py_compile "$INSTALL_DIR"/*.py
 bash -n /usr/local/sbin/abdulbasit-menu
 nginx -t
 /usr/local/sbin/abdulbasit-security-check || warn "One or more runtime checks need attention; review the output above"
+
+if [[ $UPGRADE_RUNTIME -eq 1 ]]; then
+  log "Building and activating pinned Nginx, Python/OpenSSL, Certbot and Fail2ban runtime"
+  /usr/bin/python3 "$PROJECT_DIR/scripts/upgrade-runtime.py" --apply
+  /usr/local/sbin/abdulbasit-security-check || die "Runtime upgrade checks failed"
+fi
 
 ok "Installation complete"
 cat <<'EOF'
