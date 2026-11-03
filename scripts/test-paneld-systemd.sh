@@ -6,14 +6,17 @@ set -Eeuo pipefail
   exit 1
 }
 [[ $(cat /proc/1/comm) == systemd ]] || exit 1
+[[ $# -eq 1 && -x $1 ]] || { echo 'Supply the official dnstt-server test binary.' >&2; exit 1; }
 unit=/etc/systemd/system/abdulbasit-paneld.service
-[[ ! -e $unit && ! -e /etc/abdulbasit && ! -e /usr/local/lib/abdulbasit/paneld.py ]] || {
+dns_unit=/etc/systemd/system/abdulbasit-dnstt.service
+[[ ! -e $unit && ! -e $dns_unit && ! -e /etc/abdulbasit && ! -e /etc/abdulbasit-dnstt && ! -e /usr/local/lib/abdulbasit/paneld.py ]] || {
   echo 'Refusing to replace an existing panel installation.' >&2
   exit 1
 }
 cleanup() {
+  systemctl disable --now abdulbasit-dnstt.service || true
   systemctl stop abdulbasit-paneld.service || true
-  rm -f -- "$unit"
+  rm -f -- "$unit" "$dns_unit"
   systemctl daemon-reload
 }
 trap cleanup EXIT
@@ -40,3 +43,20 @@ assert stat.S_IMODE(Path('/etc/abdulbasit').stat().st_mode) == 0o750
 assert request('list_users') == {'ok': True, 'users': []}
 print('Production systemd unit: startup, config chmod and socket request passed')
 PY
+getent group abdulbasit-dnstt >/dev/null || groupadd --system abdulbasit-dnstt
+id abdulbasit-dnstt >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin --gid abdulbasit-dnstt abdulbasit-dnstt
+install -d -m 0700 /etc/letsencrypt
+install -m 0755 "$1" /usr/local/lib/abdulbasit/dnstt-server
+install -m 0644 systemd/abdulbasit-dnstt.service "$dns_unit"
+systemctl daemon-reload
+if ! timeout 40s env PYTHONPATH=/usr/local/lib/abdulbasit /usr/bin/python3 - <<'PY'
+from panel_client import request
+result = request('slowdns_configure', enabled=True, zone='tunnel.example.com', ns_host='ns1.example.com', port=53)
+assert result['enabled'] and len(result['public_key']) == 64, result
+assert request('slowdns_status')['enabled']
+print('Production SlowDNS systemd unit: enable, UDP listener and saved config passed')
+PY
+then
+  journalctl -u abdulbasit-paneld -u abdulbasit-dnstt -n 80 --no-pager
+  exit 1
+fi

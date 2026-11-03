@@ -76,9 +76,16 @@ class Manager:
         atomic_write_json(RUNTIME_FILE, config); protect(RUNTIME_FILE)
         try:
             self.run(["/bin/systemctl", "restart", "abdulbasit-dnstt"], timeout=20)
-            self.run(["/bin/systemctl", "is-active", "--quiet", "abdulbasit-dnstt"], timeout=5)
-            listener = self.run([shutil.which("ss") or "/usr/bin/ss", "-Hlunp", f"sport = :{port}"], timeout=5).stdout
-            if "dnstt" not in listener: raise RuntimeError("dnstt did not open its UDP listener")
+            # Type=simple becomes active before Python reads config and execs
+            # dnstt. Keep that config intact until the listener is ready.
+            deadline = time.monotonic() + 10
+            while True:
+                self.run(["/bin/systemctl", "is-active", "--quiet", "abdulbasit-dnstt"], timeout=5)
+                listener = self.run([shutil.which("ss") or "/usr/bin/ss", "-Hlunp", f"sport = :{port}"], timeout=5).stdout
+                if "dnstt" in listener: break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("dnstt did not open its UDP listener within 10 seconds; inspect journalctl -u abdulbasit-dnstt")
+                time.sleep(0.1)
             self.run(["/bin/systemctl", "enable", "abdulbasit-dnstt"], timeout=10)
             atomic_write_json(SETTINGS_FILE, config)
         except Exception:
