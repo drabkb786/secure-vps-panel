@@ -97,7 +97,7 @@ def parser() -> argparse.ArgumentParser:
     format_group.add_argument("--links", action="store_true", help="Print only the import links, one per line")
     link = sub.add_parser("xray-link", help="Print one direct import URI without JSON wrapping")
     link.add_argument("name")
-    link.add_argument("--protocol", choices=["vless", "vmess", "trojan", "vless-xhttp"], default="vless")
+    link.add_argument("--protocol", choices=["vless", "vmess", "trojan", "vless-xhttp", "vless-reality"], default="vless")
     for action in ("subscription-rotate", "subscription-revoke"):
         command = sub.add_parser(action)
         command.add_argument("name")
@@ -124,7 +124,7 @@ def parser() -> argparse.ArgumentParser:
     packet = sub.add_parser("packet-test"); packet.add_argument("--target", choices=["1.1.1.1", "8.8.8.8"], default="1.1.1.1")
     logs = sub.add_parser("logs"); logs.add_argument("--service", default="abdulbasit-xray"); logs.add_argument("--level", choices=["error", "all"], default="error")
     banner = sub.add_parser("set-banner"); banner.add_argument("path", type=Path)
-    slow = sub.add_parser("slowdns-enable"); slow.add_argument("--zone", required=True); slow.add_argument("--ns-host", required=True); slow.add_argument("--port", type=int, default=53)
+    slow = sub.add_parser("slowdns-enable"); slow.add_argument("--zone", required=True); slow.add_argument("--ns-host", required=True); slow.add_argument("--port", type=int, default=53); slow.add_argument("--mtu", type=int, default=1232)
     udp = sub.add_parser("xray-udp"); udp.add_argument("mode", choices=["on", "off"])
     maintenance = sub.add_parser("maintenance"); maintenance.add_argument("operation", choices=["memory", "clean-logs", "reinstall", "uninstall"]); maintenance.add_argument("--source", type=Path); maintenance.add_argument("--reclaim", action="store_true")
     for action in ("cloudfront-status", "cloudfront-check", "cloudfront-disable"):
@@ -135,22 +135,47 @@ def parser() -> argparse.ArgumentParser:
     setup = sub.add_parser("cloudfront-setup", help="Save private CloudFormation setup ZIP; AWS charges apply")
     setup.add_argument("--output", type=Path, required=True)
     for command in (export, link):
-        command.add_argument("--route", choices=["direct", "cloudfront"], default="direct")
+        command.add_argument("--route", choices=["direct", "cloudfront", "bunny"], default="direct")
+    ssh = sub.add_parser("ssh-export")
+    ssh.add_argument("username")
+    ssh.add_argument("--route", choices=["direct", "bunny", "cloudfront"], default="direct")
+    ssh.add_argument("--with-password", action="store_true", help="Prompt for password; include only in this export")
+    ssh.add_argument("--zip", type=Path)
+    for action in ("bunny-status", "bunny-check", "bunny-disable"):
+        sub.add_parser(action)
+    sub.add_parser("bunny-enable").add_argument("--endpoint", required=True)
+    sub.add_parser("bunny-setup").add_argument("--output", type=Path, required=True)
+    reality = sub.add_parser("reality-enable")
+    reality.add_argument("--port", type=int, default=8443)
+    sub.add_parser("reality-disable")
     return p
 
 
 def main() -> int:
     args = parser().parse_args()
     try:
-        if args.action in {"cloudfront-status", "cloudfront-check"}:
+        if args.action in {"reality-enable", "reality-disable"}:
+            result = request("xray_configure", enabled=True, reality_enabled=args.action == "reality-enable", **({"reality_port": args.port} if args.action == "reality-enable" else {}))
+        elif args.action == "ssh-export":
+            params = {"username": args.username, "route": args.route}
+            if args.with_password:
+                params["password"] = getpass.getpass("Current SSH password (export only): ")
+            result = request("ssh_export", **params)
+            if args.zip:
+                fd = os.open(args.zip, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as stream, zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+                    for name, content in result["files"].items(): archive.writestr(name, content)
+                result = {"saved": str(args.zip), "private": True}
+        elif args.action in {"cloudfront-status", "cloudfront-check", "bunny-status", "bunny-check"}:
             result = request(args.action.replace("-", "_"))
-        elif args.action in {"cloudfront-enable", "cloudfront-disable"}:
-            params = {"enabled": args.action == "cloudfront-enable"}
+        elif args.action in {"cloudfront-enable", "cloudfront-disable", "bunny-enable", "bunny-disable"}:
+            provider = args.action.split("-")[0]
+            params = {"enabled": args.action.endswith("-enable")}
             for key in ("endpoint", "price_class"):
                 if getattr(args, key, None) is not None: params[key] = getattr(args, key)
-            result = request("cloudfront_configure", **params)
-        elif args.action == "cloudfront-setup":
-            data = request("cloudfront_setup")
+            result = request(provider + "_configure", **params)
+        elif args.action in {"cloudfront-setup", "bunny-setup"}:
+            data = request(args.action.replace("-", "_"))
             # Exclusive creation prevents overwriting a file or following a symlink.
             fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "wb") as stream, zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -186,11 +211,11 @@ def main() -> int:
         elif args.action == "logs": result = request("live_logs", service=args.service, level=args.level)
         elif args.action == "set-banner": result = request("banner_set", text=args.path.read_text())
         elif args.action in {"slowdns-enable", "slowdns-disable"}:
-            result = request("slowdns_configure", **({"enabled": True, "zone": args.zone, "ns_host": args.ns_host, "port": args.port} if args.action == "slowdns-enable" else {"enabled": False}))
+            result = request("slowdns_configure", **({"enabled": True, "zone": args.zone, "ns_host": args.ns_host, "port": args.port, "mtu": args.mtu} if args.action == "slowdns-enable" else {"enabled": False}))
         elif args.action == "xray-udp":
             result = request("xray_configure", enabled=True, udp_enabled=args.mode == "on")
         elif args.action == "create-user":
-            password = getpass.getpass("Password (minimum 12 characters): ")
+            password = getpass.getpass("Password (minimum 3 characters): ")
             confirmation = getpass.getpass("Confirm password: ")
             if password != confirmation:
                 raise RuntimeError("Passwords do not match")

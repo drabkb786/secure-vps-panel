@@ -23,12 +23,16 @@ def client(monkeypatch):
             return {"revision": "revision1"}
         if command == "xray_export":
             return {"name": "basit", "links": {"vless": "secret-link", "trojan": "trojan://fixture-password@vpn.example.com:443?type=ws&security=tls&path=%2Ftrojan"}, "files": {"basit-vless.json": '{"outbounds":[]}', "links.txt": "secret-link"}}
+        if command == "ssh_export":
+            return {"name": "basit", "links": {"ssh": "ssh://basit@vpn.example.com:109", "wss": "wss://cdn.example.com/bunny/ssh/ws"}, "files": {"ssh-ws-client.py": "fixture adapter", "basit-ssh.json": '{"username":"basit"}'}}
         if command == "subscription_get":
             if params.get("token") != "A" * 43:
                 raise RuntimeError("Subscription unavailable")
             return {"name": "basit", "expiry": "2099-01-01", "content": "fixture-subscription", "content_type": "text/plain; charset=utf-8"}
         if command == "cloudfront_setup":
             return {"files": {"parameters.private.json": "private-origin-fixture"}}
+        if command == "bunny_setup":
+            return {"files": {"bunny-setup.private.txt": "private-bunny-fixture"}}
         if command == "backup_export":
             return {"backup": {"schema": "noway-xray-backup-v1", "accounts": []}}
         return {"ok": True, "test_result": command}
@@ -37,12 +41,16 @@ def client(monkeypatch):
     server = web.Server(("127.0.0.1", 0), web.Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
     host = f"127.0.0.1:{server.server_port}"
-    def call(path, data=None, *, cookie="", csrf="", origin=None, forwarded=None, user_agent=None):
+    def call(path, data=None, *, cookie="", csrf="", origin=None, forwarded=None, user_agent=None, gateway=False, real_ip=None):
         conn = http.client.HTTPConnection(host, timeout=5)
         headers = {"Origin": origin or "http://" + host, "Content-Type": "application/json"}
         if cookie: headers["Cookie"] = cookie
         if csrf: headers["X-CSRF-Token"] = csrf
         if forwarded: headers["X-Forwarded-Proto"] = forwarded
+        if gateway:
+            import gateway_identity
+            headers[gateway_identity.header_name()] = "1"
+        if real_ip: headers["X-Real-IP"] = real_ip
         if user_agent: headers["User-Agent"] = user_agent
         conn.request("GET" if data is None else "POST", "/panel/" + path, body=None if data is None else json.dumps(data), headers=headers)
         response = conn.getresponse(); body = response.read(); response_headers = dict(response.getheaders()); code = response.status; conn.close()
@@ -89,6 +97,25 @@ def test_logout_revokes_session_and_private_zip_needs_session(client):
 def test_public_plain_http_login_is_blocked(client):
     assert client("api/login", {"username": "noway", "password": "correct-password"}, forwarded="http")[0] == 403
     assert not client.calls
+
+
+def test_ssh_forward_cannot_forge_https_or_rotate_viewer_rate_key(client):
+    data = {"username": "noway", "password": "correct-password"}
+    assert client("api/login", data, forwarded="https", origin="https://attacker.example", real_ip="203.0.113.5")[0] == 403
+    assert not client.calls
+
+
+def test_gateway_marker_verifies_https_and_viewer_identity(client):
+    # Use a bare handler to verify the same marker Nginx overwrites on requests.
+    from email.message import Message
+    import gateway_identity
+    handler = object.__new__(web.Handler)
+    handler.headers = Message(); handler.client_address = ("127.0.0.1", 12345)
+    handler.headers["X-Forwarded-Proto"] = "https"
+    handler.headers["X-Real-IP"] = "198.51.100.42"
+    assert not handler.trusted_transport() and handler.viewer_ip() == "127.0.0.1"
+    handler.headers[gateway_identity.header_name()] = "1"
+    assert handler.trusted_transport() and handler.viewer_ip() == "198.51.100.42"
 
 
 def test_login_rate_limit_and_cookie_flags(client):
@@ -197,7 +224,23 @@ def test_cloudfront_private_setup_and_route_dispatch(client):
     assert client.calls[-1] == ("cloudfront_setup", {"_web_revision": "revision1"})
     assert client("api/export?name=basit&route=cloudfront", cookie=cookie)[0] == 200
     assert client.calls[-1][1]["route"] == "cloudfront"
+
     assert client("sub/" + "A" * 43 + "?route=cloudfront")[0] == 200
     assert client.calls[-1][1]["route"] == "cloudfront"
     assert client("api/command", {"command": "cloudfront_configure", "params": {"enabled": True}}, cookie=cookie)[0] == 403
     assert client("api/command", {"command": "cloudfront_setup"}, cookie=cookie, csrf=csrf)[0] == 403
+
+
+def test_ssh_and_bunny_private_downloads_require_login(client):
+    assert client("api/bunny-setup")[0] == 401
+    assert client("api/export?kind=ssh&name=basit&route=bunny&format=zip")[0] == 401
+    cookie, _ = login(client)
+    code, body, _ = client("api/export?kind=ssh&name=basit&route=bunny&format=zip", cookie=cookie)
+    assert code == 200
+    assert client.calls[-1] == ("ssh_export", {"username": "basit", "route": "bunny", "_web_revision": "revision1"})
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        assert archive.read("ssh-ws-client.py") == b"fixture adapter"
+    code, body, _ = client("api/bunny-setup", cookie=cookie)
+    assert code == 200
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        assert archive.read("bunny-setup.private.txt") == b"private-bunny-fixture"

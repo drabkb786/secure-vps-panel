@@ -64,26 +64,27 @@ def test_private_dns_never_connected(monkeypatch):
     assert not cdn.probe("d123example.cloudfront.net", cdn.PATHS["health"], False)["ok"]
 
 
-def test_route_exports_preserve_credentials_and_exclude_xhttp(cloudfront, manager):
+def test_route_exports_preserve_credentials_and_include_routed_xhttp(cloudfront, manager):
     cloudfront.configure({"enabled": True, "endpoint": "d123example.cloudfront.net"})
     manager.configure({"enabled": True, "xhttp_enabled": True})
     manager.create({"name": "edgeuser", "days": 3})
     direct = manager.export({"name": "edgeuser"})
     export = manager.export({"name": "edgeuser", "route": "cloudfront"})
-    assert "vless-xhttp" in direct["links"] and "vless-xhttp" not in export["links"]
+    assert "vless-xhttp" in direct["links"] and "vless-xhttp" in export["links"]
     assert cdn.settings()["secret"] not in json.dumps(export)
     for protocol, link in export["links"].items():
         stream = json.loads(export["files"][f"edgeuser-{protocol}.json"])["outbounds"][0]["streamSettings"]
         assert stream["tlsSettings"]["allowInsecure"] is False
         assert stream["tlsSettings"]["serverName"] == "d123example.cloudfront.net"
-        assert stream["wsSettings"]["path"] == cdn.PATHS[protocol]
+        path = cdn.PATHS["xhttp" if protocol == "vless-xhttp" else protocol]
+        assert stream["xhttpSettings" if protocol == "vless-xhttp" else "wsSettings"]["path"] == path
         if protocol == "vmess":
             data = json.loads(base64.b64decode(link[8:]))
             assert data["path"] == cdn.PATHS[protocol] and data["add"] == "d123example.cloudfront.net"
         else:
             parsed = urlsplit(link)
             assert parsed.username == urlsplit(direct["links"][protocol]).username
-            assert parsed.hostname == "d123example.cloudfront.net" and parse_qs(parsed.query)["path"] == [cdn.PATHS[protocol]]
+            assert parsed.hostname == "d123example.cloudfront.net" and parse_qs(parsed.query)["path"] == [path]
     for format_name in ("singbox", "clash"):
         content = export["files"]["edgeuser-" + ("singbox.json" if format_name == "singbox" else "clash.yaml")]
         assert "/cloudfront/vless" in content and "vpn.example.com" not in content
@@ -109,6 +110,7 @@ def test_template_protects_origin_and_keeps_admin_out():
     assert behavior["ViewerProtocolPolicy"] == "https-only"
     policy = tpl["Resources"]["OriginPolicy"]["Properties"]["OriginRequestPolicyConfig"]
     assert "Host" not in policy["HeadersConfig"]["Headers"] and policy["CookiesConfig"]["CookieBehavior"] == "none"
+    assert {"Referer", "Content-Type", "X-Padding"} <= set(policy["HeadersConfig"]["Headers"])
     assert "cloudfront_setup" in paneld.WEB_COMMANDS and "cloudfront_setup" not in web_server.COMMANDS
 
 

@@ -1,7 +1,8 @@
-"""Optional official dnstt transport to authenticated local Dropbear, never a resolver."""
+"""Optional official dnstt transport to authenticated managed SSH, never a resolver."""
 from __future__ import annotations
 
 import grp
+import ipaddress
 import json
 import os
 import re
@@ -23,7 +24,17 @@ BINARY = Path("/usr/local/lib/abdulbasit/dnstt-server")
 def settings():
     data = read_json(SETTINGS_FILE, None) if SETTINGS_FILE.exists() else {}
     if not isinstance(data, dict): raise RuntimeError("SlowDNS settings are invalid")
-    return {"enabled": False, "zone": "", "ns_host": "", "port": 53, **data}
+    return {"enabled": False, "zone": "", "ns_host": "", "port": 53, "mtu": 1232, **data}
+
+
+def validate_mtu(value):
+    try:
+        mtu = int(str(value))
+    except (ValueError, TypeError):
+        raise ValidationError("DNSTT MTU must be a whole number")
+    if not 512 <= mtu <= 1400:
+        raise ValidationError("DNSTT MTU must be 512-1400; start with 1232")
+    return mtu
 
 
 def protect(path, mode=0o640):
@@ -38,7 +49,7 @@ class Manager:
     def status(self, _):
         config = settings(); public = read_text(PUBLIC_KEY)
         return {**config, "installed": BINARY.is_file(), "public_key": public if re.fullmatch(r"[a-fA-F0-9]{64}", public) else "",
-                "upstream": "127.0.0.1:109", "note": "dnstt carries TCP to Dropbear; an SSH account is still required. Delegate the tunnel zone with NS/A records and allow its UDP port."}
+                "upstream": "127.0.0.1:109", "note": "dnstt carries TCP to managed SSH; an SSH account is still required. Delegate the tunnel zone with NS/A records and allow its UDP port."}
 
     def configure(self, params):
         enabled = params.get("enabled")
@@ -51,6 +62,7 @@ class Manager:
                 atomic_write_json(RUNTIME_FILE, {**old, "enabled": False}); protect(RUNTIME_FILE)
             return self.status({})
         zone = validate_domain(str(params.get("zone", old["zone"])))
+        mtu = validate_mtu(params.get("mtu", old["mtu"]))
         ns_host = validate_domain(str(params.get("ns_host", old["ns_host"])))
         if ns_host == zone or ns_host.endswith("." + zone):
             raise ValidationError("Nameserver host must be outside the delegated tunnel zone")
@@ -71,7 +83,7 @@ class Manager:
         if not re.fullmatch(r"[a-fA-F0-9]{64}", read_text(PUBLIC_KEY)):
             raise RuntimeError("dnstt public key is missing or invalid")
         protect(PRIVATE_KEY); protect(PUBLIC_KEY, 0o644)
-        config = {"enabled": True, "zone": zone, "ns_host": ns_host, "port": port}
+        config = {"enabled": True, "zone": zone, "ns_host": ns_host, "port": port, "mtu": mtu}
         previous_runtime = read_json(RUNTIME_FILE, None)
         atomic_write_json(RUNTIME_FILE, config); protect(RUNTIME_FILE)
         try:
@@ -100,11 +112,45 @@ class Manager:
         data = self.status({})
         if not data["zone"]: return {**data, "dns_ok": False, "records": [], "hint": "Configure the tunnel zone and nameserver hostname first"}
         dig = shutil.which("dig") or "/usr/bin/dig"
-        records = self.run([dig, "+time=2", "+tries=1", "+short", "NS", data["zone"]], timeout=6).stdout.splitlines()
-        return {**data, "records": records, "dns_ok": data["ns_host"] in [x.rstrip(".").lower() for x in records],
+        # DNSTT is not a general-purpose authoritative DNS server. Query the
+        # parent authorities directly, where the delegation referral lives.
+        authorities = []
+        labels = data["zone"].split(".")
+        for i in range(1, len(labels)):
+            parent = ".".join(labels[i:])
+            output = self.run([dig, "+time=2", "+tries=1", "+short", "NS", parent], timeout=6).stdout
+            authorities = [validate_domain(x.rstrip(".")) for x in output.splitlines() if x.strip()][:8]
+            if authorities:
+                break
+        records, checks = [], []
+        for ns in authorities:
+            try:
+                output = self.run([dig, "@" + ns, data["zone"], "NS", "+norecurse", "+time=2", "+tries=1", "+noall", "+answer", "+authority"], timeout=6).stdout
+                found = []
+                for line in output.splitlines():
+                    fields = line.split()
+                    if len(fields) >= 5 and fields[0].rstrip(".").lower() == data["zone"] and fields[3] == "NS":
+                        found.append(fields[4].rstrip(".").lower())
+                records.extend(found)
+                checks.append({"nameserver": ns, "ok": data["ns_host"] in found, "records": found})
+            except (RuntimeError, OSError):
+                checks.append({"nameserver": ns, "ok": False, "records": []})
+        addresses = []
+        for family in ("A", "AAAA"):
+            output = self.run([dig, "+time=2", "+tries=1", "+short", family, data["ns_host"]], timeout=6).stdout
+            for line in output.splitlines():
+                try:
+                    addresses.append(str(ipaddress.ip_address(line)))
+                except ValueError:
+                    continue
+        delegated = bool(checks) and all(x["ok"] for x in checks)
+        return {**data, "records": sorted(set(records)), "authoritative_checks": checks,
+                "nameserver_addresses": addresses, "dns_ok": delegated and bool(addresses),
                 "client_command": f"dnstt-client -udp YOUR_DNS_RESOLVER:53 -pubkey {data['public_key']} {data['zone']} 127.0.0.1:7000",
                 "ssh_command": "ssh -p 7000 YOUR_MANAGED_SSH_USER@127.0.0.1",
-                "hint": f"Create an A/AAAA record for {data['ns_host']} pointing to this VPS, then an NS record delegating {data['zone']} to {data['ns_host']}. Test externally; local service readiness does not prove public DNS delegation."}
+                "hint": ("Parent NS delegation and nameserver address found. Compare its IP with this VPS and test a real client externally; UDP reachability is not proven." if delegated and addresses else
+                         f"Set {data['ns_host']} A/AAAA to this VPS and delegate {data['zone']} with an NS record. Parent authorities must agree.")}
+
 
 
 def serve():
@@ -113,7 +159,7 @@ def serve():
     if config.get("enabled") is not True: raise RuntimeError("SlowDNS is disabled")
     port = int(config["port"])
     if not 1 <= port <= 65535: raise RuntimeError("Invalid listener port")
-    os.execv(str(BINARY), [str(BINARY), "-udp", f"0.0.0.0:{port}", "-privkey-file", str(PRIVATE_KEY), zone, "127.0.0.1:109"])
+    os.execv(str(BINARY), [str(BINARY), "-udp", f"0.0.0.0:{port}", "-mtu", str(validate_mtu(config.get("mtu", 1232))), "-privkey-file", str(PRIVATE_KEY), zone, "127.0.0.1:109"])
 
 
 if __name__ == "__main__" and sys.argv[1:] == ["serve"]:

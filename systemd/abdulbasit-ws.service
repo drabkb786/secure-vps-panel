@@ -1,7 +1,6 @@
 [Unit]
-Description=Abdul Basit loopback WebSocket-to-Dropbear proxy
-After=network.target dropbear.service
-Wants=dropbear.service
+Description=Abdul Basit loopback WebSocket-to-SSH proxy
+After=network.target abdulbasit-sshd.service dropbear.service
 
 [Service]
 Type=simple
@@ -14,8 +13,8 @@ Restart=on-failure
 RestartSec=2s
 UMask=0077
 MemoryMax=256M
-TasksMax=256
-LimitNOFILE=1024
+TasksMax=512
+LimitNOFILE=8192
 
 NoNewPrivileges=yes
 PrivateTmp=yes

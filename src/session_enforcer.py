@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce per-account concurrent Dropbear session limits.
+"""Enforce per-account concurrent SSH session limits.
 
 The previous implementation called the limit an "IP limit" and locked the whole
 account after counting processes. This version is explicit: it limits concurrent
@@ -14,7 +14,7 @@ import time
 from datetime import date
 
 from common import USERS_DIR, read_json
-import dropbear_sessions
+import ssh_sessions as dropbear_sessions
 import ssh_identity
 
 LOG = logging.getLogger("abdulbasit-session-enforcer")
@@ -89,11 +89,12 @@ def enforce_once() -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     while True:
+        started = time.monotonic()
         try:
             enforce_once()
         except Exception:
             LOG.exception("Session enforcement cycle failed")
-        time.sleep(INTERVAL)
+        time.sleep(max(0.1, INTERVAL - (time.monotonic() - started)))
 
 
 if __name__ == "__main__":

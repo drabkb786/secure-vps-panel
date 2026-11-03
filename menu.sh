@@ -24,9 +24,10 @@ user_menu() {
 5) Clear legacy SSH quota note (GB metering unavailable)
 6) List users
 7) List active sessions
-8) Back
+8) Export SSH links / adapter ZIP
+9) Back
 EOF
-    read -r -p "Option [1-8]: " choice
+    read -r -p "Option [1-9]: " choice
     case "$choice" in
       1)
         read -r -p "Username: " username
@@ -51,7 +52,9 @@ EOF
         run_ctl set-quota "$username" --quota Unlimited; pause ;;
       6) run_ctl list-users; pause ;;
       7) run_ctl list-sessions; pause ;;
-      8) return ;;
+      8) read -r -p "Username: " username; read -r -p "Route (direct/bunny/cloudfront) [direct]: " route; read -r -p "Save private ZIP (new path, blank prints profiles): " output
+         if [[ -n "$output" ]]; then run_ctl ssh-export "$username" --route "${route:-direct}" --zip "$output"; else run_ctl ssh-export "$username" --route "${route:-direct}"; fi; pause ;;
+      9) return ;;
       *) sleep 1 ;;
     esac
   done
@@ -148,8 +151,9 @@ EOF
         [[ "$confirm" == "DELETE" ]] && run_ctl xray-delete "$name"
         pause ;;
       7)
-        read -r -p "Profile name: " name; read -r -p "Protocol (vless/vmess/trojan) [vless]: " protocol
-        run_ctl xray-link "$name" --protocol "${protocol:-vless}"; pause ;;
+        read -r -p "Profile name: " name; read -r -p "Protocol (vless/vmess/trojan/vless-xhttp/vless-reality) [vless]: " protocol
+        read -r -p "Route (direct/bunny/cloudfront) [direct]: " route
+        run_ctl xray-link "$name" --protocol "${protocol:-vless}" --route "${route:-direct}"; pause ;;
       8)
         read -r -p "Profile name: " name; read -r -p "Save ZIP to (new absolute path): " output
         run_ctl xray-export "$name" --zip "$output"; pause ;;
@@ -165,16 +169,21 @@ transport_menu() {
     echo '1) UDP forwarding on  2) UDP forwarding off'
     echo '3) SlowDNS status     4) Configure / enable SlowDNS'
     echo '5) Check delegation   6) Disable SlowDNS'
-    echo '7) Install official dnstt core  0) Back'
+    echo '7) Install official dnstt core  8) Enable direct REALITY  9) Disable REALITY'
+    echo '10) Bunny delivery  11) CloudFront delivery  0) Back'
     read -r -p 'Choose: ' choice
     case "$choice" in
       1) run_ctl xray-udp on; pause ;;
       2) run_ctl xray-udp off; pause ;;
       3) run_ctl slowdns-status; pause ;;
-      4) read -r -p 'Tunnel zone: ' zone; read -r -p 'Nameserver host: ' ns; read -r -p 'UDP port [53]: ' port; run_ctl slowdns-enable --zone "$zone" --ns-host "$ns" --port "${port:-53}"; pause ;;
+      4) read -r -p 'Tunnel zone: ' zone; read -r -p 'Nameserver host: ' ns; read -r -p 'UDP port [53]: ' port; read -r -p 'MTU [1232]: ' mtu; run_ctl slowdns-enable --zone "$zone" --ns-host "$ns" --port "${port:-53}" --mtu "${mtu:-1232}"; pause ;;
       5) run_ctl slowdns-check; pause ;;
       6) run_ctl slowdns-disable; pause ;;
       7) run_ctl slowdns-install; pause ;;
+      8) read -r -p 'Direct REALITY port [8443]: ' port; run_ctl reality-enable --port "${port:-8443}"; echo 'Allow this TCP port in provider/UFW firewall after checking diagnostics.'; pause ;;
+      9) run_ctl reality-disable; pause ;;
+      10) read -r -p 'Bunny endpoint hostname: ' endpoint; run_ctl bunny-enable --endpoint "$endpoint"; read -r -p 'Private setup ZIP (new path): ' output; run_ctl bunny-setup --output "$output"; pause ;;
+      11) read -r -p 'CloudFront distribution hostname (blank prepares origin): ' endpoint; run_ctl cloudfront-enable --endpoint "$endpoint"; read -r -p 'Private setup ZIP (new path): ' output; run_ctl cloudfront-setup --output "$output"; pause ;;
       0) return ;;
     esac
   done

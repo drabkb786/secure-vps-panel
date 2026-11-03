@@ -13,6 +13,7 @@ EMAIL=""
 NON_INTERACTIVE=0
 WITH_XRAY=0
 WITH_DNSTT=0
+SSH_BACKEND=openssh
 XRAY_VERSION=""
 DEFAULT_SUPER_ADMIN_ID="6408975845"
 
@@ -25,7 +26,7 @@ trap 'die "Installation failed near line $LINENO. Existing SSH port 22 was not i
 usage() {
   cat <<'EOF'
 Usage: sudo bash install.sh [--domain vpn.example.com] [--email admin@example.com]
-                           [--with-xray] [--with-dnstt] [--xray-version vX.Y.Z] [--non-interactive]
+                           [--ssh-backend openssh|dropbear] [--with-xray] [--with-dnstt] [--xray-version vX.Y.Z] [--non-interactive]
 EOF
 }
 
@@ -35,12 +36,15 @@ while [[ $# -gt 0 ]]; do
     --email) EMAIL="${2:-}"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;
     --with-xray) WITH_XRAY=1; shift ;;
+    --ssh-backend) SSH_BACKEND="${2:-}"; shift 2 ;;
     --with-dnstt) WITH_DNSTT=1; shift ;;
     --xray-version) XRAY_VERSION="${2:-}"; WITH_XRAY=1; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
 done
+
+[[ "$SSH_BACKEND" == openssh || "$SSH_BACKEND" == dropbear ]] || die "SSH backend must be openssh or dropbear"
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "Run as root: sudo -i"
 [[ -r /etc/os-release ]] || die "Unsupported operating system"
@@ -67,7 +71,7 @@ fi
 log "Installing required packages without performing an unattended full system upgrade"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates nginx dropbear certbot python3 python3-wsproto procps passwd iproute2 iputils-ping fail2ban curl dnsutils openssl
+apt-get install -y --no-install-recommends ca-certificates nginx openssh-server dropbear certbot python3 python3-wsproto procps passwd iproute2 iputils-ping fail2ban curl dnsutils openssl
 python3 - <<'PY' || die "Python 3.10 or newer is required (use Ubuntu 22.04+/Debian 12+ or install a supported Python)"
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
@@ -189,7 +193,7 @@ for path in USERS_DIR.glob('*.json'):
     if account.pw_shell == '/bin/false' and account.pw_uid != 0:
         subprocess.run(['/usr/sbin/usermod', '--shell', '/usr/local/lib/abdulbasit/tunnel-shell', name], check=True)
 PY
-for module in web_auth web_server xray_manager diagnostics client_formats cdn_manager profile_backup operations traffic slowdns maintenance terminal_ui gateway_identity ssh_identity; do
+for module in web_auth web_server xray_manager diagnostics client_formats cdn_manager profile_backup operations traffic slowdns maintenance terminal_ui gateway_identity ssh_identity ssh_backend ssh_sessions openssh_sessions xray_runtime bunny_manager ssh_profiles ssh_ws_client reality_transport; do
   install -m 0755 -o root -g root "$PROJECT_DIR/src/$module.py" "$INSTALL_DIR/$module.py"
 done
 python3 "$INSTALL_DIR/gateway_identity.py"
@@ -217,6 +221,17 @@ if [[ -n "$EMAIL" ]]; then
   chmod 0640 "$CONFIG_DIR/certbot_email.conf"
 fi
 
+if [[ ! -f "$CONFIG_DIR/ssh-banner.txt" ]]; then
+  printf '%s\n' 'NOWAY / Private VPS access' 'Authorized accounts only.' > "$CONFIG_DIR/ssh-banner.txt"
+fi
+chmod 0644 "$CONFIG_DIR/ssh-banner.txt"
+if [[ "$SSH_BACKEND" == openssh ]]; then
+  log "Migrating managed tunnels to dedicated OpenSSH (admin SSH stays separate)"
+  bash "$PROJECT_DIR/scripts/migrate-openssh.sh"
+  systemctl enable --now fail2ban
+  fail2ban-client reload || warn "Inspect Fail2ban configuration"
+else
+  systemctl disable --now abdulbasit-sshd 2>/dev/null || true
 log "Backing up and configuring Dropbear on ports 109 and 447"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 dropbear_was_active=0
@@ -285,6 +300,11 @@ EOF
   fi
 else
   warn "Dropbear Fail2ban filter was not found; direct-port brute-force jail was not enabled"
+fi
+
+printf '%s\n' dropbear > "$CONFIG_DIR/ssh-backend"
+chmod 0644 "$CONFIG_DIR/ssh-backend"
+rm -f /etc/fail2ban/jail.d/abdulbasit-sshd.local
 fi
 
 for old_unit_file in /etc/systemd/system/raretriccks-*.service; do

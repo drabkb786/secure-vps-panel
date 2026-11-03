@@ -8,6 +8,8 @@ import socketserver
 import statistics
 import sys
 import threading
+import tempfile
+import secrets
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,6 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from websockets.sync.client import connect
 import ws_proxy as bridge
+import gateway_identity
+import ssh_identity
 
 
 class Echo(socketserver.BaseRequestHandler):
@@ -54,7 +58,10 @@ def main():
     if not 3 <= args.rounds <= 30 or not 1 <= args.mib <= 8: p.error("Use 3-30 rounds and 1-8 MiB")
     payload = bytes(range(256)) * (args.mib * 4096)
     results = {16384: [], 65536: []}
-    with running(socketserver.ThreadingTCPServer(("127.0.0.1", 0), Echo)) as target:
+    with tempfile.TemporaryDirectory(prefix="noway-benchmark-") as temporary, running(socketserver.ThreadingTCPServer(("127.0.0.1", 0), Echo)) as target:
+        gateway_identity.CONFIG_FILE = Path(temporary) / "header"
+        gateway_identity.CONFIG_FILE.write_text("X-Noway-Gateway-" + secrets.token_hex(32))
+        ssh_identity.PEER_DIR = Path(temporary) / "peers"
         bridge.TARGET_PORT = target
         with running(bridge.Server(("127.0.0.1", 0), bridge.Handler)) as port:
             measure(port, payload)  # warm-up, excluded

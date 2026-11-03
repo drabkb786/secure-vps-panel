@@ -117,7 +117,7 @@ function render() {
   setText('stat-access', `${s.users.length} SSH accounts · ${s.sessions.reduce((sum, x) => sum + x.count, 0)} sessions`);
   setText('service-total', `${running}/${services.length} running`);
   const serviceList = $('service-list'); serviceList.replaceChildren();
-  const labels = {nginx: 'Nginx gateway', dropbear: 'Dropbear SSH', 'abdulbasit-ws': 'SSH upgrade proxy', 'abdulbasit-session-enforcer': 'Session enforcer', 'abdulbasit-bot': 'Telegram bot', 'abdulbasit-paneld': 'Panel daemon', 'abdulbasit-web': 'Web dashboard', 'abdulbasit-xray': 'Xray core', 'abdulbasit-dnstt': 'SlowDNS tunnel'};
+  const labels = {nginx: 'Nginx gateway', dropbear: 'Dropbear fallback', 'abdulbasit-sshd': 'OpenSSH tunnels', 'abdulbasit-ws': 'SSH upgrade proxy', 'abdulbasit-session-enforcer': 'Session enforcer', 'abdulbasit-bot': 'Telegram bot', 'abdulbasit-paneld': 'Panel daemon', 'abdulbasit-web': 'Web dashboard', 'abdulbasit-xray': 'Xray core', 'abdulbasit-dnstt': 'SlowDNS tunnel'};
   services.forEach(([service, status]) => {
     const row = element('div', 'service-row'); row.append(element('span', `service-dot ${status === 'active' ? 'good' : ''}`), element('strong', '', labels[service] || service), element('span', 'service-label', status));
     if (!['abdulbasit-paneld', 'abdulbasit-web', 'abdulbasit-bot'].includes(service)) {
@@ -138,7 +138,7 @@ function render() {
   if (!s.users.length) emptyRow(users, 5, 'No SSH accounts yet. Create an account to grant access.');
   s.users.forEach(user => {
     const tr = element('tr'); tr.append(element('td', 'mono', user.username), element('td', 'mono muted', user.expiry), element('td', '', `${(s.sessions.find(x => x.username === user.username) || {}).count || 0} / ${user.max_sessions}`), element('td', 'muted', `GB unavailable · IP cap: ${user.max_ips || 'Unlimited'}`));
-    const td = element('td'), actions = element('div', 'row-actions'); actions.append(button('Limits', () => openUsage('ssh', user)), button(user.enabled === false ? 'Unlock' : 'Lock', () => command('set_user_lock', {username: user.username, enabled: user.enabled === false}, 'SSH account updated')), button('Renew', () => openRenew('ssh', user.username)), button('Delete', async () => { if (await confirmAction(`Delete SSH account “${user.username}”? Its active sessions will be disconnected.`)) await command('delete_user', {username: user.username}, 'Account deleted'); }, 'delete')); td.append(actions); tr.append(td); users.append(tr);
+    const td = element('td'), actions = element('div', 'row-actions'); actions.append(button('Export ↗', () => exportSSH(user.username)), button('Limits', () => openUsage('ssh', user)), button(user.enabled === false ? 'Unlock' : 'Lock', () => command('set_user_lock', {username: user.username, enabled: user.enabled === false}, 'SSH account updated')), button('Renew', () => openRenew('ssh', user.username)), button('Delete', async () => { if (await confirmAction(`Delete SSH account “${user.username}”? Its active sessions will be disconnected.`)) await command('delete_user', {username: user.username}, 'Account deleted'); }, 'delete')); td.append(actions); tr.append(td); users.append(tr);
   });
   setText('xray-summary', `${s.xray_installed ? 'Installed' : 'Core not installed · run install.sh --with-xray'} · ${s.network.enabled ? 'Enabled' : 'Disabled'} · TLS on port 443`);
   $('toggle-xray').textContent = s.network.enabled ? 'Disable Xray' : 'Enable Xray';
@@ -158,7 +158,7 @@ function render() {
   for (const [name, path] of Object.entries(cf.paths || {})) { const row = element('div', 'service-row'); row.append(element('strong', '', name.toUpperCase()), element('code', 'mono muted', path)); $('cf-paths').append(row); }
   const slow = s.slowdns || {};
   setText('slowdns-state', !slow.installed ? 'Core not installed' : slow.enabled ? 'Enabled' : 'Disabled');
-  if (!$('slowdns-form').contains(document.activeElement)) { $('slowdns-zone').value = slow.zone || ''; $('slowdns-ns').value = slow.ns_host || ''; $('slowdns-port').value = slow.port || 53; }
+  if (!$('slowdns-form').contains(document.activeElement)) { $('slowdns-zone').value = slow.zone || ''; $('slowdns-ns').value = slow.ns_host || ''; $('slowdns-port').value = slow.port || 53; $('slowdns-mtu').value = slow.mtu || 1232; }
   if (!$('domain-form').contains(document.activeElement)) $('domain-input').value = s.domain === 'Not set' ? '' : s.domain;
   if (!$('dns-form').contains(document.activeElement)) { $('dns-servers').value = s.network.dns.servers.join('\n'); $('dns-strategy').value = s.network.dns.query_strategy; }
   setText('connection-state', 'Connected'); $('connection-state').classList.add('online'); setText('last-updated', `Updated ${new Date().toLocaleTimeString()}`);
@@ -183,6 +183,21 @@ function openRenew(type, name) { renewTarget = {type, name}; setText('renew-name
 function confirmAction(message) {
   setText('confirm-message', message); $('confirm-dialog').showModal();
   return new Promise(resolve => { confirmResolve = resolve; });
+}
+async function exportSSH(name, route = 'direct') {
+  const result = await api(`export?kind=ssh&name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}`);
+  currentExport = {...result, kind: 'ssh', route};
+  $('export-route').value = route;
+  setText('export-title', `SSH · ${name}`);
+  setText('export-warning', result.readiness.warnings.join(' ')); $('export-warning').hidden = false;
+  const container = $('export-links'); container.replaceChildren();
+  for (const [label, link] of Object.entries(result.links)) {
+    const item = element('div', 'export-item'), input = element('textarea'); input.value = link; input.readOnly = true;
+    item.append(element('strong', '', label.toUpperCase()), input, button('Copy', () => navigator.clipboard.writeText(link), 'btn small'), button('QR code', () => showQR(link), 'btn small')); container.append(item);
+  }
+  for (const [filename, content] of Object.entries(result.files)) container.append(button(`↓ ${filename}`, () => downloadText(content, filename), 'btn small'));
+  $('download-zip').href = API + `export?kind=ssh&name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}&format=zip`;
+  if (!$('export-dialog').open) $('export-dialog').showModal();
 }
 async function exportProfile(name, route = 'direct') {
   const result = await api(`export?name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}`);
@@ -376,15 +391,15 @@ $('doctor-repair').addEventListener('click', () => busy($('doctor-repair'), asyn
   if (await confirmAction('Restart failed managed services after validating Nginx? This can reconnect clients. DNS provider/firewall settings are not changed.')) showResult('Repair results', await operation('doctor', {repair: true}));
 }));
 $('restart-managed').addEventListener('click', () => busy($('restart-managed'), async () => {
-  if (await confirmAction('Restart the managed gateway, Dropbear and enabled transports? Connected clients may disconnect.')) { showResult('Gateway restart', await operation('restart_managed')); await refresh(); }
+  if (await confirmAction('Restart the managed gateway, SSH and enabled transports? Connected clients may disconnect.')) { showResult('Gateway restart', await operation('restart_managed')); await refresh(); }
 }));
 $('read-logs').addEventListener('click', () => busy($('read-logs'), async () => { const result = await operation('live_logs', {service: $('log-service').value, level: $('log-level').value}); showResult((result.service || $('log-service').value) + ' · journal', result.text || 'No matching journal entries.'); }));
 $('packet-test').addEventListener('click', () => busy($('packet-test'), async () => { notify('Sending 15 ICMP probes…'); const result = await operation('packet_test', {target: $('packet-target').value}); showResult('Packet test · ' + result.target, result.text + '\n\n' + result.note); }));
 $('load-banner').addEventListener('click', () => busy($('load-banner'), async () => { const result = await operation('banner_get'); $('banner-text').value = result.text; $('save-banner').disabled = false; }));
-bindForm('banner-form', async data => { if (await confirmAction('Save this Dropbear banner and restart managed SSH?')) await command('banner_set', {text: data.get('text')}, 'SSH banner saved'); });
+bindForm('banner-form', async data => { if (await confirmAction('Save this managed SSH banner?')) await command('banner_set', {text: data.get('text')}, 'SSH banner saved'); });
 $('toggle-udp').addEventListener('click', () => busy($('toggle-udp'), async () => { if (await confirmAction('Change authenticated UDP forwarding policy and restart Xray?')) await command('xray_configure', {enabled: true, udp_enabled: state.network.udp_enabled === false}, 'UDP policy saved'); }));
 bindForm('slowdns-form', async data => {
-  if (await confirmAction('Enable the DNS tunnel on the selected UDP port? An official core, NS delegation and external firewall access are required.')) await command('slowdns_configure', {enabled: true, zone: data.get('zone'), ns_host: data.get('ns_host'), port: Number(data.get('port'))}, 'DNS tunnel enabled');
+  if (await confirmAction('Enable the DNS tunnel on the selected UDP port? An official core, NS delegation and external firewall access are required.')) await command('slowdns_configure', {enabled: true, zone: data.get('zone'), ns_host: data.get('ns_host'), port: Number(data.get('port')), mtu: Number(data.get('mtu'))}, 'DNS tunnel enabled');
 });
 $('disable-slowdns').addEventListener('click', () => busy($('disable-slowdns'), async () => { if (await confirmAction('Disable the DNS tunnel and disconnect its clients?')) await command('slowdns_configure', {enabled: false}, 'DNS tunnel disabled'); }));
 $('check-slowdns').addEventListener('click', () => busy($('check-slowdns'), async () => { const result = await operation('slowdns_check'); setText('slowdns-result', JSON.stringify(result, null, 2)); $('slowdns-result').hidden = false; }));
@@ -400,7 +415,7 @@ $('export-route').addEventListener('change', async () => {
   const previous = currentExport;
   if (!previous) return;
   $('export-route').disabled = true;
-  try { await exportProfile(previous.name, $('export-route').value); }
+  try { await (previous.kind === 'ssh' ? exportSSH : exportProfile)(previous.name, $('export-route').value); }
   catch (err) { $('export-route').value = previous.route || 'direct'; notify(err.message, true); }
   finally { $('export-route').disabled = false; }
 });
@@ -408,3 +423,7 @@ $('subscription-route').addEventListener('change', renderSubscription);
 bindForm('cloudfront-form', async data => { await command('cloudfront_configure', {enabled: true, endpoint: data.get('endpoint').trim(), price_class: data.get('price_class')}, 'CloudFront settings saved. Deploy the private AWS setup before checking the endpoint.'); });
 $('cf-disable').addEventListener('click', () => busy($('cf-disable'), async () => { if (await confirmAction('Disable CloudFront origin routes? Existing CDN tunnels may disconnect. AWS resources and billing must be managed in your AWS account.')) await command('cloudfront_configure', {enabled: false}, 'CloudFront routes disabled'); }));
 $('cf-check').addEventListener('click', () => busy($('cf-check'), async () => { notify('Checking TLS and four WebSocket routes…'); const result = await operation('cloudfront_check'); setText('cf-result', JSON.stringify(result, null, 2)); $('cf-result').hidden = false; await refresh(); }));
+
+bindForm('bunny-form', async data => { await command('bunny_configure', {enabled: true, endpoint: data.get('endpoint').trim()}, 'Bunny origin prepared. Apply private setup headers at Bunny before connecting.'); });
+$('bunny-check').addEventListener('click', () => busy($('bunny-check'), async () => { const result = await operation('bunny_check'); setText('bunny-result', JSON.stringify(result, null, 2)); $('bunny-result').hidden = false; }));
+$('bunny-disable').addEventListener('click', () => busy($('bunny-disable'), () => command('bunny_configure', {enabled: false}, 'Bunny routes disabled')));
