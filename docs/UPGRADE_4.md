@@ -17,6 +17,12 @@ The migration tests config and both banners before saving the backend marker,
 and restores the previous backend if startup fails. A transport migration can
 disconnect tunnel clients; do it during a maintenance window.
 
+Session attribution follows verified kernel ancestry across PAM's login scopes.
+Only managed tunnel accounts are counted: ordinary root/admin users are excluded.
+If a managed account also authenticates through the admin listener, its limits
+still apply; changing ports cannot bypass enforcement. Listener ports come from
+verified ancestor sockets, so non-default administrative ports are handled too.
+
 OpenSSH has separate host keys from Dropbear. Verify the printed SHA256 host-key
 fingerprint on the VPS, then update the matching saved entry in each client.
 Never disable host-key checks to hide a changed key.
@@ -154,11 +160,18 @@ uvloop rewrite is not a drop-in replacement for this threaded server and was not
 introduced without a demonstrated bottleneck.
 
 The WS service raises its descriptor limit to 8192. Diagnostics avoid holding the
-account writer lock during bounded ping, DNS and journal reads, and service
+account writer lock during bounded ping, DNS, delegation, diagnostics and journal reads, and service
 status uses one systemd query. The enforcer keeps a monotonic five-second target
 without adding processing time to every sleep. Dashboard polling remains bounded,
 visible-only and non-overlapping; unnecessary frontend/runtime rewrites were
-avoided. Kernel BBR/fq tuning is opt-in and reversible:
+avoided.
+
+The web worker also verifies Nginx's private gateway marker before trusting HTTPS
+or viewer-IP headers. A tunnel user reaching its loopback port cannot forge those
+headers to rotate login rate-limit identities. Direct localhost browser access
+through an SSH forward continues to work with its actual loopback rate key.
+
+Kernel BBR/fq tuning is opt-in and reversible:
 
 ```sh
 python3 scripts/tune-network.py status

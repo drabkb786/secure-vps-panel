@@ -45,7 +45,7 @@ def test_openssh_ignores_admin_cgroup_and_reused_pid(tmp_path, monkeypatch):
     (process / "exe").symlink_to(executable)
     (process / "stat").write_text("201 (sshd: misleading title) " + " ".join(["S", "200"] + ["0"] * 17 + ["12345"]))
     (process / "status").write_text("Uid:\t1001\t1001\t1001\t1001\n")
-    (process / "cgroup").write_text("0::/system.slice/ssh.service\n")
+    (process / "cgroup").write_text("0::/system.slice/unrelated.service\n")
     monkeypatch.setattr(sessions, "PROC", tmp_path)
     monkeypatch.setattr(sessions, "EXECUTABLES", (executable,))
     assert sessions.process(201) is None
@@ -73,6 +73,64 @@ def test_openssh_collapses_privsep_processes(tmp_path, monkeypatch):
     monkeypatch.setattr(sessions, "process", rows.get)
     monkeypatch.setattr(sessions, "managed_uids", lambda _: {1001: "basit"})
     assert sessions.snapshot()["sessions"] == {1001: [rows[202]]}
+
+
+def test_pam_session_scope_requires_trusted_managed_ancestor(tmp_path, monkeypatch):
+    executable = Path("/usr/bin/true").resolve()
+    monkeypatch.setattr(sessions, "PROC", tmp_path)
+    monkeypatch.setattr(sessions, "EXECUTABLES", (executable,))
+    for pid, parent, uid, group in ((200, 1, 0, "system.slice/abdulbasit-sshd.service"),
+                                    (201, 200, 0, "user.slice/session-1.scope"),
+                                    (202, 201, 1001, "user.slice/session-1.scope"),
+                                    (300, 1, 0, "system.slice/ssh.service"),
+                                    (301, 300, 1003, "user.slice/session-2.scope")):
+        root = tmp_path / str(pid); root.mkdir()
+        (root / "exe").symlink_to(executable)
+        (root / "stat").write_text(f"{pid} (sshd) " + " ".join(["S", str(parent)] + ["0"] * 17 + [str(pid)]))
+        (root / "status").write_text(f"Uid:\t{uid}\t{uid}\t{uid}\t{uid}\n")
+        (root / "cgroup").write_text("0::/" + group + "\n")
+    assert sessions.process(202).uid == 1001
+    monkeypatch.setattr(sessions, "managed_uids", lambda _: {1001: "basit"})
+    observed = sessions.snapshot()["sessions"]
+    assert [p.pid for p in observed[1001]] == [202]
+    assert 1003 not in observed, "An ordinary admin must never be attributed as a tunnel user"
+
+
+def test_ssh_viewer_ip_uses_verified_listener_port_not_forwarded_destination(monkeypatch):
+    import ssh_identity
+    rows = {200: sessions.Process(200, 1, 0, 1, "sshd"), 201: sessions.Process(201, 200, 0, 2, "sshd"),
+            202: sessions.Process(202, 201, 1001, 3, "sshd")}
+    monkeypatch.setattr(sessions, "metadata", rows.get)
+    monkeypatch.setattr(sessions, "process", rows.get)
+    monkeypatch.setattr(ssh_identity, "socket_inodes", lambda pid: {99} if pid == 200 else {101, 102} if pid == 202 else set())
+    monkeypatch.setattr(ssh_identity, "tcp_rows", lambda state: {99: ("0.0.0.0", 22022, "0.0.0.0", 0)})
+    monkeypatch.setattr(ssh_identity, "tcp_sockets", lambda: {102: ("127.0.0.1", 41111, "127.0.0.1", 80),
+                                                              101: ("192.0.2.5", 22022, "198.51.100.8", 51515)})
+    assert ssh_identity.session_ips({1001: [202]}) == {202: "198.51.100.8"}
+
+
+@pytest.mark.parametrize("command", ["packet_test", "slowdns_check", "diagnostics"])
+def test_slow_observational_request_does_not_block_enforcement(monkeypatch, command):
+    import threading
+    entered, release = threading.Event(), threading.Event()
+    def slow(_):
+        entered.set(); release.wait(5)
+        return {"done": True}
+    monkeypatch.setattr(paneld, "HANDLERS", {command: slow, "xray_sync": lambda _: {"synced": True}})
+    monkeypatch.setattr(paneld, "peer_uid", lambda _: 0)
+    monkeypatch.setattr(paneld, "allowed_peer", lambda _: True)
+    reader, reader_server = socket.socketpair(); writer, writer_server = socket.socketpair()
+    threads = [threading.Thread(target=paneld.handle_connection, args=(peer,), daemon=True) for peer in (reader_server, writer_server)]
+    try:
+        threads[0].start(); reader.sendall((json.dumps({"command": command}) + "\n").encode())
+        assert entered.wait(2)
+        threads[1].start(); writer.sendall(b'{"command":"xray_sync"}\n'); writer.settimeout(2)
+        assert json.loads(writer.recv(4096))["synced"] is True
+    finally:
+        release.set()
+        for thread in threads:
+            if thread.is_alive(): thread.join(3)
+        reader.close(); writer.close()
 
 
 def test_xray_live_addition_preserves_existing_core(manager):

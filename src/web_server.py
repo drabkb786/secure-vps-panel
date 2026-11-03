@@ -11,6 +11,7 @@ import threading
 import time
 import zipfile
 import re
+import gateway_identity
 from datetime import datetime
 from collections import OrderedDict, deque
 from http.cookies import SimpleCookie
@@ -141,9 +142,18 @@ class Handler(BaseHTTPRequestHandler):
             return ""
 
     def trusted_transport(self) -> bool:
-        # A missing forwarded header means direct loopback / SSH forwarding.
-        # Nginx always overwrites this header with $scheme on public requests.
-        return self.headers.get("X-Forwarded-Proto") in (None, "https")
+        # Tunnel accounts can reach loopback TCP services. A forged HTTPS or
+        # viewer-IP header must not bypass web transport policy/rate limits.
+        protocol = self.headers.get("X-Forwarded-Proto")
+        return protocol is None or (protocol == "https" and self.gateway_request())
+
+    def gateway_request(self) -> bool:
+        return self.headers.get(gateway_identity.header_name()) == "1"
+
+    def viewer_ip(self) -> str:
+        if self.headers.get("X-Forwarded-Proto") == "https" and self.gateway_request():
+            return self.headers.get("X-Real-IP", self.client_address[0])
+        return self.client_address[0]
 
     def same_origin(self) -> bool:
         scheme = "https" if self.headers.get("X-Forwarded-Proto") == "https" else "http"
@@ -263,7 +273,7 @@ class Handler(BaseHTTPRequestHandler):
         if not re.fullmatch(r"[A-Za-z0-9_-]{43}", token) or any(len(v) != 1 for v in query.values()):
             self.json(404, {"error": "Subscription unavailable"})
             return
-        ip = self.headers.get("X-Real-IP", self.client_address[0]) if self.headers.get("X-Forwarded-Proto") else self.client_address[0]
+        ip = self.viewer_ip()
         if not STORE.public_allowed(ip):
             self.json(429, {"error": "Try again later"}, {"Retry-After": "60"})
             return
@@ -308,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Object required")
         path = urlsplit(self.path).path
         if path == "/panel/api/login":
-            ip = self.headers.get("X-Real-IP", self.client_address[0]) if self.headers.get("X-Forwarded-Proto") else self.client_address[0]
+            ip = self.viewer_ip()
             if not STORE.login_allowed(ip):
                 self.json(429, {"error": "Too many login attempts; wait 5 minutes"})
                 return

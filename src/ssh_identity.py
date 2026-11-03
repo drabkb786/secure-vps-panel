@@ -43,13 +43,13 @@ def decode_address(value):
     return canonical_ip(str(ipaddress.ip_address(raw))), int(port, 16)
 
 
-def tcp_sockets():
+def tcp_rows(state="01"):
     result = {}
     for name in ("tcp", "tcp6"):
         try:
             for line in (PROC / "net" / name).read_text().splitlines()[1:]:
                 fields = line.split()
-                if len(fields) >= 10 and fields[3] == "01":
+                if len(fields) >= 10 and fields[3] == state:
                     try:
                         result[int(fields[9])] = (*decode_address(fields[1]), *decode_address(fields[2]))
                     except (ValueError, IndexError):
@@ -57,6 +57,10 @@ def tcp_sockets():
         except OSError:
             pass
     return result
+
+
+def tcp_sockets():
+    return tcp_rows("01")
 
 
 def register(target, ip, verified):
@@ -96,13 +100,16 @@ def gateway_ip(port, sockets):
 
 def session_ips(sessions):
     sockets = tcp_sockets()
+    listeners = tcp_rows("0A")
+    from openssh_sessions import listener_ports
     result = {}
     for pids in sessions.values():
         for pid in pids:
             result[pid] = None
+            ports = SSH_PORTS | listener_ports(pid, listeners)
             for inode in socket_inodes(pid):
                 row = sockets.get(inode)
-                if row and row[1] in SSH_PORTS:
+                if row and row[1] in ports:
                     result[pid] = gateway_ip(row[3], sockets) if ipaddress.ip_address(row[2]).is_loopback else row[2]
                     break
     return result

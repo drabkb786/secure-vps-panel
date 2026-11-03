@@ -363,6 +363,7 @@ def nginx_text(domain: str, tls: bool) -> str:
         proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Noway-Gateway 1;
         proxy_set_header Connection "";
         proxy_read_timeout 30s;
         proxy_buffering off;
@@ -373,6 +374,7 @@ def nginx_text(domain: str, tls: bool) -> str:
         proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Noway-Gateway 1;
         proxy_set_header Connection "";
         proxy_read_timeout 240s;
         proxy_buffering off;
@@ -772,7 +774,10 @@ def handle_connection(conn: socket.socket) -> None:
             # Bounded observational commands cannot mutate account/config state.
             # Run them outside the writer lock so a 15-second ping or journal
             # read does not delay quota enforcement or user creation.
-            independent = command in {"packet_test", "dns_lookup", "live_logs", "memory_report", "service_status"}
+            independent = command in {"packet_test", "dns_lookup", "live_logs", "memory_report", "service_status",
+                                      "diagnostics", "slowdns_check", "slowdns_status", "live_connections",
+                                      "dashboard_status", "list_users", "list_sessions", "xray_status",
+                                      "bunny_status", "cloudfront_status", "config_view"}
             with OP_LOCK:
                 authorize_command(uid, command, params)
                 if not independent:

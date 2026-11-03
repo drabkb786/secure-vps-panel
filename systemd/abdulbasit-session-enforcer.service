@@ -1,7 +1,6 @@
 [Unit]
-Description=Abdul Basit concurrent Dropbear session enforcer
-After=dropbear.service
-Wants=dropbear.service
+Description=Abdul Basit managed SSH session and IP enforcer
+After=abdulbasit-sshd.service dropbear.service
 
 [Service]
 Type=simple

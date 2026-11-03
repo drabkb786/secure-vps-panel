@@ -5,6 +5,7 @@ creates/deletes a managed account through paneld and exercises its real kernel
 session attribution. It never edits administrative sshd configuration.
 """
 import hashlib
+import http.client
 import json
 import os
 import shlex
@@ -29,6 +30,9 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
     import session_enforcer
     import ssh_identity
     import ssh_sessions
+    import gateway_identity
+    monkeypatch.setattr(gateway_identity, "CONFIG_FILE", Path("/etc/abdulbasit-gateway/header.conf"))
+    monkeypatch.setattr(ssh_identity, "PEER_DIR", Path("/run/abdulbasit-ws/peers"))
     from common import USERS_DIR
     from panel_client import request
     from test_dropbear_native import free_port, wait_port
@@ -84,6 +88,18 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
             nginx = subprocess.Popen(["/usr/sbin/nginx", "-p", directory, "-c", str(config), "-g", "daemon off;"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_port(tls_port, nginx)
             monkeypatch.setenv("SSL_CERT_FILE", str(cert))
+            # The installed web worker must trust only Nginx's private marker,
+            # while remaining reachable over this real verified TLS gateway.
+            request("configure_web", username="nativeadmin", password="native-web-password")
+            import ssl
+            context = ssl.create_default_context(cafile=str(cert))
+            with context.wrap_socket(socket.create_connection(("127.0.0.1", tls_port), timeout=5), server_hostname="vpn.example.com") as peer:
+                body = json.dumps({"username": "nativeadmin", "password": "native-web-password"}).encode()
+                peer.sendall(b"POST /panel/api/login HTTP/1.1\r\nHost: vpn.example.com\r\nOrigin: https://vpn.example.com\r\nContent-Type: application/json\r\nContent-Length: " + str(len(body)).encode() + b"\r\nConnection: close\r\n\r\n" + body)
+                response = http.client.HTTPResponse(peer); response.begin()
+                result = response.read()
+                assert response.status == 200, result
+                assert "Secure" in response.getheader("Set-Cookie", "")
             adapter = Path(__file__).resolve().parents[1] / "src/ssh_ws_client.py"
             proxy = paramiko.ProxyCommand(shlex.join([sys.executable, str(adapter), "--host", "vpn.example.com", "--address", "127.0.0.1", "--port", str(tls_port)]))
             second, second_channel = login(proxy)
@@ -93,7 +109,16 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
                 if len(rows) == 2:
                     break
                 time.sleep(.1)
-            assert len(rows) == 2, state
+            if len(rows) != 2:
+                debug = []
+                processes = subprocess.run(["ps", "-eo", "pid,ppid,euid,comm"], check=True, text=True, capture_output=True).stdout
+                for line in processes.splitlines()[1:]:
+                    fields = line.split()
+                    if len(fields) == 4 and fields[-1].startswith("sshd"):
+                        pid = int(fields[0]); group_file = Path(f"/proc/{pid}/cgroup")
+                        try: debug.append({"kernel": line, "cgroup": group_file.read_text(), "verified": repr(__import__('openssh_sessions').process(pid))})
+                        except OSError: pass
+                pytest.fail(f"OpenSSH attribution failed: {state}; kernel processes: {debug}")
             observed = ssh_identity.session_ips({name: [row.pid for row in rows]})
             assert "198.51.100.42" in observed.values(), observed
             # Keep the oldest login and terminate only the newest excess login.
