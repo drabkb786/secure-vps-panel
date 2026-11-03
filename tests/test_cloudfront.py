@@ -110,6 +110,7 @@ def test_template_protects_origin_and_keeps_admin_out():
     assert behavior["ViewerProtocolPolicy"] == "https-only"
     policy = tpl["Resources"]["OriginPolicy"]["Properties"]["OriginRequestPolicyConfig"]
     assert "Host" not in policy["HeadersConfig"]["Headers"] and policy["CookiesConfig"]["CookieBehavior"] == "none"
+    assert {"Referer", "Content-Type", "X-Padding"} <= set(policy["HeadersConfig"]["Headers"])
     assert "cloudfront_setup" in paneld.WEB_COMMANDS and "cloudfront_setup" not in web_server.COMMANDS
 
 

@@ -102,6 +102,9 @@ abdulbasit-panelctl xray-export basit --route bunny --zip /root/basit-xray-bunny
 CloudFront's updated template allows uncached XHTTP GET/POST under
 `/cloudfront/xhttp/`. Deploy/update the AWS stack from the new setup ZIP before
 using these exports. The viewer function rejects unrelated paths and methods.
+The origin policy forwards Referer (the current core's default XHTTP padding
+carrier), Content-Type and X-Padding; dropping Referer causes HTTP400 even when
+TLS and WebSocket probes pass.
 The origin keeps authenticated viewer identity separate from untrusted headers.
 CDN routes avoid applying a 40-user limit to the shared edge IP; per-account
 limits use verified viewer sources. Existing direct public paths remain available.

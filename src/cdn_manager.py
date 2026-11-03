@@ -153,7 +153,7 @@ def template() -> dict:
         "Resources": {
             "OriginPolicy": {"Type": "AWS::CloudFront::OriginRequestPolicy", "Properties": {"OriginRequestPolicyConfig": {
                 "Name": {"Fn::Sub": "${AWS::StackName}-ws"},
-                "HeadersConfig": {"HeaderBehavior": "whitelist", "Headers": ["Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Protocol", "Sec-WebSocket-Accept", "Sec-WebSocket-Extensions", "X-Noway-Viewer-IP"]},
+                "HeadersConfig": {"HeaderBehavior": "whitelist", "Headers": ["Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Protocol", "Sec-WebSocket-Accept", "Sec-WebSocket-Extensions", "Referer", "Content-Type", "X-Padding", "X-Noway-Viewer-IP"]},
                 "CookiesConfig": {"CookieBehavior": "none"}, "QueryStringsConfig": {"QueryStringBehavior": "all"},
             }}},
             "RouteGuard": {"Type": "AWS::CloudFront::Function", "Properties": {

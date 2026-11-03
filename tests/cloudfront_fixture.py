@@ -19,7 +19,7 @@ def enable_origin(tmp_path, monkeypatch, provider="cloudfront"):
 
 
 def edge_server(port, origin_port, cert, key, secret, provider="cloudfront"):
-    headers = "\n".join(f"proxy_set_header {name} $http_{name.lower().replace('-', '_')};" for name in ("Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Protocol", "Sec-WebSocket-Extensions"))
+    headers = "\n".join(f"proxy_set_header {name} $http_{name.lower().replace('-', '_')};" for name in ("Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Protocol", "Sec-WebSocket-Extensions", "Referer", "Content-Type", "X-Padding"))
     verify = "X-Noway-Bunny-Verify" if provider == "bunny" else "X-Noway-Origin-Verify"
     viewer = "X-Noway-Bunny-Viewer-IP" if provider == "bunny" else "X-Noway-Viewer-IP"
     return f'''server {{
