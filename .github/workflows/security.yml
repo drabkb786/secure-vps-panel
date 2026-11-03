@@ -84,6 +84,9 @@ jobs:
           ! grep -RInE --include='*.sh' 'chmod[[:space:]]+777' .
 
   managed-runtime:
+    # Compile once for the PR and again after merge, instead of duplicating the
+    # same source build on every feature-branch push and pull_request event.
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

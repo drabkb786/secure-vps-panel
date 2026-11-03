@@ -74,7 +74,9 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
         return transport, channel
     try:
         first, channel = login(socket.create_connection(("127.0.0.1", 109), timeout=5))
-        with tempfile.TemporaryDirectory(prefix="noway-native-", dir="/run") as directory:
+        # /run may be mounted noexec on hosted runners. The ASKPASS helper must
+        # execute, while remaining outside home directories hidden by services.
+        with tempfile.TemporaryDirectory(prefix="noway-native-", dir="/usr/local/lib") as directory:
             root = Path(directory); cert = root / "cert.pem"; key = root / "key.pem"
             subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com", "-addext", "subjectAltName=DNS:vpn.example.com"], check=True, capture_output=True, timeout=20)
             monkeypatch.setattr(paneld, "ipv6_enabled", lambda: False)

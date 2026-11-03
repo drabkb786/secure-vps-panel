@@ -31,7 +31,7 @@ def test_actual_versions_preserved_configs_renewal_command_and_reversible_activa
     assert '3.15.2' in run('/usr/local/lib/abdulbasit/python', '--version')
     assert '5.9.0' in run('/usr/local/bin/certbot', '--version')
     assert '1.1.1' in run('/usr/local/bin/fail2ban-client', '--version')
-    assert 'PONG' in run('/usr/local/bin/fail2ban-client', 'ping')
+    assert 'pong' in run('/usr/local/bin/fail2ban-client', 'ping').lower()
     assert 'abdulbasit-sshd' in run('/usr/local/bin/fail2ban-client', 'status')
     renewal = run('systemctl', 'show', 'certbot.service', '-p', 'ExecStart')
     assert '/opt/noway/runtime/current/bin/certbot' in renewal and '-q renew' in renewal
@@ -58,6 +58,6 @@ def test_actual_versions_preserved_configs_renewal_command_and_reversible_activa
     runtime.activate(active)
     assert Path('/opt/noway/runtime/current').resolve() == active
     assert contents() == before
-    assert 'PONG' in run('/usr/local/bin/fail2ban-client', 'ping')
+    assert 'pong' in run('/usr/local/bin/fail2ban-client', 'ping').lower()
     for unit in ('nginx', 'fail2ban', 'abdulbasit-paneld', 'abdulbasit-ws', 'abdulbasit-web'):
         assert 'active' in run('systemctl', 'is-active', unit)
