@@ -6,6 +6,9 @@ Wants=dropbear.service
 [Service]
 Type=simple
 DynamicUser=yes
+SupplementaryGroups=abdulbasit-gateway
+RuntimeDirectory=abdulbasit-ws
+RuntimeDirectoryMode=0700
 ExecStart=/usr/bin/python3 /usr/local/lib/abdulbasit/ws_proxy.py
 Restart=on-failure
 RestartSec=2s

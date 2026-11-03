@@ -1,4 +1,4 @@
-# NOWAY VPS Control Room v3.4.0
+# NOWAY VPS Control Room v3.5.0
 
 > Browser dashboard, SSH/Dropbear, VLESS/VMess/Trojan, optional VLESS XHTTP, live subscriptions, QR, client configs and private recovery for Ubuntu/Debian VPS servers.
 
@@ -9,7 +9,7 @@
 | Owner and Maintainer | **Abdul Basit** |
 | GitHub Account | `drabkb786` |
 | Repository | `drabkb786/secure-vps-panel` |
-| Version | `3.4.0` |
+| Version | `3.5.0` |
 | Default Telegram Super Admin ID | `6408975845` |
 | Supported OS | Ubuntu 22.04/24.04 and Debian 12+ |
 | Required Python | Python 3.10 or newer |
@@ -25,6 +25,7 @@ Yeh browser aur terminal dono se khulta hai. Naya NOWAY dashboard `https://YOUR-
 **v3.2 setup, migration, Xray exports aur limitations:** [Web + Xray guide](docs/WEB_XRAY.md).
 **Implementation sequence aur next phases:** [Roadmap](docs/ROADMAP.md).
 **Verification evidence:** [Validation](docs/VALIDATION.md).
+**Exact byte units, unique-IP caps, migration and limitations:** [Accuracy guide](docs/ACCURACY.md).
 **CloudFront setup, direct/CDN links and performance scope:** [CloudFront guide](docs/CLOUDFRONT.md).
 **External GitHub/AWS comparison:** [CloudFront research](docs/CLOUDFRONT_RESEARCH.md).
 **Dropbear fixes, standard WebSocket and session attribution:** [SSH transport guide](docs/DROPBEAR.md).
@@ -41,7 +42,8 @@ users, certificate private keys aur admin/bot credentials ismein shamil nahi.
 measured Xray GB limits/reset, authenticated recent IPs, SSH/Xray lock/unlock,
 UDP policy, optional official dnstt SlowDNS, doctor/repair, bounded error logs,
 packet-loss test, custom Dropbear banner aur root-only maintenance. Xray quotas
-one-minute sampling par enforce hote hain; SSH GB ab bhi metadata hai. Public
+ab five-second target checks par enforce hote hain (plus processing time);
+SSH byte metering unavailable hai aur finite SSH quotas reject hote hain. Public
 SlowDNS ko actual NS delegation/UDP firewall setup chahiye. Details aur complete
 20-option mapping operations guide mein hain.
 
@@ -51,6 +53,11 @@ old/new Dropbear session attribution and pidfd-safe enforcement. Installer adds
 `python3-wsproto`, disables reverse forwarding, limits auth retries and rolls back
 Dropbear defaults if either managed listener fails. Detailed limits, source
 research and native test scope are in the SSH transport guide.
+
+**v3.5:** restart-fenced integer counters, explicit GB/GiB units, unique source-IP caps,
+private loopback gateway identity and trusted CloudFront viewer IPs. IP caps are
+polled, not device limits; quotas can overshoot. Existing CloudFront stacks must
+be updated before the VPS upgrade. See the accuracy guide above.
 
 Panel automatically:
 
@@ -516,7 +523,7 @@ Required fields:
 Username: lowercase username
 Validity days: 1 to 3650
 Concurrent sessions: 1 to 20
-Quota metadata: number in GB or Unlimited
+Unique IP cap: 0 (Unlimited) or 1 to 20; SSH GB metering unavailable
 Password: minimum 12 characters
 ```
 
@@ -526,7 +533,7 @@ Example:
 Username: testuser
 Validity days: 30
 Concurrent sessions: 2
-Quota metadata: Unlimited
+Unique IP cap: 0 (Unlimited)
 Password: use-a-strong-private-password
 ```
 
@@ -569,19 +576,16 @@ abdulbasit-panelctl set-sessions testuser --sessions 3
 
 Allowed range `1` to `20` hai.
 
-## Quota metadata change
+## Clear an old SSH quota note
 
-```bash
-abdulbasit-panelctl set-quota testuser --quota 50
-```
-
-Ya:
+Finite SSH GB quotas are rejected because this backend cannot measure them.
+To clear a legacy metadata-only value:
 
 ```bash
 abdulbasit-panelctl set-quota testuser --quota Unlimited
 ```
 
-> Quota field metadata-only hai. Current version actual network GB usage enforce nahi karta, kyun ke process I/O ko network usage kehna technically inaccurate tha.
+> SSH GB metering unavailable hai. Xray profiles ke GB/GiB limits measured hain; SSH process I/O ko network traffic nahi samjha jata.
 
 ## User delete karna
 

@@ -26,7 +26,7 @@ def test_nginx_routes_preserve_ssh_and_isolate_xray_tls(monkeypatch):
     tls = paneld.nginx_text("vpn.example.com", True)
     assert "location /panel/" in tls and "127.0.0.1:9090" in tls
     assert "~*websocket 127.0.0.1:2082;" in tls
-    assert tls.count("proxy_pass http://127.0.0.1:10001;") == 1
+    assert tls.count("proxy_pass http://127.0.0.1:10001/vless/") == 1
     assert "location = /vless { return 403; }" in tls
     assert "client_max_body_size 16k;" in tls
     assert "location ^~ /panel/sub/" in tls and "access_log off;" in tls and "error_log /dev/null crit;" in tls

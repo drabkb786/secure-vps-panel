@@ -101,6 +101,11 @@ class Manager:
         from xray_manager import settings, server_config, accounts
         config = server_config(settings(), accounts())
         for inbound in config["inbounds"]:
+            stream = inbound.get("streamSettings", {})
+            for key in ("wsSettings", "xhttpSettings"):
+                if key in stream: stream[key]["path"] = "[private gateway path]"
+            if "sockopt" in stream:
+                stream["sockopt"]["trustedXForwardedFor"] = ["[private gateway marker]"]
             for client in inbound.get("settings", {}).get("clients", []):
                 for key in ("id", "password"):
                     if key in client: client[key] = "[redacted]"

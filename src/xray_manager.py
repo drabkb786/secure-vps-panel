@@ -27,10 +27,12 @@ from client_formats import clash_config, singbox_config
 import cdn_manager
 import profile_backup
 import traffic
+import gateway_identity
 
 from common import (BASE_DIR, DOMAIN_FILE, ValidationError, atomic_write,
                     atomic_write_json, calculate_expiry, read_json, read_text,
-                    validate_days, validate_domain, validate_username, validate_quota)
+                    validate_days, validate_domain, validate_username, validate_quota,
+                    validate_max_ips, quota_bytes)
 
 SETTINGS_FILE = BASE_DIR / "network.json"
 ACCOUNTS_FILE = BASE_DIR / "xray_accounts.json"
@@ -53,16 +55,18 @@ def settings() -> dict:
     return {"enabled": False, "xhttp_enabled": False, "udp_enabled": True, "dns": dict(DEFAULT_DNS), **data}
 
 
-def accounts() -> list[dict]:
+def accounts(*, hydrate=True) -> list[dict]:
     data = read_json(ACCOUNTS_FILE, None) if ACCOUNTS_FILE.exists() else []
     if not isinstance(data, list):
         raise RuntimeError("Xray account store is invalid; restore its backup")
-    return data
+    return traffic.hydrate(data) if hydrate else data
 
 
 def active(account: dict, today: date | None = None) -> bool:
     try:
-        eligible = account.get("enabled", True) is True and not quota_exhausted(account)
+        eligible = account.get("enabled", True) is True and not quota_exhausted(account) and not account.get("meter_unavailable") and not account.get("ip_monitoring_failed")
+        if account.get("ip_blocked_until"):
+            eligible = eligible and datetime.fromisoformat(account["ip_blocked_until"]) <= datetime.now(timezone.utc)
         if account.get("expires_at"):
             return eligible and datetime.fromisoformat(account["expires_at"]) > datetime.now(timezone.utc)
         return eligible and date.fromisoformat(account["expiry"]) > (today or date.today())
@@ -71,12 +75,16 @@ def active(account: dict, today: date | None = None) -> bool:
 
 
 def quota_exhausted(account: dict) -> bool:
-    return account.get("quota_gb") is not None and int(account.get("used_bytes", 0)) >= float(account["quota_gb"]) * 1024 ** 3
+    limit = quota_bytes(account)
+    return limit is not None and int(account.get("used_bytes", 0)) >= limit
 
 
 def public_account(account: dict) -> dict:
-    fields = {"name", "protocols", "enabled", "expiry", "created_at", "expires_at", "trial", "quota_gb", "used_bytes", "upload_bytes", "download_bytes"}
-    return {k: v for k, v in account.items() if k in fields} | {"active": active(account), "quota_exhausted": quota_exhausted(account), "subscription_enabled": bool(account.get("subscription_hash"))}
+    fields = {"name", "protocols", "enabled", "expiry", "created_at", "expires_at", "trial", "quota_gb", "used_bytes", "upload_bytes", "download_bytes", "max_ips", "online_ips", "ip_blocked_until", "ip_monitoring_failed", "meter_unavailable"}
+    return {k: v for k, v in account.items() if k in fields} | {
+        "active": active(account), "quota_exhausted": quota_exhausted(account), "subscription_enabled": bool(account.get("subscription_hash")),
+        "quota_unit": account.get("quota_unit", "GiB"), "quota_bytes": quota_bytes(account),
+        "exact_bytes": {k: str(account.get(k, 0)) for k in ("used_bytes", "upload_bytes", "download_bytes")}}
 
 
 def validate_dns(params: dict) -> dict:
@@ -123,7 +131,7 @@ def server_config(config: dict, rows: list[dict]) -> dict:
         for row in rows:
             if not active(row) or protocol not in row["protocols"]:
                 continue
-            client = {"email": f"{row['name']}-{protocol}@noway.local", "level": 0}
+            client = {"email": f"{row['uuid']}-{protocol}@noway.local", "level": 0}
             if protocol == "trojan":
                 client["password"] = row["trojan_password"]
             else:
@@ -136,15 +144,15 @@ def server_config(config: dict, rows: list[dict]) -> dict:
         inbounds.append({
             "tag": f"noway-{protocol}", "listen": "127.0.0.1", "port": port,
             "protocol": protocol, "settings": inbound_settings,
-            "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": path},
-                               "sockopt": {"trustedXForwardedFor": ["X-Noway-Gateway"]}},
+            "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": gateway_identity.backend_path(protocol)},
+                               "sockopt": {"trustedXForwardedFor": [gateway_identity.header_name()]}},
         })
     if config.get("xhttp_enabled"):
-        clients = [{"id": row["uuid"], "email": f"{row['name']}-xhttp@noway.local"} for row in rows if active(row) and "vless" in row["protocols"]]
+        clients = [{"id": row["uuid"], "email": f"{row['uuid']}-xhttp@noway.local"} for row in rows if active(row) and "vless" in row["protocols"]]
         inbounds.append({"tag": "noway-xhttp", "listen": "127.0.0.1", "port": XHTTP_PORT,
                          "protocol": "vless", "settings": {"clients": clients, "decryption": "none"},
-                         "streamSettings": {"network": "xhttp", "security": "none", "xhttpSettings": {"path": XHTTP_PATH, "mode": "auto"},
-                                            "sockopt": {"trustedXForwardedFor": ["X-Noway-Gateway"]}}})
+                         "streamSettings": {"network": "xhttp", "security": "none", "xhttpSettings": {"path": gateway_identity.backend_path("xhttp"), "mode": "auto"},
+                                            "sockopt": {"trustedXForwardedFor": [gateway_identity.header_name()]}}})
     return {
         "log": {"loglevel": "warning"},
         "api": {"tag": "noway-stats", "listen": str(traffic.API_SOCKET), "services": ["StatsService"]},
@@ -250,25 +258,43 @@ class Manager:
         if not settings()["enabled"]:
             return {"available": False, "reason": "Xray is disabled"}
         try:
-            response = self.api("statsquery", "-pattern=user>>>")
-            try:
-                epoch = self.run(["/bin/systemctl", "show", "abdulbasit-xray", "--property=InvocationID", "--value"], timeout=3).stdout.strip() or "unknown"
-            except (RuntimeError, OSError, AttributeError):
-                epoch = "unknown"
-        except (RuntimeError, OSError, AttributeError, ValueError, subprocess.TimeoutExpired):
-            return {"available": False, "reason": "Statistics API unavailable; saved totals retained"}
-        rows = accounts(); data = traffic.accumulate(rows, response, epoch)
+            for attempt in range(2):
+                epoch = self.epoch()
+                response = self.api("statsquery", "-pattern=user>>>")
+                if epoch == self.epoch():
+                    break
+            else:
+                raise RuntimeError("Core restarted during statistics sampling")
+            rows = accounts(); data = traffic.accumulate(rows, response, epoch)
+        except (RuntimeError, OSError, AttributeError, ValueError, TypeError, subprocess.TimeoutExpired):
+            return {"available": False, "reason": "Statistics unavailable or inconsistent; saved totals retained", "sample_interval_seconds": traffic.SAMPLE_SECONDS}
         # One authoritative atomic counter file prevents duplicate counting if a
         # crash happens between persisting totals and refreshing account metadata.
         atomic_write_json(traffic.STATE_FILE, data)
         atomic_write_json(ACCOUNTS_FILE, rows)
         return {"available": True, "sampled_at": data["sampled_at"], "accounts": [public_account(x) for x in rows],
-                "note": "Xray payload bytes; sampled every minute. In-flight bytes since the last sample may be lost on an unexpected core crash."}
+                "sample_interval_seconds": traffic.SAMPLE_SECONDS, "counter_discontinuities": data.get("counter_discontinuities", 0),
+                "note": "Integer Xray payload bytes. Target sampling interval: 5 seconds plus query/restart time. Polling can overshoot quotas; uncheckpointed bytes can be lost on a core crash. GB = 1,000,000,000 bytes; GiB = 1,073,741,824 bytes."}
+
+    def epoch(self):
+        epoch = self.run(["/bin/systemctl", "show", "abdulbasit-xray", "--property=InvocationID", "--value"], timeout=3).stdout.strip()
+        if not re.fullmatch(r"[a-fA-F0-9]{32}", epoch) or int(epoch, 16) == 0:
+            raise RuntimeError("Xray instance ID is unavailable")
+        return epoch
 
     def online(self, _):
         try:
-            return {"available": True, "connections": traffic.ip_rows(self.api("statsonlineiplist", "-all")),
-                    "note": "Authenticated recent activity, about 20 seconds. Managed Nginx overwrites forwarded IP headers; the core trusts only its loopback gateway."}
+            epoch = self.epoch()
+            connections = traffic.ip_rows(self.api("statsonlineiplist", "-all"))
+            if epoch != self.epoch():
+                raise RuntimeError("Core restarted during IP sampling")
+            rows = accounts()
+            names = {email: row["name"] for row in rows for email in traffic.emails(row)}
+            for item in connections:
+                item["name"] = names.get(item["email"], "unmanaged")
+            return {"available": True, "connections": connections,
+                    "profiles": traffic.profile_ips(rows, connections),
+                    "note": "Unique source IPs of active authenticated streams, combined across protocols. NAT/shared Wi-Fi counts as one IP; this is not a device count."}
         except (RuntimeError, OSError, AttributeError, ValueError, subprocess.TimeoutExpired):
             return {"available": False, "connections": [], "note": "Xray online API unavailable"}
 
@@ -281,6 +307,12 @@ class Manager:
         except KeyError:
             gid = None
         text = json.dumps(server_config(config, rows), indent=2) + "\n"
+        old = {p: p.read_text() if p.exists() else None for p in (CONFIG_FILE, SETTINGS_FILE, ACCOUNTS_FILE, ENABLED_FILE)}
+        changed = force_restart or text != old[CONFIG_FILE] or config["enabled"] != settings()["enabled"]
+        if not changed:
+            atomic_write_json(SETTINGS_FILE, config)
+            atomic_write_json(ACCOUNTS_FILE, rows)
+            return
         if config["enabled"]:
             self.ready()
             # Verify a candidate without touching the working config first.
@@ -291,8 +323,6 @@ class Manager:
                 self.run([str(XRAY_BINARY), "run", "-test", "-config", candidate], timeout=30)
             finally:
                 Path(candidate).unlink(missing_ok=True)
-        old = {p: p.read_text() if p.exists() else None for p in (CONFIG_FILE, SETTINGS_FILE, ACCOUNTS_FILE, ENABLED_FILE)}
-        changed = force_restart or text != old[CONFIG_FILE] or config["enabled"] != settings()["enabled"]
         try:
             atomic_write_json(SETTINGS_FILE, config)
             atomic_write_json(ACCOUNTS_FILE, rows)
@@ -385,6 +415,7 @@ class Manager:
                "trojan_password": secrets.token_urlsafe(32), "enabled": True,
                "expiry": calculate_expiry(validate_days(params.get("days"))),
                "created_at": datetime.now(timezone.utc).isoformat(), "quota_gb": validate_quota(params.get("quota_gb", "Unlimited")),
+               "quota_unit": "GB", "max_ips": validate_max_ips(params.get("max_ips", 0)),
                "used_bytes": 0, "upload_bytes": 0, "download_bytes": 0}
         if params.get("trial") is True:
             row.update(trial=True, expires_at=(datetime.now(timezone.utc) + timedelta(hours=24)).isoformat())
@@ -414,8 +445,16 @@ class Manager:
             row.pop("expires_at", None); row.pop("trial", None)
         elif action == "toggle" and isinstance(params.get("enabled"), bool):
             row["enabled"] = params["enabled"]
-        elif action == "quota":
+        elif action in {"quota", "limits"}:
             row["quota_gb"] = validate_quota(params.get("quota_gb", "Unlimited"))
+            row["quota_unit"] = params.get("quota_unit", row.get("quota_unit", "GiB"))
+            quota_bytes(row)
+            if action == "limits":
+                row["max_ips"] = validate_max_ips(params.get("max_ips", 0))
+                if not row["max_ips"]:
+                    row.pop("ip_blocked_until", None); row.pop("ip_monitoring_failed", None)
+            if row["quota_gb"] is None:
+                row.pop("meter_unavailable", None)
         elif action == "reset_usage":
             if self.collect_usage().get("available") is not True:
                 raise ValidationError("Start Xray statistics before resetting usage so the baseline can be preserved")
@@ -423,7 +462,7 @@ class Manager:
             old_traffic = traffic.STATE_FILE.read_text() if traffic.STATE_FILE.exists() else None
             traffic.reset_profile(row)
         else:
-            raise ValidationError("Choose delete, renew, toggle, quota or reset_usage")
+            raise ValidationError("Choose delete, renew, toggle, quota, limits or reset_usage")
         try:
             self.apply(settings(), rows)
         except Exception:
@@ -511,7 +550,7 @@ class Manager:
             raise ValidationError("Unsupported subscription format")
         return {"content": content, "content_type": mime, "name": row["name"], "expiry": row["expiry"],
                 "expires_at": row.get("expires_at"), "traffic": {"upload": row.get("upload_bytes", 0), "download": row.get("download_bytes", 0),
-                    "total": int(row["quota_gb"] * 1024 ** 3) if row.get("quota_gb") is not None else 0}}
+                    "total": quota_bytes(row) or 0}}
 
     def backup_export(self, _: dict) -> dict:
         return {"backup": profile_backup.build(settings(), accounts(), read_text(DOMAIN_FILE))}
@@ -551,6 +590,25 @@ class Manager:
     def sync(self, _: dict) -> dict:
         cfg = settings()
         if cfg["enabled"]:
-            self.collect_usage()
-            self.apply(cfg, accounts())
+            sample = self.collect_usage()
+            online = self.online({})
+            try:
+                rows = accounts()
+            except RuntimeError:
+                self.run(["/bin/systemctl", "stop", "abdulbasit-xray"], timeout=30)
+                raise RuntimeError("Accounting state is corrupt; managed Xray stopped. Restore a valid backup before resuming access.")
+            now = datetime.now(timezone.utc)
+            for row in rows:
+                row["meter_unavailable"] = quota_bytes(row) is not None and not sample["available"]
+                limit = validate_max_ips(row.get("max_ips", 0))
+                row["ip_monitoring_failed"] = bool(limit and not online["available"])
+                if online["available"]:
+                    row["online_ips"] = online["profiles"].get(row["name"], [])
+                    if limit and len(row["online_ips"]) > limit:
+                        row["ip_blocked_until"] = (now + timedelta(seconds=30)).isoformat()
+                    elif row.get("ip_blocked_until") and datetime.fromisoformat(row["ip_blocked_until"]) <= now:
+                        row.pop("ip_blocked_until", None)
+                else:
+                    row.pop("online_ips", None)
+            self.apply(cfg, rows)
         return {"synced": True}

@@ -7,6 +7,7 @@ import os
 import re
 import stat
 import tempfile
+from decimal import Decimal, InvalidOperation
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -90,12 +91,31 @@ def validate_quota(value: Any) -> float | None:
     if text in {"", "unlimited", "none", "0"}:
         return None
     try:
-        quota = float(text)
-    except (TypeError, ValueError) as exc:
+        quota = Decimal(text)
+    except (TypeError, InvalidOperation) as exc:
         raise ValidationError("Quota must be a number in GB or Unlimited") from exc
-    if not 0.1 <= quota <= 100000:
+    if not quota.is_finite() or not Decimal("0.1") <= quota <= Decimal("100000"):
         raise ValidationError("Quota must be between 0.1 and 100000 GB")
-    return round(quota, 3)
+    if quota != quota.quantize(Decimal("0.001")):
+        raise ValidationError("Quota supports at most three decimal places; no silent rounding")
+    return float(quota)
+
+
+def validate_max_ips(value: Any) -> int:
+    if str(value).strip().lower() in {"", "none", "unlimited", "0"}:
+        return 0
+    return validate_sessions(value)
+
+
+def quota_bytes(account: dict) -> int | None:
+    """Legacy quotas retain their binary capacity; new profiles explicitly use GB."""
+    quota = validate_quota(account.get("quota_gb"))
+    if quota is None:
+        return None
+    unit = account.get("quota_unit", "GiB")
+    if unit not in {"GB", "GiB"}:
+        raise ValidationError("Quota unit must be GB or GiB")
+    return int(Decimal(str(quota)) * (1000 ** 3 if unit == "GB" else 1024 ** 3))
 
 def validate_domain(value: str) -> str:
     domain = value.strip().lower().rstrip(".")
@@ -166,6 +186,11 @@ def atomic_write(path: Path, content: str, mode: int = 0o600) -> None:
             os.fsync(handle.fileno())
         os.chmod(tmp_name, mode)
         os.replace(tmp_name, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         try:
             os.unlink(tmp_name)

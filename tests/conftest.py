@@ -6,6 +6,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import pytest
 import xray_manager as xray
 import traffic
+import gateway_identity
+import ssh_identity
+from types import SimpleNamespace
+
+
+@pytest.fixture(autouse=True)
+def private_gateway(tmp_path, monkeypatch):
+    path = tmp_path / "gateway-header"
+    path.write_text("X-Noway-Gateway-" + "a" * 64)
+    monkeypatch.setattr(gateway_identity, "CONFIG_FILE", path)
+    monkeypatch.setattr(ssh_identity, "PEER_DIR", tmp_path / "ws-peers")
 
 
 @pytest.fixture
@@ -25,6 +36,8 @@ def manager(tmp_path, monkeypatch):
     calls = []
     def run(args, **kwargs):
         calls.append(args)
+        if "--property=InvocationID" in args:
+            return SimpleNamespace(stdout="1" * 32)
     obj = xray.Manager(run, health_probe=lambda: True)
     obj.calls = calls
     return obj

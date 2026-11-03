@@ -63,7 +63,21 @@ function view(name) {
   document.querySelectorAll('.nav').forEach(n => n.classList.toggle('active', n.dataset.view === name));
   setText('breadcrumb', {overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', cloudfront: 'CloudFront', diagnostics: 'Diagnostics', recovery: 'Backup & recovery', traffic: 'Traffic & connections', transports: 'UDP & SlowDNS', system: 'System toolbox', maintenance: 'Telegram & maintenance'}[name]);
 }
-const size = (value) => !Number.isFinite(value) ? '—' : value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)} GB` : `${(value / 1024 ** 2).toFixed(0)} MB`;
+const size = (value, unit = 'GB') => {
+  if (!Number.isFinite(value)) return '—';
+  const base = unit === 'GiB' ? 1024 : 1000;
+  if (value >= base ** 3) return `${(value / base ** 3).toFixed(3)} ${unit}`;
+  if (value >= base ** 2) return `${(value / base ** 2).toFixed(3)} ${base === 1024 ? 'MiB' : 'MB'}`;
+  return `${Math.trunc(value).toLocaleString()} bytes`;
+};
+const quotaLabel = (row) => row.quota_gb == null ? 'Unlimited' : `${row.quota_gb} ${row.quota_unit || 'GiB'}`;
+const profileStatus = (row) => row.enabled === false ? 'Locked' : row.meter_unavailable || row.ip_monitoring_failed ? 'Monitor unavailable' : row.quota_exhausted ? 'Quota reached' : row.ip_blocked_until && Date.parse(row.ip_blocked_until) > Date.now() ? 'IP limit · cooldown' : row.active ? 'Active' : 'Expired';
+function byteCell(row, field) {
+  const node = element('td', 'mono', size(row[field] || 0, row.quota_unit || 'GiB') + (field === 'used_bytes' ? ` / ${quotaLabel(row)}` : ''));
+  node.title = `${row.exact_bytes?.[field] ?? row[field] ?? 0} bytes`;
+  node.append(element('div', 'small muted', node.title));
+  return node;
+}
 const percent = (used, total) => total > 0 ? Math.max(0, Math.min(100, used / total * 100)) : 0;
 function tags(protocols) { const box = element('div'); protocols.forEach(p => box.append(element('span', `tag ${p}`, p.toUpperCase()))); return box; }
 function emptyRow(body, columns, text) {
@@ -75,8 +89,8 @@ function profileRows(id, rows, controls) {
   rows.forEach(row => {
     const tr = element('tr'); tr.append(element('td', 'mono', row.name));
     const protocols = element('td'); protocols.append(tags(row.protocols)); if (row.trial) protocols.append(pill('24H TRIAL', 'warn')); tr.append(protocols, element('td', 'mono muted', row.expires_at ? new Date(row.expires_at).toLocaleString() : row.expiry));
-    const status = element('td'); status.append(pill(row.active ? 'Active' : row.enabled === false ? 'Locked' : row.quota_exhausted ? 'Quota reached' : 'Expired', row.active ? 'good' : 'warn')); tr.append(status);
-    if (controls) { const usage = element('td', 'usage-cell'); usage.append(element('strong', 'mono', `${size(row.used_bytes || 0)} / ${row.quota_gb == null ? 'Unlimited' : row.quota_gb + ' GB'}`)); if (row.quota_gb) { const meter = element('meter'); meter.min = 0; meter.max = 100; meter.value = percent(row.used_bytes || 0, row.quota_gb * 1024 ** 3); meter.setAttribute('aria-label', `${row.name} quota utilization`); usage.append(meter); } tr.append(usage); }
+    const status = element('td'); status.append(pill(profileStatus(row), row.active ? 'good' : 'warn')); tr.append(status);
+    if (controls) { const usage = element('td', 'usage-cell'); usage.append(element('strong', 'mono', `${size(row.used_bytes || 0, row.quota_unit || 'GiB')} / ${quotaLabel(row)}`)); if (row.quota_gb) { const meter = element('meter'); meter.min = 0; meter.max = 100; meter.value = percent(row.used_bytes || 0, row.quota_bytes ?? row.quota_gb * 1024 ** 3); meter.setAttribute('aria-label', `${row.name} quota utilization`); usage.append(meter); } usage.append(element('div', 'small muted', `${row.exact_bytes?.used_bytes ?? row.used_bytes ?? 0} bytes · IP cap: ${row.max_ips || 'Unlimited'}`)); tr.append(usage); }
     const actions = element('td'), group = element('div', 'row-actions');
     if (row.active) group.append(button('Export ↗', () => exportProfile(row.name)));
     if (controls) {
@@ -119,10 +133,11 @@ function render() {
     row.append(element('span', 'protocol-symbol', ['V', 'M', 'T', 'X'][i] || 'X'), detail, pill(s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'Ready' : 'Offline', s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'good' : '')); protocols.append(row);
   }
   profileRows('overview-profiles', s.accounts.slice(0, 4), false); renderProfiles(); renderTraffic();
+  setText('ssh-note', 'SSH byte metering is unavailable. Finite GB quotas are rejected. IP/session checks target 5 seconds plus processing time. Unknown sources cannot use an IP-limited account.' + (s.ssh_attribution?.journal_available === false ? ' Authentication journal unavailable: older root Dropbear sessions may be unattributable.' : '') + (s.ssh_attribution?.unattributed_root_processes ? ` ${s.ssh_attribution.unattributed_root_processes} root process(es) unattributed; some may still be authenticating.` : ''));
   const users = $('ssh-users'); users.replaceChildren();
   if (!s.users.length) emptyRow(users, 5, 'No SSH accounts yet. Create an account to grant access.');
   s.users.forEach(user => {
-    const tr = element('tr'); tr.append(element('td', 'mono', user.username), element('td', 'mono muted', user.expiry), element('td', '', `${(s.sessions.find(x => x.username === user.username) || {}).count || 0} / ${user.max_sessions}`), element('td', 'muted', user.quota_gb == null ? 'Unlimited · metadata' : `${user.quota_gb} GB · metadata`));
+    const tr = element('tr'); tr.append(element('td', 'mono', user.username), element('td', 'mono muted', user.expiry), element('td', '', `${(s.sessions.find(x => x.username === user.username) || {}).count || 0} / ${user.max_sessions}`), element('td', 'muted', `GB unavailable · IP cap: ${user.max_ips || 'Unlimited'}`));
     const td = element('td'), actions = element('div', 'row-actions'); actions.append(button('Limits', () => openUsage('ssh', user)), button(user.enabled === false ? 'Unlock' : 'Lock', () => command('set_user_lock', {username: user.username, enabled: user.enabled === false}, 'SSH account updated')), button('Renew', () => openRenew('ssh', user.username)), button('Delete', async () => { if (await confirmAction(`Delete SSH account “${user.username}”? Its active sessions will be disconnected.`)) await command('delete_user', {username: user.username}, 'Account deleted'); }, 'delete')); td.append(actions); tr.append(td); users.append(tr);
   });
   setText('xray-summary', `${s.xray_installed ? 'Installed' : 'Core not installed · run install.sh --with-xray'} · ${s.network.enabled ? 'Enabled' : 'Disabled'} · TLS on port 443`);
@@ -266,7 +281,7 @@ bindForm('login-form', async data => {
 });
 bindForm('create-form', async data => {
   const name = data.get('name'), days = trialMode ? 1 : Number(data.get('days'));
-  const params = createMode === 'ssh' ? {username: name, days, password: data.get('password'), max_sessions: Number(data.get('sessions')), quota_gb: data.get('quota')} : {name, days, trial: trialMode, quota_gb: data.get('xray_quota'), protocols: ['vless', 'vmess', 'trojan'].filter(p => data.has(p))};
+  const params = createMode === 'ssh' ? {username: name, days, password: data.get('password'), max_sessions: Number(data.get('sessions')), quota_gb: 'Unlimited', max_ips: Number(data.get('ips'))} : {name, days, trial: trialMode, quota_gb: data.get('xray_quota'), max_ips: Number(data.get('ips')), protocols: ['vless', 'vmess', 'trojan'].filter(p => data.has(p))};
   await command(createMode === 'ssh' ? 'create_user' : 'xray_create', params, 'Account created'); $('create-dialog').close();
   if (createMode === 'xray') { view('xray'); await exportProfile(name); }
 });
@@ -316,7 +331,7 @@ function renderTraffic() {
   setText('traffic-sampled', state.traffic?.sampled_at ? `Sampled ${new Date(state.traffic.sampled_at).toLocaleString()}` : 'No successful core sample yet');
   const body = $('traffic-profiles'); body.replaceChildren();
   if (!rows.length) emptyRow(body, 5, 'Create an Xray profile to measure its usage.');
-  rows.forEach(row => { const tr = element('tr'); tr.append(element('td', 'mono', row.name), element('td', 'mono', size(row.upload_bytes || 0)), element('td', 'mono', size(row.download_bytes || 0)), element('td', 'mono', `${size(row.used_bytes || 0)} / ${row.quota_gb == null ? 'Unlimited' : row.quota_gb + ' GB'}`), element('td', '', row.quota_exhausted ? 'Quota reached' : row.active ? 'Active' : 'Inactive')); body.append(tr); });
+  rows.forEach(row => { const tr = element('tr'); tr.append(element('td', 'mono', row.name), byteCell(row, 'upload_bytes'), byteCell(row, 'download_bytes'), Object.assign(byteCell(row, 'used_bytes'), {title: `${row.exact_bytes?.used_bytes ?? row.used_bytes ?? 0} bytes / ${quotaLabel(row)}`}), element('td', '', profileStatus(row))); body.append(tr); });
 }
 function showResult(title, result) {
   setText('result-title', title); setText('operation-result', typeof result === 'string' ? result : JSON.stringify(result, null, 2)); $('result-dialog').showModal();
@@ -325,16 +340,18 @@ async function operation(name, params = {}) { return api('command', {command: na
 function openUsage(type, row) {
   usageTarget = {type, name: type === 'ssh' ? row.username : row.name};
   setText('usage-title', usageTarget.name + ' · limits');
-  setText('usage-scope', type === 'ssh' ? 'SSH GB is metadata only. Concurrent session limits are enforced.' : 'Xray payload bytes are sampled every minute. Quota exhaustion removes this profile from the core within the next cycle.');
+  setText('usage-scope', type === 'ssh' ? 'SSH GB metering is unavailable. IP/session checks run every 5 seconds. Unknown sources (including SlowDNS) are disconnected when an IP cap is set.' : '5-second target checks plus API/restart time; quotas can overshoot. Too many unique IPs suspend this profile for 30 seconds. Core changes reconnect active clients. 0 IPs = Unlimited.');
   $('usage-quota').value = row.quota_gb == null ? 'Unlimited' : row.quota_gb;
+  $('usage-quota').disabled = type === 'ssh'; $('usage-unit').disabled = type === 'ssh';
+  $('usage-unit').value = row.quota_unit || 'GiB'; $('usage-ips').value = row.max_ips || 0;
   $('usage-sessions-label').hidden = type !== 'ssh'; $('usage-sessions').value = row.max_sessions || 2;
   $('reset-usage').hidden = type === 'ssh'; $('usage-dialog').showModal();
 }
 $('profile-search').addEventListener('input', renderProfiles); $('profile-filter').addEventListener('change', renderProfiles);
 bindForm('usage-form', async data => {
   const target = usageTarget;
-  if (target.type === 'ssh') { await command('set_quota', {username: target.name, quota_gb: data.get('quota')}); await command('set_sessions', {username: target.name, max_sessions: Number(data.get('sessions'))}); }
-  else await command('xray_update', {name: target.name, action: 'quota', quota_gb: data.get('quota')}, 'Quota updated');
+  if (target.type === 'ssh') { await command('set_sessions', {username: target.name, max_sessions: Number(data.get('sessions')), max_ips: Number(data.get('ips'))}, 'SSH limits updated'); }
+  else await command('xray_update', {name: target.name, action: 'limits', quota_gb: data.get('quota'), quota_unit: data.get('unit'), max_ips: Number(data.get('ips'))}, 'Limits updated');
   $('usage-dialog').close();
 });
 $('reset-usage').addEventListener('click', () => busy($('reset-usage'), async () => {
@@ -344,12 +361,12 @@ $('sample-traffic').addEventListener('click', () => busy($('sample-traffic'), as
   const sample = await operation('traffic_sample'); await refresh();
   const live = await operation('live_connections');
   setText('traffic-note', sample.available ? (sample.note || 'Core sample updated. SSH usage is excluded.') : sample.reason);
-  const auth = live.xray?.connections || [], peers = live.gateway_peers || [];
+  const auth = [...new Map((live.xray?.connections || []).map(row => [`${row.name || row.email}:${row.ip}`, row])).values()], peers = live.gateway_peers || [];
   setText('online-total', live.xray?.available ? String(new Set(auth.map(row => row.ip)).size) : 'Unavailable');
   for (const [id, rows, authenticated] of [['authenticated-ips', auth, true], ['gateway-ips', peers, false]]) {
     const box = $(id); box.replaceChildren();
-    if (!rows.length) box.append(element('p', 'muted', authenticated ? live.xray?.available ? 'No authenticated activity in the current window.' : live.xray?.note || 'Core API unavailable.' : 'No external TCP peers observed.'));
-    rows.forEach(row => { const item = element('div', 'connection-item'); item.append(element('strong', 'mono', row.ip), element('span', 'small muted', authenticated ? row.email : `${row.transport} · :${row.port} · account unverified`)); box.append(item); });
+    if (!rows.length) box.append(element('p', 'muted', authenticated ? live.xray?.available ? 'No active authenticated streams.' : live.xray?.note || 'Core API unavailable.' : 'No external TCP peers observed.'));
+    rows.forEach(row => { const item = element('div', 'connection-item'); item.append(element('strong', 'mono', row.ip), element('span', 'small muted', authenticated ? `${row.name || row.email} · active stream` : `${row.transport} · :${row.port} · account unverified`)); box.append(item); });
   }
 }));
 for (const [id, name, title] of [['view-config', 'config_view', 'Managed configuration · credentials redacted'], ['doctor-inspect', 'doctor', 'Auto-doctor report'], ['memory-report', 'memory_report', 'Memory report']]) {

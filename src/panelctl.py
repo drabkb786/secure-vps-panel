@@ -28,6 +28,7 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--days", type=int, required=True)
     create.add_argument("--sessions", type=int, required=True)
     create.add_argument("--quota", default="Unlimited")
+    create.add_argument("--ips", type=int, default=0, help="Unique source IP cap; 0 = unlimited")
 
     delete = sub.add_parser("delete-user")
     delete.add_argument("username")
@@ -39,6 +40,7 @@ def parser() -> argparse.ArgumentParser:
     sessions = sub.add_parser("set-sessions")
     sessions.add_argument("username")
     sessions.add_argument("--sessions", type=int, required=True)
+    sessions.add_argument("--ips", type=int, default=None, help="Unique source IP cap; 0 = unlimited")
 
     quota = sub.add_parser("set-quota")
     quota.add_argument("username")
@@ -81,6 +83,7 @@ def parser() -> argparse.ArgumentParser:
     profile.add_argument("name")
     profile.add_argument("--days", type=int, default=30)
     profile.add_argument("--quota", default="Unlimited")
+    profile.add_argument("--ips", type=int, default=0)
     profile.add_argument("--protocol", action="append", choices=["vless", "vmess", "trojan"])
     renew_profile = sub.add_parser("xray-renew")
     renew_profile.add_argument("name")
@@ -110,6 +113,11 @@ def parser() -> argparse.ArgumentParser:
         sub.add_parser(action).add_argument("name")
     quota_profile = sub.add_parser("xray-quota")
     quota_profile.add_argument("name"); quota_profile.add_argument("--quota", required=True)
+    quota_profile.add_argument("--unit", choices=["GB", "GiB"], default=None)
+    limits = sub.add_parser("xray-limits", help="Set byte quota and unique IP cap together")
+    limits.add_argument("name"); limits.add_argument("--quota", required=True)
+    limits.add_argument("--unit", choices=["GB", "GiB"], required=True)
+    limits.add_argument("--ips", type=int, required=True)
     for action in ("traffic", "connections", "doctor", "restart-managed", "config-view", "memory-report", "banner", "slowdns-status", "slowdns-check", "slowdns-disable", "slowdns-install"):
         command = sub.add_parser(action)
         if action == "doctor": command.add_argument("--repair", action="store_true")
@@ -157,11 +165,14 @@ def main() -> int:
             process = subprocess.run(["/bin/bash", str(Path(__file__).parent / "install-dnstt.sh")], check=False, timeout=900)
             if process.returncode: raise RuntimeError("Official core installation failed; review the installer output")
             result = {"installed": True}
+        elif args.action == "xray-limits":
+            result = request("xray_update", name=args.name, action="limits", quota_gb=args.quota, quota_unit=args.unit, max_ips=args.ips)
         elif args.action in {"xray-lock", "xray-unlock", "xray-reset-usage", "xray-quota"}:
             action = "reset_usage" if args.action == "xray-reset-usage" else "quota" if args.action == "xray-quota" else "toggle"
             params = {"name": args.name, "action": action}
             if action == "toggle": params["enabled"] = args.action == "xray-unlock"
             if action == "quota": params["quota_gb"] = args.quota
+            if action == "quota" and args.unit: params["quota_unit"] = args.unit
             result = request("xray_update", **params)
         elif args.action == "xray-trial":
             result = request("xray_create", name=args.name, days=1, trial=True, quota_gb=args.quota)
@@ -183,13 +194,13 @@ def main() -> int:
             confirmation = getpass.getpass("Confirm password: ")
             if password != confirmation:
                 raise RuntimeError("Passwords do not match")
-            result = request("create_user", username=args.username, password=password, days=args.days, max_sessions=args.sessions, quota_gb=args.quota)
+            result = request("create_user", username=args.username, password=password, days=args.days, max_sessions=args.sessions, quota_gb=args.quota, max_ips=args.ips)
         elif args.action == "delete-user":
             result = request("delete_user", username=args.username)
         elif args.action == "renew-user":
             result = request("renew_user", username=args.username, days=args.days)
         elif args.action == "set-sessions":
-            result = request("set_sessions", username=args.username, max_sessions=args.sessions)
+            result = request("set_sessions", username=args.username, max_sessions=args.sessions, **({"max_ips": args.ips} if args.ips is not None else {}))
         elif args.action == "set-quota":
             result = request("set_quota", username=args.username, quota_gb=args.quota)
         elif args.action == "list-users":
@@ -253,7 +264,7 @@ def main() -> int:
                 raise RuntimeError("Restore cancelled")
             result = request("backup_restore", backup=data)
         elif args.action == "xray-create":
-            params = {"name": args.name, "days": args.days, "quota_gb": args.quota}
+            params = {"name": args.name, "days": args.days, "quota_gb": args.quota, "max_ips": args.ips}
             if args.protocol:
                 params["protocols"] = args.protocol
             result = request("xray_create", **params)

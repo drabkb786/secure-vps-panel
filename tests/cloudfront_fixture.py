@@ -27,6 +27,7 @@ def edge_server(port, origin_port, cert, key, secret):
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $abdulbasit_connection_upgrade;
             proxy_set_header X-Noway-Origin-Verify {secret};
+            proxy_set_header X-Noway-Viewer-IP 198.51.100.42;
             {headers}
         }}
     }}'''

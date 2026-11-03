@@ -1,5 +1,51 @@
 # Validation
 
+## v3.5 usage and IP accuracy — 3 November 2026 (Asia/Karachi)
+
+Implementation commit: `98be5526918b3adfd7d1e9c15b49bff31054e84e`.
+[Successful native CI run](https://github.com/drabkb786/secure-vps-panel/actions/runs/41636516905)
+([job](https://github.com/drabkb786/secure-vps-panel/actions/runs/41636516905/job/125918973811)).
+
+- Base Python suite: **198 passed, 16 optional native tests skipped**. The
+  separate native stages passed **9 Xray/Nginx tests, 4 Dropbear tests, 3 client
+  parser tests and 4 DNS tests**. Four are repeated base cases, giving **214
+  unique Python tests** across the workflow, plus **4 JavaScript regressions**.
+- Generated CloudFormation passed `cfn-lint`; Python/JavaScript/Bash syntax,
+  the static audit and the committed-secret/unsafe-shell checks passed.
+- Real Xray through Nginx TLS verifies exact upload/download payload byte counts
+  for VLESS, VMess, Trojan and VLESS XHTTP before the existing UDP round trips.
+  Direct and locally simulated CloudFront routes verify the authenticated
+  viewer IP and reject a forged client forwarding value. Native testing found
+  and fixed Nginx's hash bucket size for the private gateway header.
+- Accounting regressions cover omitted counters, repeated samples, epoch races,
+  counter resets, account name reuse, durable-ledger recovery, invalid samples,
+  corruption, exact integers above JavaScript's safe-number range, decimal GB,
+  legacy GiB, quota boundaries and explicit unit conversion.
+- IP regressions cover IPv4/IPv6 normalization, cross-protocol deduplication,
+  more than 1,000 reported IPs, monitor failures, profile cooldowns, multiple SSH
+  sessions on one IP and unknown-source rejection. The real Linux socket/FD
+  attribution case passed on the native runner; it is skipped locally only
+  because this development container hides its own socket file descriptors.
+- Browser QA used a separate, clearly labeled example-data fixture. Changing
+  an Xray quota to 20 GiB and its IP cap to 1 preserved **1,250,000,000 used
+  bytes** and displayed **1.164 GiB**. Upload/download/used exact byte strings
+  rendered correctly. Two protocol records for the same profile/IP rendered
+  one authenticated IP. SSH quota fields were disabled, and independent
+  session/IP caps saved and appeared in the table.
+
+**Scope:** this is sampled enforcement (5-second target plus processing/API and
+restart time), not an atomic byte or connection-admission limiter. Quotas may
+overshoot; a core crash can lose uncheckpointed bytes. Shared NAT is one source
+IP, not one device. **SSH byte metering remains unavailable**, and finite SSH
+quotas are rejected rather than recorded as if enforced. See
+[accuracy semantics and upgrade order](ACCURACY.md), including the required
+CloudFront stack update **before** upgrading an existing CloudFront-enabled VPS.
+
+No deployment to the user's VPS, actual AWS distribution update or WAN test was
+performed. The screenshot below contains **QA example data**, not live usage:
+
+![Exact usage and unique IPs with QA example data](noway-accuracy-preview.jpg)
+
 
 ## v3.4 CloudFront checks — 3 November 2026 (Asia/Karachi)
 

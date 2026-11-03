@@ -9,7 +9,7 @@ navy/emerald design and adds browser workflows alongside a rebuilt terminal menu
 | Reference control | NOWAY equivalent | Scope |
 | --- | --- | --- |
 | 01 Create VIP Account | New VIP Xray profile; separate SSH account creation | VLESS, VMess, Trojan and optional XHTTP; private links/files/QR |
-| 02 Fast 24h Trial | Quick trial button / `xray-trial` | Exact UTC expiry timestamp; access removed at the next one-minute cycle |
+| 02 Fast 24h Trial | Quick trial button / `xray-trial` | Exact UTC expiry timestamp; access removed at the next five-second target check (plus processing time) |
 | 03 Real GB & Live IPs | Traffic & connections | Xray payload counters and authenticated recent IPs; gateway peers are labelled separately |
 | 04 Telegram Bot Menu | Existing Telegram menu, terminal bot menu, owner setup page | Tokens and Super Admin setup remain root-terminal operations |
 | 05 Renew / Edit GB | Renew + Limits actions | Xray quota enforced by periodic core configuration; SSH GB remains metadata |
@@ -42,21 +42,18 @@ twice. Explicit core changes first sample usage and start a new counter epoch.
 Systemd invocation IDs distinguish core restarts; a counter decrease is also
 handled. Profile usage resets preserve the current baseline.
 
-The timer samples every minute and removes credentials when their saved total
-reaches the configured limit. This is **sampled quota enforcement**, not an exact
-packet-by-packet cutoff: it can overshoot during an interval. An unexpected core
-crash can lose bytes since the most recent successful sample. Unavailable APIs
-are shown as unavailable and preserve previous totals. A displayed GB is
-`1024³` bytes. SSH process I/O is never presented as network usage; SSH GB limits
-remain metadata until a separately validated SSH accounting backend exists.
+The timer targets five seconds after each completed cycle, plus API/restart time.
+Quotas can overshoot; crashes and planned restarts can lose uncheckpointed bytes.
+New quotas use decimal GB; existing binary capacities are labelled GiB. Exact byte
+strings, sample time and monitor status are available in the dashboard. Finite
+SSH quotas are rejected because SSH byte metering is unavailable.
 
-Nginx overwrites `X-Forwarded-For` and the internal `X-Noway-Gateway` header.
-The core accepts forwarded addresses via this internal header on its loopback
-listeners, matching the pinned core's actual header-based trust implementation.
-Do not expose Xray's internal listeners or API. If a CDN is placed in front,
-the observed address is its egress until the operator configures trusted real-IP
-handling in Nginx. Authenticated IPs use Xray's recent-activity window; they are
-not a concurrent-device limit. Gateway TCP peers alone do not prove authentication.
+IP caps combine canonical source addresses across protocols. Xray over-limit
+profiles pause for 30 seconds; shared core changes reconnect existing clients.
+SSH keeps the oldest admitted IPs and terminates excess/unknown sources. NAT is
+one IP, not one device. Private gateway paths/markers prevent local forwarding
+from spoofing identity. The CloudFront Function overwrites the viewer-IP header.
+See [accuracy and migration details](ACCURACY.md).
 
 ```bash
 sudo abdulbasit-panelctl xray-trial basit_trial --quota 1

@@ -56,9 +56,11 @@ def test_cloudfront_origin_guard_and_no_admin_forwarding(tmp_path, monkeypatch):
                 with socket.create_connection(("127.0.0.1", port), timeout=.1): break
             except OSError: time.sleep(.03)
         context = ssl.create_default_context(cafile=str(cert))
-        def request(path, value=None, tls=True):
+        def request(path, value=None, tls=True, viewer="198.51.100.42"):
             conn = http.client.HTTPSConnection("localhost", port, context=context, timeout=3) if tls else http.client.HTTPConnection("localhost", plain, timeout=3)
-            conn.request("GET", path, headers={"X-Noway-Origin-Verify": value} if value is not None else {})
+            headers = {"X-Noway-Origin-Verify": value} if value is not None else {}
+            if viewer is not None: headers["X-Noway-Viewer-IP"] = viewer
+            conn.request("GET", path, headers=headers)
             response = conn.getresponse(); result = response.status, response.read(), dict(response.getheaders()); conn.close(); return result
         for path in ("/cloudfront/health", "/cloudfront/vless", "/cloudfront/vmess", "/cloudfront/trojan", "/cloudfront/ssh/ws"):
             assert request(path)[0] == 403
@@ -68,6 +70,8 @@ def test_cloudfront_origin_guard_and_no_admin_forwarding(tmp_path, monkeypatch):
             assert request(path, secret)[0] == 403
         status, body, headers = request("/cloudfront/health", secret)
         assert status == 200 and body == b"noway-cloudfront-origin-v1\n" and headers["X-Noway-CloudFront-Health"] == "1"
+        assert request("/cloudfront/health", secret, viewer=None)[0] == 503
+        assert request("/cloudfront/health", secret, viewer="2001:db8::5")[0] == 200
         assert request("/cloudfront/unknown")[0] == 404
     finally:
         process.terminate(); process.wait(timeout=5)

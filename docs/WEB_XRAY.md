@@ -191,16 +191,17 @@ sudo abdulbasit-panelctl xray-delete basit
 ```
 
 Validity ends at the start of the expiry date in the VPS system timezone. The
-expiry timer removes expired Xray credentials within about a minute. Config/account
+expiry timer removes expired Xray credentials on the next five-second target check plus processing time. Config/account
 changes restart the core and briefly reconnect existing clients. Failed tests or
 restarts restore previous managed files; inspect the journal if rollback restart
 also fails. Disabling Xray removes its boot-enable marker and stops its service.
 
 Private/link-local destinations (including cloud metadata addresses) are blocked
 by the generated server routing rules. This is an Internet proxy preset; private
-LAN access is not enabled. Xray concurrent-device limits, REALITY and profile
-creation inside Telegram remain deferred. Xray GB limits and recent activity
-are available in v3.2; SSH GB remains metadata.
+LAN access is not enabled. Unique source-IP limits and explicit GB/GiB units are available in v3.5; they
+are not device identification or packet-level hard quotas. REALITY and profile
+creation inside Telegram remain deferred. SSH byte metering is unavailable;
+finite SSH GB quotas are rejected. See [accuracy details](ACCURACY.md).
 
 ## Live subscription URLs
 
