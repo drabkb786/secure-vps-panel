@@ -1,0 +1,122 @@
+"""Disposable-runner acceptance test of the installed OpenSSH migration.
+
+Run only after the full installer on a disposable systemd GitHub runner. This
+creates/deletes a managed account through paneld and exercises its real kernel
+session attribution. It never edits administrative sshd configuration.
+"""
+import hashlib
+import json
+import os
+import shlex
+import socket
+import socketserver
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.skipif(os.environ.get("OPENSSH_NATIVE_SYSTEMD") != "1", reason="Requires disposable installed systemd runner")
+
+
+def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
+    assert os.geteuid() == 0 and os.environ.get("GITHUB_ACTIONS") == "true"
+    import paramiko
+    import paneld
+    import session_enforcer
+    import ssh_identity
+    import ssh_sessions
+    from common import USERS_DIR
+    from panel_client import request
+    from test_dropbear_native import free_port, wait_port
+    name = f"nowayci{os.getpid()}"
+    request("create_user", username=name, password="bas", days=30, max_sessions=2, max_ips=0)
+    transports = []
+    nginx = None
+    subprocess.run(["systemctl", "stop", "abdulbasit-session-enforcer"], check=True, timeout=15)
+    class Echo(socketserver.BaseRequestHandler):
+        def handle(self):
+            try:
+                while data := self.request.recv(65536): self.request.sendall(data)
+            except OSError:
+                pass
+    echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Echo)
+    echo.daemon_threads = True
+    threading.Thread(target=echo.serve_forever, daemon=True).start()
+    def login(peer):
+        transport = paramiko.Transport(peer); transports.append(transport)
+        transport.start_client(timeout=8)
+        public = Path("/etc/abdulbasit-sshd/ssh_host_ed25519_key.pub").read_text().split()[1]
+        assert transport.get_remote_server_key().get_base64() == public
+        transport.auth_password(name, "bas")
+        assert transport.is_authenticated()
+        channel = transport.open_channel("direct-tcpip", ("127.0.0.1", echo.server_address[1]), ("127.0.0.1", 12345), timeout=8)
+        channel.settimeout(15)
+        payload = bytes(range(256)) * 8192
+        sender = threading.Thread(target=lambda: channel.sendall(payload), daemon=True)
+        sender.start(); received = bytearray()
+        while len(received) < len(payload):
+            chunk = channel.recv(65536)
+            assert chunk, "SSH forwarding stream closed"
+            received.extend(chunk)
+        sender.join(10)
+        assert not sender.is_alive() and hashlib.sha256(received).digest() == hashlib.sha256(payload).digest()
+        with pytest.raises(paramiko.SSHException): transport.open_session(timeout=5)
+        with pytest.raises(paramiko.SSHException): transport.request_port_forward("127.0.0.1", 0)
+        return transport, channel
+    try:
+        first, channel = login(socket.create_connection(("127.0.0.1", 109), timeout=5))
+        with tempfile.TemporaryDirectory(prefix="noway-native-", dir="/run") as directory:
+            root = Path(directory); cert = root / "cert.pem"; key = root / "key.pem"
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com", "-addext", "subjectAltName=DNS:vpn.example.com"], check=True, capture_output=True, timeout=20)
+            monkeypatch.setattr(paneld, "ipv6_enabled", lambda: False)
+            http_port, tls_port = free_port(), free_port()
+            site = paneld.nginx_text("vpn.example.com", True)
+            site = site.replace("listen 80;", f"listen 127.0.0.1:{http_port};").replace("listen 443 ssl http2;", f"listen 127.0.0.1:{tls_port} ssl http2;")
+            site = site.replace("/etc/letsencrypt/live/vpn.example.com/fullchain.pem", str(cert)).replace("/etc/letsencrypt/live/vpn.example.com/privkey.pem", str(key))
+            site = site.replace("X-Forwarded-For $remote_addr;", "X-Forwarded-For 198.51.100.42;")
+            config = root / "nginx.conf"
+            config.write_text(f"user root root;\npid {root}/nginx.pid;\nerror_log {root}/nginx.log;\nevents {{}}\nhttp {{access_log off;\n" +
+                              "\n".join(f"{part}_temp_path {root}/{part};" for part in ("client_body", "proxy", "fastcgi", "scgi", "uwsgi")) + site + "\n}")
+            nginx = subprocess.Popen(["/usr/sbin/nginx", "-p", directory, "-c", str(config), "-g", "daemon off;"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            wait_port(tls_port, nginx)
+            monkeypatch.setenv("SSL_CERT_FILE", str(cert))
+            adapter = Path(__file__).resolve().parents[1] / "src/ssh_ws_client.py"
+            proxy = paramiko.ProxyCommand(shlex.join([sys.executable, str(adapter), "--host", "vpn.example.com", "--address", "127.0.0.1", "--port", str(tls_port)]))
+            second, second_channel = login(proxy)
+            for attempt in range(40):
+                state = ssh_sessions.snapshot()
+                rows = next((items for uid, items in state["sessions"].items() if state["users"][uid] == name), [])
+                if len(rows) == 2:
+                    break
+                time.sleep(.1)
+            assert len(rows) == 2, state
+            observed = ssh_identity.session_ips({name: [row.pid for row in rows]})
+            assert "198.51.100.42" in observed.values(), observed
+            # Keep the oldest login and terminate only the newest excess login.
+            request("set_sessions", username=name, max_sessions=1)
+            session_enforcer.enforce_once()
+            for attempt in range(40):
+                if not second.is_active(): break
+                time.sleep(.1)
+            assert first.is_active() and not second.is_active()
+            channel.sendall(b"oldest-survives")
+            assert channel.recv(15) == b"oldest-survives"
+            # An unattributable direct-loopback source cannot bypass an IP cap.
+            request("set_sessions", username=name, max_sessions=1, max_ips=1)
+            session_enforcer.enforce_once()
+            for attempt in range(40):
+                if not first.is_active(): break
+                time.sleep(.1)
+            assert not first.is_active()
+            assert subprocess.run(["systemctl", "is-active", "--quiet", "abdulbasit-sshd"]).returncode == 0
+    finally:
+        for transport in transports: transport.close()
+        if nginx:
+            nginx.terminate(); nginx.wait(timeout=5)
+        echo.shutdown(); echo.server_close()
+        request("delete_user", username=name)
+        subprocess.run(["systemctl", "start", "abdulbasit-session-enforcer"], check=True, timeout=15)

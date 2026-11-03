@@ -85,7 +85,7 @@ def test_udp_policy_and_private_target_blocking_coexist():
     assert config["routing"]["rules"][0]["network"] == "udp"
     assert "169.254.0.0/16" in config["routing"]["rules"][1]["ip"]
     assert config["api"]["listen"] == "/run/abdulbasit-xray/stats.sock"
-    assert config["api"]["services"] == ["StatsService"]
+    assert config["api"]["services"] == ["StatsService", "HandlerService"]
 
 
 def test_gateway_peers_are_observations_not_fake_verified_accounts():

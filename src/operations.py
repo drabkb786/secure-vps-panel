@@ -11,8 +11,10 @@ from pathlib import Path
 
 from common import BASE_DIR, DOMAIN_FILE, ValidationError, atomic_write, read_text
 
+import ssh_backend
+
 BANNER_FILE = BASE_DIR / "ssh-banner.txt"
-UNITS = ("nginx", "dropbear", "abdulbasit-ws", "abdulbasit-session-enforcer", "abdulbasit-xray", "abdulbasit-dnstt")
+UNITS = ("nginx", ssh_backend.unit(), "abdulbasit-ws", "abdulbasit-session-enforcer", "abdulbasit-xray", "abdulbasit-dnstt")
 LOG_UNITS = (*UNITS, "abdulbasit-paneld", "abdulbasit-web", "abdulbasit-bot")
 
 
@@ -82,7 +84,7 @@ class Manager:
         return {"ok": ok, "target": target, "text": output[-6000:], "note": "15 ICMP probes; this is packet loss/latency, not a bandwidth speed test. Some networks block ICMP."}
 
     def banner_get(self, _):
-        return {"text": read_text(BANNER_FILE), "scope": "Managed Dropbear login banner; normal OpenSSH is unchanged"}
+        return {"text": read_text(BANNER_FILE), "scope": "Managed tunnel login banner; administrative OpenSSH is separate"}
 
     def banner_set(self, params):
         text = params.get("text")
@@ -91,7 +93,7 @@ class Manager:
         before = read_text(BANNER_FILE)
         atomic_write(BANNER_FILE, text + "\n", 0o644)
         try:
-            self.run(["/bin/systemctl", "restart", "dropbear"], timeout=30)
+            self.run(["/bin/systemctl", "reload" if ssh_backend.name() == "openssh" else "restart", ssh_backend.unit()], timeout=30)
         except Exception:
             atomic_write(BANNER_FILE, before + "\n", 0o644)
             raise
@@ -104,6 +106,8 @@ class Manager:
             stream = inbound.get("streamSettings", {})
             for key in ("wsSettings", "xhttpSettings"):
                 if key in stream: stream[key]["path"] = "[private gateway path]"
+            if "realitySettings" in stream:
+                stream["realitySettings"]["privateKey"] = "[redacted]"
             if "sockopt" in stream:
                 stream["sockopt"]["trustedXForwardedFor"] = ["[private gateway marker]"]
             for client in inbound.get("settings", {}).get("clients", []):

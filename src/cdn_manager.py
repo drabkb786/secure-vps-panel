@@ -25,7 +25,7 @@ CERT_ROOT = Path("/etc/letsencrypt/live")
 HEADER = "X-Noway-Origin-Verify"
 PREFIX = "/cloudfront"
 PATHS = {p: PREFIX + "/" + p for p in ("vless", "vmess", "trojan")}
-PATHS.update(ssh=PREFIX + "/ssh/ws", health=PREFIX + "/health")
+PATHS.update(ssh=PREFIX + "/ssh/ws", health=PREFIX + "/health", xhttp=PREFIX + "/xhttp/")
 PRICE_CLASSES = {"PriceClass_All", "PriceClass_200", "PriceClass_100"}
 
 
@@ -54,8 +54,14 @@ def settings() -> dict:
 def delivery(route: str, domain: str) -> tuple[str, str]:
     if route == "direct":
         return domain, ""
+    if route == "bunny":
+        import bunny_manager
+        cfg = bunny_manager.settings()
+        if not cfg["enabled"] or cfg.get("origin") != domain:
+            raise ValidationError("Configure Bunny delivery for this origin first")
+        return cfg["endpoint"], bunny_manager.PREFIX
     if route != "cloudfront":
-        raise ValidationError("Choose direct or cloudfront delivery")
+        raise ValidationError("Choose direct, cloudfront or bunny delivery")
     cfg = settings()
     if not cfg["enabled"] or not cfg["endpoint"] or cfg.get("origin") != domain:
         raise ValidationError("Prepare CloudFront and attach its distribution hostname first")
@@ -64,7 +70,7 @@ def delivery(route: str, domain: str) -> tuple[str, str]:
 
 def nginx_maps(cfg: dict) -> str:
     # Every secret-bearing request outside the dedicated path allowlist is denied.
-    paths = "\n".join(f'    {path} 1;' for path in PATHS.values())
+    paths = "    ~^/cloudfront/xhttp/ 1;\n" + "\n".join(f'    {path} 1;' for path in PATHS.values())
     secret = cfg["secret"] if cfg["enabled"] else "disabled"
     return f'''
 map $http_x_noway_origin_verify $noway_cf_verified {{
@@ -94,10 +100,11 @@ map $http_x_noway_viewer_ip $noway_cf_viewer_ip {{
 def nginx_locations(cfg: dict, secure: bool) -> str:
     text = "    location /cloudfront/ { return 404; }\n"
     for name, path in PATHS.items():
+        selector = "^~" if name == "xhttp" else "="
         if not cfg["enabled"] or not secure:
-            text += f"    location = {path} {{ return 403; }}\n"
+            text += f"    location {selector} {path} {{ return 403; }}\n"
             continue
-        text += f'''    location = {path} {{
+        text += f'''    location {selector} {path} {{
         if ($noway_cf_verified = 0) {{ return 403; }}
         if ($noway_cf_viewer_ip = "") {{ return 503; }}
         access_log off;
@@ -106,13 +113,15 @@ def nginx_locations(cfg: dict, secure: bool) -> str:
         if name == "health":
             text += '        default_type text/plain;\n        add_header X-Noway-CloudFront-Health 1 always;\n        return 200 "noway-cloudfront-origin-v1\\n";\n    }\n'
             continue
-        port = {"vless": 10001, "vmess": 10002, "trojan": 10003, "ssh": 2082}[name]
+        port = {"vless": 10001, "vmess": 10002, "trojan": 10003, "ssh": 2082, "xhttp": 10004}[name]
         target = "/ssh/ws" if name == "ssh" else gateway_identity.backend_path(name)
-        text += f'''        proxy_pass http://127.0.0.1:{port}{target};
+        upgrade = "" if name == "xhttp" else "$abdulbasit_connection_upgrade"
+        text += f'''        client_max_body_size 32m;
+        proxy_pass http://127.0.0.1:{port}{target};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $abdulbasit_connection_upgrade;
+        proxy_set_header Connection "{upgrade}";
         proxy_set_header X-Noway-Origin-Verify "";
         proxy_set_header X-Forwarded-For $noway_cf_viewer_ip;
         proxy_set_header X-Real-IP $noway_cf_viewer_ip;
@@ -132,7 +141,7 @@ def template() -> dict:
     """Original CloudFormation from AWS documented resource schemas, not vendor code."""
     ref = lambda name: {"Ref": name}
     paths = json.dumps(list(PATHS.values()), separators=(",", ":"))
-    function = "function handler(event) { var r = event.request; var paths = " + paths + "; if ((r.method !== 'GET' && r.method !== 'HEAD') || paths.indexOf(r.uri) === -1) { return {statusCode: 403, statusDescription: 'Forbidden'}; } r.headers['x-noway-viewer-ip'] = {value: event.viewer.ip}; return r; }"
+    function = "function handler(event) { var r = event.request; var paths = " + paths + "; var xhttp = r.uri.indexOf('/cloudfront/xhttp/') === 0; if (xhttp ? (r.method !== 'GET' && r.method !== 'POST') : ((r.method !== 'GET' && r.method !== 'HEAD') || paths.indexOf(r.uri) === -1)) { return {statusCode: 403, statusDescription: 'Forbidden'}; } r.headers['x-noway-viewer-ip'] = {value: event.viewer.ip}; return r; }"
     return {
         "AWSTemplateFormatVersion": "2010-09-09",
         "Description": "NOWAY CloudFront WebSocket gateway; AWS usage charges apply. No admin or subscription delivery.",
@@ -157,7 +166,7 @@ def template() -> dict:
                 "Origins": [{"Id": "VPS", "DomainName": ref("OriginDomain"),
                              "OriginCustomHeaders": [{"HeaderName": HEADER, "HeaderValue": ref("OriginSecret")}],
                              "CustomOriginConfig": {"HTTPSPort": 443, "OriginProtocolPolicy": "https-only", "OriginSSLProtocols": ["TLSv1.2"], "OriginReadTimeout": 60, "OriginKeepaliveTimeout": 60}}],
-                "DefaultCacheBehavior": {"TargetOriginId": "VPS", "ViewerProtocolPolicy": "https-only", "AllowedMethods": ["GET", "HEAD"], "CachedMethods": ["GET", "HEAD"], "Compress": False,
+                "DefaultCacheBehavior": {"TargetOriginId": "VPS", "ViewerProtocolPolicy": "https-only", "AllowedMethods": ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"], "CachedMethods": ["GET", "HEAD"], "Compress": False,
                                          "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad", "OriginRequestPolicyId": ref("OriginPolicy"),
                                          "FunctionAssociations": [{"EventType": "viewer-request", "FunctionARN": {"Fn::GetAtt": ["RouteGuard", "FunctionMetadata.FunctionARN"]}}]},
                 "ViewerCertificate": {"CloudFrontDefaultCertificate": True},
@@ -167,9 +176,9 @@ def template() -> dict:
     }
 
 
-def probe(host: str, path: str, websocket: bool) -> dict:
+def probe(host: str, path: str, websocket: bool, provider="cloudfront") -> dict:
     """TLS-verified probe, pinned public address; never follow redirects or send secrets."""
-    endpoint(host)
+    (endpoint if provider == "cloudfront" else validate_domain)(host)
     started = time.monotonic()
     key = base64.b64encode(secrets.token_bytes(16)).decode()
     try:
@@ -199,13 +208,15 @@ def probe(host: str, path: str, websocket: bool) -> dict:
                 status = int(lines[0].split()[1])
                 fields = {k.lower(): v.strip() for line in lines[1:] if ":" in line for k, v in [line.split(":", 1)]}
                 edge = "x-amz-cf-id" in fields and "cloudfront" in fields.get("via", "").lower()
+                if provider == "bunny":
+                    edge = fields.get("server", "").lower().startswith("bunnycdn") and "cdn-pullzone" in fields
                 if websocket:
                     accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
                     ok = bool(sep) and status == 101 and fields.get("sec-websocket-accept") == accept and fields.get("upgrade", "").lower() == "websocket"
                 else:
                     # Marker header avoids assumptions about chunked/body packet boundaries.
-                    ok = bool(sep) and status == 200 and fields.get("x-noway-cloudfront-health") == "1"
-                return {"ok": ok and edge, "http_status": status, "cloudfront_headers": edge, "elapsed_ms": round((time.monotonic() - started) * 1000)}
+                    ok = bool(sep) and status == 200 and fields.get("x-noway-" + provider + "-health") == "1"
+                return {"ok": ok and edge, "http_status": status, "cloudfront_headers": edge if provider == "cloudfront" else False, "edge_headers": edge, "elapsed_ms": round((time.monotonic() - started) * 1000)}
     except (OSError, ValueError, IndexError):
         return {"ok": False, "error": "DNS, TLS or connection check failed", "elapsed_ms": round((time.monotonic() - started) * 1000)}
 
@@ -260,7 +271,7 @@ class Manager:
     def check(self, _=None):
         cfg = settings()
         if not cfg["enabled"] or not cfg["endpoint"]: raise ValidationError("Attach a distribution hostname first")
-        checks = {name: probe(cfg["endpoint"], path, name != "health") for name, path in PATHS.items()}
+        checks = {name: probe(cfg["endpoint"], path, name != "health") for name, path in PATHS.items() if name != "xhttp"}
         report = {"checked_at": datetime.now(timezone.utc).isoformat(), "endpoint": cfg["endpoint"], "ok": all(c["ok"] for c in checks.values()), "checks": checks,
                   "scope": "TLS, CloudFront response headers, origin health and WebSocket upgrades; account authentication and speed not tested"}
         cfg["last_check"] = report

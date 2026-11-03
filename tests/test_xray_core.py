@@ -76,6 +76,117 @@ def test_generated_configs_accepted_by_real_xray(tmp_path):
         assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_real_core_hot_add_keeps_existing_stream(tmp_path):
+    import copy
+    import xray_runtime
+    class Echo(socketserver.BaseRequestHandler):
+        def handle(self):
+            try:
+                while data := self.request.recv(65536): self.request.sendall(data)
+            except OSError:
+                pass
+    echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Echo)
+    echo.daemon_threads = True
+    threading.Thread(target=echo.serve_forever, daemon=True).start()
+    first, second = record(), record()
+    cfg = server_config({"dns": DEFAULT_DNS}, [first])
+    inbound = cfg["inbounds"][0]
+    inbound.update(port=free_port(), streamSettings={"network": "raw", "security": "none"})
+    cfg["inbounds"] = [inbound]
+    api_socket = tmp_path / "hot.sock"; cfg["api"]["listen"] = str(api_socket)
+    cfg["routing"]["rules"] = []
+    cfg["outbounds"][0]["settings"]["finalRules"] = [{"action": "allow", "network": "tcp", "ip": ["127.0.0.1"], "port": str(echo.server_address[1])}]
+    path = tmp_path / "hot.json"; path.write_text(json.dumps(cfg))
+    process, log = start_core(path)
+    def login(row, payload):
+        peer = socket.create_connection(("127.0.0.1", inbound["port"]), timeout=5)
+        peer.settimeout(5)
+        peer.sendall(b"\x00" + uuid.UUID(row["uuid"]).bytes + b"\x00\x01" + struct.pack("!H", echo.server_address[1]) + b"\x01\x7f\x00\x00\x01" + payload)
+        assert read_exact(peer, 2) == b"\x00\x00"
+        assert read_exact(peer, len(payload)) == payload
+        return peer
+    try:
+        wait_port(inbound["port"], process)
+        with login(first, b"before") as existing:
+            added = copy.deepcopy(inbound)
+            added["settings"]["clients"] = [{"id": second["uuid"], "email": second["uuid"] + "-vless@noway.local", "level": 0}]
+            run = lambda args, **kw: subprocess.run(args, check=True, capture_output=True, text=True, timeout=kw["timeout"])
+            xray_runtime.add(run, CORE, "unix://" + str(api_socket), [added], tmp_path)
+            assert process.poll() is None
+            existing.sendall(b"after-hot-add")
+            assert read_exact(existing, 13) == b"after-hot-add"
+            with login(second, b"new-user"): pass
+    finally:
+        process.terminate(); process.wait(timeout=5); log.close()
+        echo.shutdown(); echo.server_close()
+
+
+def test_real_reality_config_and_forwarding(tmp_path, monkeypatch):
+    import xray_manager as xray
+    import reality_transport
+    monkeypatch.setattr(reality_transport, "KEY_FILE", tmp_path / "reality-keys.json")
+    monkeypatch.setattr(xray, "DOMAIN_FILE", tmp_path / "domain")
+    xray.DOMAIN_FILE.write_text("vpn.example.com")
+    run = lambda args, **kw: subprocess.run(args, check=True, capture_output=True, text=True, timeout=kw["timeout"])
+    reality_transport.initialize(run, CORE)
+    import ssl
+    cert, key = tmp_path / "cert.pem", tmp_path / "key.pem"
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com", "-addext", "subjectAltName=DNS:vpn.example.com"], check=True, capture_output=True, timeout=20)
+    class HTTPFixture(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def do_GET(self):
+            body = b"REALITY-forwarding-ok"
+            self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), HTTPFixture)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+    context.load_cert_chain(cert, key)
+    context.set_alpn_protocols(["h2", "http/1.1"])
+    origin.socket = context.wrap_socket(origin.socket, server_side=True)
+    threading.Thread(target=origin.serve_forever, daemon=True).start()
+    destination = ThreadingHTTPServer(("127.0.0.1", 0), HTTPFixture)
+    threading.Thread(target=destination.serve_forever, daemon=True).start()
+    number = free_port(); row = record()
+    cfg = server_config({"dns": DEFAULT_DNS, "reality_enabled": True, "reality_port": number}, [row])
+    cfg["inbounds"] = [cfg["inbounds"][-1]]
+    cfg["api"]["listen"] = str(tmp_path / "reality.sock")
+    cfg["inbounds"][0]["streamSettings"]["realitySettings"]["target"] = f"127.0.0.1:{origin.server_port}"
+    cfg["routing"]["rules"] = []
+    cfg["outbounds"][0]["settings"]["finalRules"] = [{"action": "allow", "network": "tcp", "ip": ["127.0.0.1"], "port": str(destination.server_port)}]
+    client = reality_transport.client(row, "vpn.example.com", number)
+    client["outbounds"][0]["settings"]["vnext"][0]["address"] = "127.0.0.1"
+    client_port = free_port(); client["inbounds"][0]["port"] = client_port
+    paths = [tmp_path / "reality-server.json", tmp_path / "reality-client.json"]
+    for path, data in zip(paths, (cfg, client)):
+        path.write_text(json.dumps(data))
+        result = run([CORE, "run", "-test", "-config", str(path)], timeout=20)
+    processes = []
+    try:
+        for path in paths: processes.append(start_core(path))
+        wait_port(number, processes[0][0]); wait_port(client_port, processes[1][0])
+        with socket.create_connection(("127.0.0.1", client_port), timeout=10) as peer:
+            peer.settimeout(15)
+            peer.sendall(b"\x05\x01\x00"); assert read_exact(peer, 2) == b"\x05\x00"
+            peer.sendall(b"\x05\x01\x00\x01\x7f\x00\x00\x01" + struct.pack("!H", destination.server_port))
+            assert read_exact(peer, 10)[:2] == b"\x05\x00"
+            peer.sendall(b"GET / HTTP/1.0\r\nHost: fixture\r\n\r\n")
+            response = bytearray()
+            while b"REALITY-forwarding-ok" not in response:
+                part = peer.recv(65536)
+                if not part: break
+                response.extend(part)
+            assert b"REALITY-forwarding-ok" in response
+        public = reality_transport.link(row, "vpn.example.com", number)
+        assert reality_transport.keys()["private"] not in public
+    except Exception as exc:
+        logs = "\n".join(path.read_text() for path in tmp_path.glob("*.log"))
+        raise AssertionError(logs) from exc
+    finally:
+        for process, log in reversed(processes):
+            process.terminate(); process.wait(timeout=5); log.close()
+        origin.shutdown(); origin.server_close(); destination.shutdown(); destination.server_close()
+
+
 def imported_profile_from_uri(link):
     """Independent client-style URI decoding; deliberately does not call client_config."""
     protocol, encoded = link.split("://", 1)
@@ -104,13 +215,15 @@ def imported_profile_from_uri(link):
                            "streamSettings": stream}]}
 
 
-@pytest.mark.parametrize("source", ["json", "import_link", "xhttp_link", "cloudfront_json", "cloudfront_link"])
+@pytest.mark.parametrize("source", ["json", "import_link", "xhttp_link", "cloudfront_json", "cloudfront_link", "cloudfront_xhttp", "bunny_json", "bunny_xhttp"])
 def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, monkeypatch):
     from cloudfront_fixture import enable_origin, edge_server
-    cdn = source.startswith("cloudfront")
-    secret = enable_origin(tmp_path, monkeypatch) if cdn else ""
+    cdn = source.startswith(("cloudfront", "bunny"))
+    provider = "bunny" if source.startswith("bunny") else "cloudfront"
+    xhttp = "xhttp" in source
+    secret = enable_origin(tmp_path, monkeypatch, provider) if cdn else ""
     domain = "d123example.cloudfront.net" if cdn else "vpn.example.com"
-    prefix = "/cloudfront" if cdn else ""
+    prefix = "/" + provider if cdn else ""
     """Exercise SOCKS -> Xray -> verified TLS/Nginx -> Xray -> local HTTP.
 
     Only this test config permits its loopback HTTP destination; production
@@ -119,12 +232,12 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, m
     nginx = os.environ.get("NGINX_TEST_BINARY")
     if not nginx:
         pytest.skip("TLS gateway integration requires NGINX_TEST_BINARY")
-    row = record(); server_cfg = server_config({"dns": DEFAULT_DNS, "xhttp_enabled": source == "xhttp_link"}, [row])
+    row = record(); server_cfg = server_config({"dns": DEFAULT_DNS, "xhttp_enabled": xhttp}, [row])
     api_socket = tmp_path / "stats.sock"
     server_cfg["api"]["listen"] = str(api_socket)
     server_cfg["log"]["loglevel"] = "debug"
     ports = {path: free_port() for _, path in PROTOCOLS.values()}
-    if source == "xhttp_link": ports[XHTTP_PATH] = free_port()
+    if xhttp: ports[XHTTP_PATH] = free_port()
     for inbound in server_cfg["inbounds"]:
         stream = inbound["streamSettings"]
         inbound["port"] = ports[XHTTP_PATH if inbound["tag"] == "noway-xhttp" else "/" + inbound["protocol"]]
@@ -163,11 +276,11 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, m
         site = site.replace("X-Forwarded-For $remote_addr;", "X-Forwarded-For 198.51.100.42;")
         for protocol, (port, endpoint_path) in PROTOCOLS.items():
             site = site.replace(f"127.0.0.1:{port}", f"127.0.0.1:{ports[endpoint_path]}")
-        if source == "xhttp_link":
+        if xhttp:
             site = site.replace("127.0.0.1:10004", f"127.0.0.1:{ports[XHTTP_PATH]}")
         if cdn:
             edge_port = free_port()
-            site += edge_server(edge_port, front_port, cert, key, secret)
+            site += edge_server(edge_port, front_port, cert, key, secret, provider)
         config = tmp_path / "nginx.conf"
         user = "user root root;\n" if os.geteuid() == 0 else ""
         temp_paths = "\n".join(f"{part}_temp_path {tmp_path}/{part};" for part in ("client_body", "proxy", "fastcgi", "scgi", "uwsgi"))
@@ -175,8 +288,8 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, m
         front_log = (tmp_path / "nginx-console.log").open("w")
         front_proc = subprocess.Popen([nginx, "-p", str(tmp_path), "-c", str(config), "-g", "daemon off;"], stdout=front_log, stderr=front_log)
         wait_port(front_port, front_proc)
-        for protocol in (["vless-xhttp"] if source == "xhttp_link" else PROTOCOLS):
-            cfg = client_config(protocol, row, domain, DEFAULT_DNS, prefix) if source in ("json", "cloudfront_json") else imported_profile_from_uri(share_link(protocol, row, domain, prefix))
+        for protocol in (["vless-xhttp"] if xhttp else PROTOCOLS):
+            cfg = client_config(protocol, row, domain, DEFAULT_DNS, prefix) if source in ("json", "cloudfront_json", "bunny_json") else imported_profile_from_uri(share_link(protocol, row, domain, prefix))
             cfg["log"]["loglevel"] = "debug"
             proxy = cfg["outbounds"][0]; proxy["streamSettings"]["tlsSettings"]["certificates"] = [{"certificateFile": str(cert), "usage": "verify"}]
             transport_settings = proxy["streamSettings"].get("wsSettings", proxy["streamSettings"].get("xhttpSettings"))

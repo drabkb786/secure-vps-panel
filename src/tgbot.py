@@ -140,6 +140,7 @@ class Bot:
         return {"inline_keyboard": [
             [{"text": "➕ Create", "callback_data": "create_start"}, {"text": "🗑 Delete", "callback_data": "delete_start"}],
             [{"text": "📅 Renew", "callback_data": "renew_start"}, {"text": "🔢 Session Limit", "callback_data": "sessions_start"}],
+            [{"text": "🔗 SSH links", "callback_data": "ssh_find"}],
             [{"text": "📦 Quota Metadata", "callback_data": "quota_start"}],
             [{"text": "⬅️ Main", "callback_data": "menu_main"}],
         ]}
@@ -186,9 +187,15 @@ class Bot:
             self.main_menu(chat_id, message_id)
         elif data == "menu_users":
             self.set_state(chat_id)
-            self.edit(chat_id, message_id, "<b>👤 User Management</b>\nSession limit means concurrent Dropbear sessions, not unique IP addresses.", self.users_keyboard())
+            self.edit(chat_id, message_id, "<b>👤 User Management</b>\nSession limit means concurrent SSH sessions, not unique IP addresses.", self.users_keyboard())
         elif data == "menu_xray":
             self.show_xray_profiles(chat_id, message_id)
+        elif data == "ssh_find":
+            self.set_state(chat_id, "ssh_export_name")
+            self.edit(chat_id, message_id, "Enter the managed SSH username:")
+        elif data.startswith("ssh_export:"):
+            _, name, route = data.split(":", 2)
+            self.show_ssh_links(chat_id, name, route)
         elif data == "xray_find":
             self.set_state(chat_id, "xray_export_name")
             self.edit(chat_id, message_id, "Enter the Xray profile name to get its direct import links:")
@@ -285,6 +292,18 @@ class Bot:
         except RuntimeError as exc:
             display(f"❌ {html.escape(str(exc))}", self.main_keyboard(self.is_super(chat_id)))
 
+    def show_ssh_links(self, chat_id, name, route="direct"):
+        try:
+            result = self.panel("ssh_export", username=name, route=route)
+        except RuntimeError as exc:
+            self.send(chat_id, "❌ " + html.escape(str(exc)))
+            return
+        lines = [f"<b>SSH · {html.escape(name)} · {html.escape(route)}</b>"]
+        for label, link in result["links"].items():
+            lines.append(f"{label}: <code>{html.escape(link)}</code>")
+        lines.append("SSH URI: direct port 109. WSS URL: transport only; use a framing-capable client. Password is your existing SSH password. Full adapter/files: web Export or root CLI ssh-export.")
+        self.send(chat_id, "\n".join(lines), {"inline_keyboard": [[{"text": r, "callback_data": f"ssh_export:{name}:{r}"} for r in ("direct", "bunny", "cloudfront")]]})
+
     def show_users(self, chat_id: str, message_id: int) -> None:
         try:
             users = self.panel("list_users").get("users", [])
@@ -346,11 +365,13 @@ class Bot:
             return
         value = text.strip()
         try:
-            if step == "xray_export_name":
+            if step == "ssh_export_name":
+                self.show_ssh_links(chat_id, value)
+            elif step == "xray_export_name":
                 self.show_xray_links(chat_id, None, value)
             elif step == "create_username":
                 self.set_state(chat_id, "create_password", username=value)
-                self.send(chat_id, "Send a strong password (minimum 12 characters). The bot will delete that password message after reading it.")
+                self.send(chat_id, "Send an SSH password (minimum 3 characters). The bot will delete that password message after reading it.")
             elif step == "create_password":
                 self.api.call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
                 self.set_state(chat_id, "create_days", username=state["username"], password=text)

@@ -64,6 +64,14 @@ def validate_password(value: str) -> str:
     return value
 
 
+def validate_ssh_password(value: str) -> str:
+    if not isinstance(value, str) or not 3 <= len(value) <= 128:
+        raise ValidationError("SSH password must contain 3-128 characters")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        raise ValidationError("Password contains an unsupported control character")
+    return value
+
+
 def validate_days(value: Any, *, minimum: int = 1, maximum: int = 3650) -> int:
     try:
         days = int(str(value).strip())
@@ -143,7 +151,7 @@ def validate_bot_token(value: str) -> str:
 
 
 def validate_service(value: str) -> str:
-    allowed = {"nginx", "dropbear", "abdulbasit-ws", "abdulbasit-session-enforcer", "abdulbasit-bot", "abdulbasit-paneld", "abdulbasit-web", "abdulbasit-xray", "abdulbasit-dnstt"}
+    allowed = {"nginx", "dropbear", "abdulbasit-sshd", "abdulbasit-ws", "abdulbasit-session-enforcer", "abdulbasit-bot", "abdulbasit-paneld", "abdulbasit-web", "abdulbasit-xray", "abdulbasit-dnstt"}
     if value not in allowed:
         raise ValidationError("Service is not in the allowed service list")
     return value

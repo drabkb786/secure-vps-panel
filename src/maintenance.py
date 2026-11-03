@@ -30,7 +30,7 @@ def backup_installation():
     with path.open("xb") as handle:
         os.chmod(path, 0o600)
         with tarfile.open(fileobj=handle, mode="w:gz", dereference=False) as archive:
-            paths = [INSTALL_DIR, NGINX_FILE, Path("/etc/default/dropbear"), Path("/etc/abdulbasit-xray"), Path("/etc/abdulbasit-dnstt")]
+            paths = [INSTALL_DIR, NGINX_FILE, Path("/etc/default/dropbear"), Path("/etc/abdulbasit-xray"), Path("/etc/abdulbasit-dnstt"), Path("/etc/abdulbasit-sshd")]
             paths += [p for p in BASE_DIR.iterdir() if p != BACKUP_DIR]
             paths += list(UNIT_DIR.glob("abdulbasit-*"))
             for item in paths:

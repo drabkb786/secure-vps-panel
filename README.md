@@ -1,6 +1,9 @@
-# NOWAY VPS Control Room v3.5.0
+# NOWAY VPS Control Room v4.0.0
 
-> Browser dashboard, SSH/Dropbear, VLESS/VMess/Trojan, optional VLESS XHTTP, live subscriptions, QR, client configs and private recovery for Ubuntu/Debian VPS servers.
+> Browser dashboard, managed OpenSSH (Dropbear fallback), VLESS/VMess/Trojan, optional XHTTP/REALITY, live subscriptions, QR, client configs and private recovery for Ubuntu/Debian VPS servers.
+
+**4.0 upgrade:** [OpenSSH migration, SSH links/adapter, Bunny, Xray runtime updates and validation](docs/UPGRADE_4.md).
+**Changing #1 / #2:** [Implementation decisions and upstream sources](docs/CHANGING_1_2.md).
 
 ## Project information
 
@@ -9,7 +12,7 @@
 | Owner and Maintainer | **Abdul Basit** |
 | GitHub Account | `drabkb786` |
 | Repository | `drabkb786/secure-vps-panel` |
-| Version | `3.5.0` |
+| Version | `4.0.0` |
 | Default Telegram Super Admin ID | `6408975845` |
 | Supported OS | Ubuntu 22.04/24.04 and Debian 12+ |
 | Required Python | Python 3.10 or newer |

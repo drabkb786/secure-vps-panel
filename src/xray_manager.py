@@ -28,6 +28,8 @@ import cdn_manager
 import profile_backup
 import traffic
 import gateway_identity
+import xray_runtime
+import reality_transport
 
 from common import (BASE_DIR, DOMAIN_FILE, ValidationError, atomic_write,
                     atomic_write_json, calculate_expiry, read_json, read_text,
@@ -52,7 +54,7 @@ def settings() -> dict:
     data = read_json(SETTINGS_FILE, None) if SETTINGS_FILE.exists() else {}
     if not isinstance(data, dict):
         raise RuntimeError("Network settings are unreadable or invalid; restore a known-good backup")
-    return {"enabled": False, "xhttp_enabled": False, "udp_enabled": True, "dns": dict(DEFAULT_DNS), **data}
+    return {"enabled": False, "xhttp_enabled": False, "reality_enabled": False, "reality_port": 8443, "udp_enabled": True, "dns": dict(DEFAULT_DNS), **data}
 
 
 def accounts(*, hydrate=True) -> list[dict]:
@@ -153,9 +155,13 @@ def server_config(config: dict, rows: list[dict]) -> dict:
                          "protocol": "vless", "settings": {"clients": clients, "decryption": "none"},
                          "streamSettings": {"network": "xhttp", "security": "none", "xhttpSettings": {"path": gateway_identity.backend_path("xhttp"), "mode": "auto"},
                                             "sockopt": {"trustedXForwardedFor": [gateway_identity.header_name()]}}})
+    if config.get("reality_enabled"):
+        clients = [{"id": row["uuid"], "email": f"{row['uuid']}-reality@noway.local", "flow": "xtls-rprx-vision"}
+                   for row in rows if active(row) and "vless" in row["protocols"]]
+        inbounds.append(reality_transport.inbound(config, clients, read_text(DOMAIN_FILE)))
     return {
         "log": {"loglevel": "warning"},
-        "api": {"tag": "noway-stats", "listen": str(traffic.API_SOCKET), "services": ["StatsService"]},
+        "api": {"tag": "noway-stats", "listen": str(traffic.API_SOCKET), "services": ["StatsService", "HandlerService"]},
         "stats": {},
         "policy": {"levels": {"0": {"statsUserUplink": True, "statsUserDownlink": True, "statsUserOnline": True}}},
         "dns": {"servers": dns["servers"], "queryStrategy": dns["query_strategy"]},
@@ -172,6 +178,8 @@ def server_config(config: dict, rows: list[dict]) -> dict:
 
 
 def client_config(protocol: str, row: dict, domain: str, dns: dict, prefix: str = "") -> dict:
+    if protocol == "vless-reality":
+        return reality_transport.client(row, domain, settings()["reality_port"])
     xhttp = protocol == "vless-xhttp"
     protocol = "vless" if xhttp else protocol
     _, path = PROTOCOLS[protocol]
@@ -187,13 +195,15 @@ def client_config(protocol: str, row: dict, domain: str, dns: dict, prefix: str 
             "streamSettings": {
                 "network": "xhttp" if xhttp else "ws", "security": "tls",
                 "tlsSettings": {"serverName": domain, "allowInsecure": False, "alpn": ["h2"] if xhttp else ["http/1.1"]},
-                **({"xhttpSettings": {"path": XHTTP_PATH, "host": domain, "mode": "packet-up"}} if xhttp else {"wsSettings": {"path": path, "host": domain, **({"heartbeatPeriod": 25} if prefix else {})}}),
+                **({"xhttpSettings": {"path": prefix + XHTTP_PATH, "host": domain, "mode": "packet-up"}} if xhttp else {"wsSettings": {"path": path, "host": domain, "heartbeatPeriod": 25}}),
             },
         }],
     }
 
 
 def share_link(protocol: str, row: dict, domain: str, prefix: str = "") -> str:
+    if protocol == "vless-reality":
+        return reality_transport.link(row, domain, settings()["reality_port"])
     xhttp = protocol == "vless-xhttp"
     if protocol not in PROTOCOLS and not xhttp:
         raise ValidationError("Choose vless, vmess or trojan")
@@ -208,7 +218,7 @@ def share_link(protocol: str, row: dict, domain: str, prefix: str = "") -> str:
     credential = row["trojan_password"] if protocol == "trojan" else row["uuid"]
     query = {"security": "tls", "type": "ws", "host": domain, "sni": domain, "path": path, "alpn": "http/1.1"}
     if xhttp:
-        query.update({"type": "xhttp", "path": XHTTP_PATH, "mode": "packet-up", "alpn": "h2"})
+        query.update({"type": "xhttp", "path": prefix + XHTTP_PATH, "mode": "packet-up", "alpn": "h2"})
     if protocol == "vless":
         query["encryption"] = "none"
     return f"{protocol}://{quote(credential, safe='')}@{domain}:443?{urlencode(query)}#{quote(label)}"
@@ -224,6 +234,8 @@ class Manager:
         try:
             self.run(["/bin/systemctl", "is-active", "--quiet", "abdulbasit-xray"], timeout=3)
             ports = [p for p, _ in PROTOCOLS.values()] + ([XHTTP_PORT] if settings().get("xhttp_enabled") else [])
+            if settings().get("reality_enabled"):
+                ports.append(settings()["reality_port"])
             for port in ports:
                 with socket.create_connection(("127.0.0.1", port), timeout=0.3):
                     pass
@@ -309,6 +321,12 @@ class Manager:
         text = json.dumps(server_config(config, rows), indent=2) + "\n"
         old = {p: p.read_text() if p.exists() else None for p in (CONFIG_FILE, SETTINGS_FILE, ACCOUNTS_FILE, ENABLED_FILE)}
         changed = force_restart or text != old[CONFIG_FILE] or config["enabled"] != settings()["enabled"]
+        live_delta = None
+        if not force_restart and config["enabled"] and settings()["enabled"] and old[CONFIG_FILE] is not None:
+            try:
+                live_delta = xray_runtime.additions(json.loads(old[CONFIG_FILE]), json.loads(text))
+            except (ValueError, KeyError, TypeError):
+                pass
         if not changed:
             atomic_write_json(SETTINGS_FILE, config)
             atomic_write_json(ACCOUNTS_FILE, rows)
@@ -334,6 +352,16 @@ class Manager:
             else:
                 ENABLED_FILE.unlink(missing_ok=True)
             if changed:
+                live_ok = False
+                if live_delta is not None and self.health_probe():
+                    try:
+                        epoch = self.epoch()
+                        xray_runtime.add(self.run, XRAY_BINARY, traffic.API_ADDRESS, live_delta, CONFIG_DIR)
+                        live_ok = epoch == self.epoch()
+                    except (RuntimeError, OSError, AttributeError, subprocess.SubprocessError):
+                        pass  # Reconcile persisted desired state after partial/API failure.
+                if live_ok:
+                    return
                 self.run(["/bin/systemctl", "restart" if config["enabled"] else "stop", "abdulbasit-xray"], timeout=30)
                 if config["enabled"]:
                     self.wait_running()
@@ -363,6 +391,8 @@ class Manager:
         endpoints = [{"protocol": p, "port": 443, "path": v[1], "transport": "ws+tls"} for p, v in PROTOCOLS.items()]
         if cfg.get("xhttp_enabled"):
             endpoints.append({"protocol": "vless-xhttp", "port": 443, "path": XHTTP_PATH, "transport": "xhttp+tls"})
+        if cfg.get("reality_enabled"):
+            endpoints.append({"protocol": "vless-reality", "port": cfg["reality_port"], "path": "direct", "transport": "raw+reality"})
         return {"network": cfg, "xray_installed": XRAY_BINARY.is_file(), "accounts": [public_account(x) for x in accounts()],
                 "endpoints": endpoints}
 
@@ -373,6 +403,14 @@ class Manager:
         self.collect_usage()
         cfg = settings()
         cfg["enabled"] = enabled
+        if "reality_enabled" in params:
+            if not isinstance(params["reality_enabled"], bool):
+                raise ValidationError("reality_enabled must be boolean")
+            cfg["reality_enabled"] = params["reality_enabled"]
+            cfg["reality_port"] = reality_transport.port(params.get("reality_port", cfg["reality_port"]))
+            if cfg["reality_enabled"]:
+                self.ready()
+                reality_transport.initialize(self.run, XRAY_BINARY)
         if "xhttp_enabled" in params:
             if not isinstance(params["xhttp_enabled"], bool):
                 raise ValidationError("xhttp_enabled must be a boolean")
@@ -425,8 +463,10 @@ class Manager:
     @staticmethod
     def profile_links(row: dict, domain: str, config: dict, prefix: str = "") -> dict:
         variants = list(row["protocols"])
-        if not prefix and config.get("xhttp_enabled") and "vless" in variants:
+        if config.get("xhttp_enabled") and "vless" in variants:
             variants.append("vless-xhttp")
+        if not prefix and config.get("reality_enabled") and "vless" in variants:
+            variants.append("vless-reality")
         return {p: share_link(p, row, domain, prefix) for p in variants}
 
     def update(self, params: dict) -> dict:

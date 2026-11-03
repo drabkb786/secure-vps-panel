@@ -5,14 +5,17 @@ umask 077
 [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'Run as root' >&2; exit 1; }
 requested_version="${1:-}"
 destination=/usr/local/lib/abdulbasit/xray
-if [[ -x "$destination" && -z "$requested_version" ]]; then
-  "$destination" version
-  exit 0
-fi
 if [[ -z "$requested_version" ]]; then
   requested_version="$(cat "$(dirname -- "${BASH_SOURCE[0]}")/../XRAY_VERSION")"
 fi
 [[ "$requested_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid Xray release tag' >&2; exit 1; }
+if [[ -x "$destination" ]]; then
+  current_version="$("$destination" version | head -n 1 | awk '{print $2}')"
+  if [[ "$current_version" == "${requested_version#v}" ]]; then
+    echo "Official Xray $requested_version already installed"
+    exit 0
+  fi
+fi
 case "$(uname -m)" in
   x86_64) asset=Xray-linux-64.zip ;;
   aarch64|arm64) asset=Xray-linux-arm64-v8a.zip ;;
@@ -41,10 +44,42 @@ chmod 0755 "$workdir/xray"
 if [[ -f /etc/abdulbasit-xray/config.json ]]; then
   "$workdir/xray" run -test -config /etc/abdulbasit-xray/config.json
 fi
+was_active=0
+systemctl is-active --quiet abdulbasit-xray && was_active=1
+if [[ $was_active == 1 && -x /usr/local/sbin/abdulbasit-panelctl ]]; then
+  /usr/local/sbin/abdulbasit-panelctl traffic
+fi
+backup=""
 if [[ -f "$destination" ]]; then
   install -d -m 0700 /etc/abdulbasit/backups
-  cp -a "$destination" "/etc/abdulbasit/backups/xray.$(date -u +%Y%m%dT%H%M%SZ)"
+  backup="/etc/abdulbasit/backups/xray.$(date -u +%Y%m%dT%H%M%SZ).$$"
+  cp -a "$destination" "$backup"
 fi
+rollback() {
+  trap - ERR
+  if [[ -n "$backup" ]]; then
+    install -m 0755 "$backup" "$destination.rollback"
+    mv -f "$destination.rollback" "$destination"
+    if [[ $was_active == 1 ]]; then systemctl restart abdulbasit-xray || true; fi
+  else
+    rm -f "$destination"
+  fi
+  echo 'Xray upgrade failed; previous binary restored. Inspect journalctl -u abdulbasit-xray.' >&2
+  exit 1
+}
+trap rollback ERR
 install -m 0755 -o root -g root "$workdir/xray" "$destination.new"
 mv -f "$destination.new" "$destination"
+if [[ $was_active == 1 ]]; then
+  systemctl restart abdulbasit-xray
+  ready=0
+  for attempt in {1..30}; do
+    if "$destination" api statsquery --server=unix:///run/abdulbasit-xray/stats.sock -t=1 >/dev/null 2>&1; then
+      ready=1; break
+    fi
+    sleep 0.2
+  done
+  [[ $ready == 1 ]]
+fi
+trap - ERR
 echo "Installed official Xray $requested_version (SHA256 verified)"

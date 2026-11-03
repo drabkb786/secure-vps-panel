@@ -29,6 +29,8 @@ import xray_manager
 import operations
 import slowdns
 import cdn_manager
+import bunny_manager
+import ssh_profiles
 import gateway_identity
 import ssh_identity
 from common import validate_max_ips
@@ -54,6 +56,7 @@ from common import (
     validate_days,
     validate_domain,
     validate_password,
+    validate_ssh_password,
     validate_quota,
     validate_service,
     validate_sessions,
@@ -70,6 +73,7 @@ ACME_ROOT = Path("/var/www/letsencrypt")
 SERVICE_MAP = {
     "nginx": "nginx",
     "dropbear": "dropbear",
+    "abdulbasit-sshd": "abdulbasit-sshd",
     "abdulbasit-ws": "abdulbasit-ws",
     "abdulbasit-session-enforcer": "abdulbasit-session-enforcer",
     "abdulbasit-bot": "abdulbasit-bot",
@@ -147,13 +151,13 @@ def get_shadow_expiry(username: str) -> str | None:
 
 def create_user(params: dict[str, Any]) -> dict[str, Any]:
     username = validate_username(str(params.get("username", "")))
-    password = validate_password(str(params.get("password", "")))
+    password = validate_ssh_password(str(params.get("password", "")))
     days = validate_days(params.get("days"))
     max_sessions = validate_sessions(params.get("max_sessions"))
     quota_gb = validate_quota(params.get("quota_gb", "Unlimited"))
     max_ips = validate_max_ips(params.get("max_ips", 0))
     if quota_gb is not None:
-        raise ValidationError("SSH byte quotas are not supported by this Dropbear accounting backend. Use Unlimited, or a metered Xray profile; no unenforced quota will be saved.")
+        raise ValidationError("SSH byte quotas are not supported by this SSH accounting backend. Use Unlimited, or a metered Xray profile; no unenforced quota will be saved.")
 
     if user_file(username).exists():
         raise ValidationError("This managed username already exists")
@@ -164,9 +168,11 @@ def create_user(params: dict[str, Any]) -> dict[str, Any]:
         pass
 
     expiry = calculate_expiry(days)
+    import ssh_backend
+    groups = ["--groups", ssh_backend.GROUP] if ssh_backend.name() == "openssh" else []
     run([
         binary("useradd"), "--no-create-home", "--shell", "/usr/local/lib/abdulbasit/tunnel-shell",
-        "--expiredate", expiry, "--user-group", username,
+        "--expiredate", expiry, "--user-group", *groups, username,
     ])
     try:
         run([binary("chpasswd")], input_text=f"{username}:{password}\n")
@@ -191,7 +197,7 @@ def create_user(params: dict[str, Any]) -> dict[str, Any]:
 def delete_user(params: dict[str, Any]) -> dict[str, Any]:
     username = validate_username(str(params.get("username", "")))
     managed_user(username)
-    import dropbear_sessions
+    import ssh_sessions as dropbear_sessions
     try:
         uid = pwd.getpwnam(username).pw_uid
         current = dropbear_sessions.snapshot(USERS_DIR)["sessions"].get(uid, [])
@@ -291,13 +297,13 @@ def list_users(_: dict[str, Any]) -> dict[str, Any]:
 
 
 def session_processes() -> dict[str, list[int]]:
-    import dropbear_sessions
+    import ssh_sessions as dropbear_sessions
     state = dropbear_sessions.snapshot(USERS_DIR)
     return {state["users"][uid]: [p.pid for p in rows] for uid, rows in state["sessions"].items()}
 
 
 def list_sessions(_: dict[str, Any]) -> dict[str, Any]:
-    import dropbear_sessions
+    import ssh_sessions as dropbear_sessions
     observed = dropbear_sessions.snapshot(USERS_DIR)
     sessions = {observed["users"][uid]: [p.pid for p in rows] for uid, rows in observed["sessions"].items()}
     ips = ssh_identity.session_ips(sessions)
@@ -340,6 +346,7 @@ def domain_conflicts(domain: str) -> list[str]:
 def nginx_text(domain: str, tls: bool) -> str:
     """Keep legacy SSH upgrades; route browsers and real Xray WebSockets separately."""
     cdn = cdn_manager.settings()
+    bunny = bunny_manager.settings()
     def locations(secure: bool) -> str:
         blocks = """
     location ^~ /.well-known/acme-challenge/ {
@@ -429,7 +436,7 @@ def nginx_text(domain: str, tls: bool) -> str:
         if secure:
             for protocol, (port, _) in {**xray_manager.PROTOCOLS, "xhttp": (10004, "/xhttp/")}.items():
                 blocks = blocks.replace(f"proxy_pass http://127.0.0.1:{port};", f"proxy_pass http://127.0.0.1:{port}{gateway_identity.backend_path(protocol)};")
-        return blocks + cdn_manager.nginx_locations(cdn, secure)
+        return blocks + cdn_manager.nginx_locations(cdn, secure) + bunny_manager.nginx_locations(bunny, secure)
 
     def server(secure: bool) -> str:
         port = 443 if secure else 80
@@ -449,6 +456,7 @@ server {{
     server_tokens off;
     proxy_headers_hash_bucket_size 128;
     if ($noway_cf_forbidden) {{ return 403; }}
+    if ($noway_bunny_forbidden) {{ return 403; }}
     client_header_timeout 10s;
     client_body_timeout 10s;
     client_max_body_size 16k;
@@ -466,7 +474,7 @@ map $http_upgrade $abdulbasit_root_upstream {
     ~*websocket 127.0.0.1:2082;
 }
 limit_conn_zone $binary_remote_addr zone=abdulbasit_per_ip:10m;
-""" + cdn_manager.nginx_maps(cdn) + (server(False) + (server(True) if tls else "")).replace("X-Noway-Gateway 1;", gateway_identity.header_name() + " 1;")
+""" + cdn_manager.nginx_maps(cdn) + bunny_manager.nginx_maps(bunny) + (server(False) + (server(True) if tls else "")).replace("X-Noway-Gateway 1;", gateway_identity.header_name() + " 1;")
 
 
 def install_nginx_config(domain: str) -> bool:
@@ -496,6 +504,8 @@ def set_domain(params: dict[str, Any]) -> dict[str, Any]:
         raise ValidationError("Domain already appears in another Nginx config: " + ", ".join(conflicts[:3]))
     ACME_ROOT.mkdir(parents=True, exist_ok=True)
     previous = read_text(DOMAIN_FILE)
+    if bunny_manager.settings()["enabled"] and domain != previous:
+        raise ValidationError("Disable Bunny before changing its origin domain")
     if cdn_manager.settings()["enabled"] and domain != previous:
         raise ValidationError("Disable CloudFront before changing its origin domain")
     if xray_manager.settings()["enabled"] and previous and domain != previous:
@@ -545,11 +555,17 @@ def restart_service(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def service_status(_: dict[str, Any]) -> dict[str, Any]:
-    statuses: dict[str, str] = {}
-    for label, unit in SERVICE_MAP.items():
-        result = subprocess.run([binary("systemctl"), "is-active", unit], capture_output=True, text=True, check=False)
-        statuses[label] = result.stdout.strip() or "unknown"
-    return {"services": statuses, "domain": read_text(DOMAIN_FILE, "Not set")}
+    import ssh_backend
+    selected = {label: unit for label, unit in SERVICE_MAP.items()
+                if label not in {"dropbear", "abdulbasit-sshd"} or label == ssh_backend.unit()}
+    result = subprocess.run([binary("systemctl"), "show", "--property=Id,ActiveState", *selected.values()],
+                            capture_output=True, text=True, check=False, timeout=5)
+    states = {}
+    for block in result.stdout.split("\n\n"):
+        fields = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+        states[fields.get("Id", "").removesuffix(".service")] = fields.get("ActiveState", "unknown")
+    return {"services": {label: states.get(unit.removesuffix(".service"), "unknown") for label, unit in selected.items()},
+            "domain": read_text(DOMAIN_FILE, "Not set"), "ssh_backend": ssh_backend.name()}
 
 
 def configure_bot(params: dict[str, Any]) -> dict[str, Any]:
@@ -615,7 +631,7 @@ def dashboard_status(params: dict[str, Any]) -> dict[str, Any]:
         key, value = line.split(":", 1)
         mem[key] = int(value.strip().split()[0]) * 1024
     return {**service_status(params), **XRAY.status(params), **list_users(params), **list_sessions(params),
-            "slowdns": SLOWDNS.status({}), "cloudfront": CLOUDFRONT.status(), "traffic": {"sampled_at": xray_manager.traffic.state().get("sampled_at"), "scope": "Xray payload bytes; SSH byte metering unavailable", "sample_interval_seconds": 5},
+            "slowdns": SLOWDNS.status({}), "bunny": BUNNY.status(), "cloudfront": CLOUDFRONT.status(), "traffic": {"sampled_at": xray_manager.traffic.state().get("sampled_at"), "scope": "Xray payload bytes; SSH byte metering unavailable", "sample_interval_seconds": 5},
             "system": {"hostname": socket.gethostname(), "load": list(os.getloadavg()),
                        "cpu_count": os.cpu_count(), "uptime_seconds": float(Path("/proc/uptime").read_text().split()[0]),
                        "disk_total": stat.total, "disk_used": stat.used,
@@ -623,12 +639,18 @@ def dashboard_status(params: dict[str, Any]) -> dict[str, Any]:
 
 
 CLOUDFRONT = cdn_manager.Manager(install_nginx_config)
+BUNNY = bunny_manager.Manager(install_nginx_config)
 
 HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "bunny_status": BUNNY.status,
+    "bunny_configure": BUNNY.configure,
+    "bunny_setup": BUNNY.setup,
+    "bunny_check": BUNNY.check,
     "cloudfront_status": CLOUDFRONT.status,
     "cloudfront_configure": CLOUDFRONT.configure,
     "cloudfront_setup": CLOUDFRONT.setup,
     "cloudfront_check": CLOUDFRONT.check,
+    "ssh_export": lambda params: ssh_profiles.export(params, managed_user),
     "create_user": create_user,
     "delete_user": delete_user,
     "renew_user": renew_user,
@@ -678,7 +700,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "slowdns_check": SLOWDNS.check,
 }
 
-WEB_COMMANDS = {"cloudfront_status", "cloudfront_configure", "cloudfront_setup", "cloudfront_check", "web_auth", "web_revision", "dashboard_status", "diagnostics", "dns_lookup", "dns_set",
+WEB_COMMANDS = {"ssh_export", "bunny_status", "bunny_configure", "bunny_setup", "bunny_check", "cloudfront_status", "cloudfront_configure", "cloudfront_setup", "cloudfront_check", "web_auth", "web_revision", "dashboard_status", "diagnostics", "dns_lookup", "dns_set",
                 "xray_status", "xray_configure", "xray_create", "xray_update", "xray_export", "subscription_rotate", "subscription_revoke", "subscription_get", "backup_export",
                 "create_user", "delete_user", "renew_user", "set_sessions", "set_quota", "list_users",
                 "list_sessions", "service_status", "restart_service", "set_domain", "issue_cert"}
@@ -747,8 +769,15 @@ def handle_connection(conn: socket.socket) -> None:
                 raise ValidationError("Request too large")
             if not isinstance(params, dict):
                 raise ValidationError("Parameters must be an object")
+            # Bounded observational commands cannot mutate account/config state.
+            # Run them outside the writer lock so a 15-second ping or journal
+            # read does not delay quota enforcement or user creation.
+            independent = command in {"packet_test", "dns_lookup", "live_logs", "memory_report", "service_status"}
             with OP_LOCK:
                 authorize_command(uid, command, params)
+                if not independent:
+                    result = HANDLERS[command](params)
+            if independent:
                 result = HANDLERS[command](params)
             response = {"ok": True, **result}
         except (ValidationError, RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:

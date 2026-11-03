@@ -28,7 +28,7 @@ SESSION_TTL = 8 * 3600
 IDLE_TTL = 30 * 60
 COMMANDS = {"cloudfront_configure", "cloudfront_check",
     "create_user", "delete_user", "renew_user", "set_sessions", "set_quota",
-    "set_domain", "issue_cert", "restart_service", "dns_lookup", "dns_set",
+    "ssh_export", "bunny_status", "bunny_configure", "bunny_check", "set_domain", "issue_cert", "restart_service", "dns_lookup", "dns_set",
     "xray_configure", "xray_create", "xray_update", "subscription_rotate", "subscription_revoke",
     "set_user_lock", "traffic_sample", "live_connections", "packet_test", "live_logs", "doctor", "restart_managed", "config_view", "banner_get", "banner_set", "memory_report", "slowdns_status", "slowdns_configure", "slowdns_check",
 }
@@ -201,7 +201,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/panel/api/health":
             self.json(200, {"ok": True})
             return
-        if url.path not in {"/panel/api/session", "/panel/api/state", "/panel/api/diagnostics", "/panel/api/export", "/panel/api/backup", "/panel/api/cloudfront-setup"}:
+        if url.path not in {"/panel/api/session", "/panel/api/state", "/panel/api/diagnostics", "/panel/api/export", "/panel/api/backup", "/panel/api/cloudfront-setup", "/panel/api/bunny-setup"}:
             self.json(404, {"error": "Not found"})
             return
         session = self.session()
@@ -213,13 +213,14 @@ class Handler(BaseHTTPRequestHandler):
             self.json(200, request("dashboard_status", _web_revision=session["revision"]))
         elif url.path == "/panel/api/diagnostics":
             self.json(200, request("diagnostics", _web_revision=session["revision"]))
-        elif url.path == "/panel/api/cloudfront-setup":
-            result = request("cloudfront_setup", _web_revision=session["revision"])
+        elif url.path in {"/panel/api/cloudfront-setup", "/panel/api/bunny-setup"}:
+            provider = "bunny" if "bunny" in url.path else "cloudfront"
+            result = request(provider + "_setup", _web_revision=session["revision"])
             stream = io.BytesIO()
             with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
                 for name, content in result["files"].items():
                     archive.writestr(name, content)
-            self.reply(200, stream.getvalue(), "application/zip", {"Content-Disposition": 'attachment; filename="NOWAY-cloudfront-private.zip"'})
+            self.reply(200, stream.getvalue(), "application/zip", {"Content-Disposition": f'attachment; filename="NOWAY-{provider}-private.zip"'})
         elif url.path == "/panel/api/backup":
             data = request("backup_export", _web_revision=session["revision"])["backup"]
             self.reply(200, (json.dumps(data, indent=2) + "\n").encode(), headers={"Content-Disposition": 'attachment; filename="NOWAY-xray-backup.json"'})
@@ -232,10 +233,14 @@ class Handler(BaseHTTPRequestHandler):
             if format_name not in {"json", "zip", "link"}:
                 self.json(400, {"error": "Choose json, zip or link export format"})
                 return
-            result = request("xray_export", name=query.get("name", [""])[0], route=query.get("route", ["direct"])[0], _web_revision=session["revision"])
+            kind = query.get("kind", ["xray"])[0]
+            if kind not in {"xray", "ssh"}:
+                raise ValueError("Unknown export kind")
+            args = {"username" if kind == "ssh" else "name": query.get("name", [""])[0]}
+            result = request(kind + "_export", **args, route=query.get("route", ["direct"])[0], _web_revision=session["revision"])
             if format_name == "link":
                 protocol = query.get("protocol", [""])[0]
-                if protocol not in {"vless", "vmess", "trojan", "vless-xhttp"} or protocol not in result["links"]:
+                if protocol not in {"vless", "vmess", "trojan", "vless-xhttp", "vless-reality", "ssh", "wss"} or protocol not in result["links"]:
                     self.json(400, {"error": "Selected protocol is not enabled for this account"})
                     return
                 self.reply(200, (result["links"][protocol] + "\n").encode(), "text/plain; charset=utf-8",

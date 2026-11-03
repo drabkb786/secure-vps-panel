@@ -15,7 +15,7 @@ from common import ValidationError
     (["xray-reset-usage", "basit"], "xray_update", {"name": "basit", "action": "reset_usage"}),
     (["lock-user", "basit"], "set_user_lock", {"username": "basit", "enabled": False}),
     (["doctor", "--repair"], "doctor", {"repair": True}),
-    (["slowdns-enable", "--zone", "tunnel.example.com", "--ns-host", "ns1.example.com"], "slowdns_configure", {"enabled": True, "zone": "tunnel.example.com", "ns_host": "ns1.example.com", "port": 53}),
+    (["slowdns-enable", "--zone", "tunnel.example.com", "--ns-host", "ns1.example.com"], "slowdns_configure", {"enabled": True, "zone": "tunnel.example.com", "ns_host": "ns1.example.com", "port": 53, "mtu": 1232}),
 ])
 def test_new_cli_controls_dispatch_exact_validated_parameters(monkeypatch, arguments, command, expected):
     calls = []

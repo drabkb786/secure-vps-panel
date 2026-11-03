@@ -1,0 +1,27 @@
+[Unit]
+Description=NOWAY managed OpenSSH tunnel backend (separate from admin SSH)
+After=network.target
+ConditionPathExists=/etc/abdulbasit-sshd/sshd_config
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/sshd -t -f /etc/abdulbasit-sshd/sshd_config
+ExecStart=/usr/sbin/sshd -D -e -f /etc/abdulbasit-sshd/sshd_config
+ExecReload=/usr/sbin/sshd -t -f /etc/abdulbasit-sshd/sshd_config
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=3s
+RuntimeDirectory=abdulbasit-sshd
+RuntimeDirectoryMode=0755
+KillMode=process
+LimitNOFILE=65536
+TasksMax=2048
+UMask=0077
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

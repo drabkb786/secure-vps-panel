@@ -1,6 +1,6 @@
 [Unit]
-Description=NOWAY optional dnstt DNS tunnel to authenticated Dropbear
-After=network-online.target dropbear.service
+Description=NOWAY optional dnstt DNS tunnel to authenticated SSH
+After=network-online.target abdulbasit-sshd.service dropbear.service
 Wants=network-online.target
 ConditionPathExists=/etc/abdulbasit-dnstt/config.json
 

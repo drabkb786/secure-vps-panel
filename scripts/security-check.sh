@@ -8,6 +8,12 @@ check() { printf '%-55s' "$1"; shift; if "$@" >/dev/null 2>&1; then echo 'PASS';
 check 'Internal WS proxy is loopback-only' bash -c "ss -ltn | grep -Eq '127\\.0\\.0\\.1:2082'"
 check 'Port 2082 is not listening on all interfaces' bash -c "! ss -ltn | grep -Eq '(^|[[:space:]])(0\\.0\\.0\\.0|\\*|\\[::\\]):2082'"
 check 'Nginx configuration is valid' nginx -t
+if [[ $(cat /etc/abdulbasit/ssh-backend 2>/dev/null || true) == openssh ]]; then
+  check 'Managed OpenSSH is active' systemctl is-active --quiet abdulbasit-sshd
+  check 'Managed OpenSSH configuration is valid' /usr/sbin/sshd -t -f /etc/abdulbasit-sshd/sshd_config
+else
+  check 'Managed Dropbear is active' systemctl is-active --quiet dropbear
+fi
 check 'Panel daemon is active' systemctl is-active --quiet abdulbasit-paneld
 check 'WebSocket proxy is active' systemctl is-active --quiet abdulbasit-ws
 check 'Session enforcer is active' systemctl is-active --quiet abdulbasit-session-enforcer
@@ -17,7 +23,7 @@ if [[ -f /etc/abdulbasit-xray/enabled ]]; then
   check 'Xray is active' systemctl is-active --quiet abdulbasit-xray
   check 'Xray expiry timer is active' systemctl is-active --quiet abdulbasit-xray-expiry.timer
   check 'Xray configuration is valid' /usr/local/lib/abdulbasit/xray run -test -config /etc/abdulbasit-xray/config.json
-  check 'Xray listeners are not public' bash -c "! ss -Hltn | grep -Eq '(0\\.0\\.0\\.0|\\*|\\[::\\]):1000[123]'"
+  check 'Internal Xray listeners are not public' bash -c "! ss -Hltn | grep -Eq '(0\\.0\\.0\\.0|\\*|\\[::\\]):1000[1234]'"
 fi
 check 'Fail2ban is active' systemctl is-active --quiet fail2ban
 check 'Bot token is not world-readable' bash -c '[[ ! -e /etc/abdulbasit/bot_token.conf ]] || [[ $(stat -c "%a" /etc/abdulbasit/bot_token.conf) =~ ^(600|640)$ ]]'

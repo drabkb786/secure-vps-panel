@@ -61,7 +61,7 @@ def hydrate(rows):
 def emails(row):
     protocols = set(row["protocols"])
     if "vless" in protocols:
-        protocols.add("xhttp")
+        protocols.update(("xhttp", "reality"))
     # Accept legacy names while upgrading; new configs use immutable UUIDs.
     return {f"{identity}-{p}@noway.local" for identity in (row["uuid"], row["name"]) for p in protocols}
 
