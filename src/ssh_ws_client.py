@@ -68,7 +68,14 @@ def pump(peer, ws, pending=(), source=None, sink=None):
 
     def upload():
         try:
-            read = getattr(source, "read1", source.read)
+            try:
+                descriptor = source.fileno()
+            except (OSError, AttributeError):
+                descriptor = None
+            # A daemon thread blocked in BufferedReader.read1 holds stdin's
+            # buffer lock during interpreter shutdown. Read the binary FD
+            # directly so a remote EOF can end ProxyCommand cleanly.
+            read = (lambda size: os.read(descriptor, size)) if descriptor is not None else source.read
             while not stopped.is_set():
                 data = read(65536)
                 if not data:

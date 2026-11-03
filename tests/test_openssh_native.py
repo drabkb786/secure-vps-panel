@@ -40,6 +40,7 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
     request("create_user", username=name, password="bas", days=30, max_sessions=2, max_ips=0)
     transports = []
     nginx = None
+    ssh_client = None
     subprocess.run(["systemctl", "stop", "abdulbasit-session-enforcer"], check=True, timeout=15)
     class Echo(socketserver.BaseRequestHandler):
         def handle(self):
@@ -101,8 +102,29 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
                 assert response.status == 200, result
                 assert "Secure" in response.getheader("Set-Cookie", "")
             adapter = Path(__file__).resolve().parents[1] / "src/ssh_ws_client.py"
-            proxy = paramiko.ProxyCommand(shlex.join([sys.executable, str(adapter), "--host", "vpn.example.com", "--address", "127.0.0.1", "--port", str(tls_port)]))
-            second, second_channel = login(proxy)
+            # Test the user's actual OpenSSH ProxyCommand workflow. Paramiko
+            # 3.5's ProxyCommand.recv spins on pipe EOF, so it cannot reliably
+            # establish whether a remote session was disconnected.
+            askpass = root / "askpass.sh"; askpass.write_text("#!/bin/sh\nprintf '%s\\n' bas\n"); askpass.chmod(0o700)
+            known = root / "known_hosts"
+            known.write_text("vpn.example.com " + Path("/etc/abdulbasit-sshd/ssh_host_ed25519_key.pub").read_text())
+            socks_port = free_port()
+            proxy_command = shlex.join([sys.executable, str(adapter), "--host", "vpn.example.com", "--address", "127.0.0.1", "--port", str(tls_port)])
+            log = (root / "ssh-client.log").open("w+")
+            env = dict(os.environ, SSH_ASKPASS=str(askpass), SSH_ASKPASS_REQUIRE="force", DISPLAY=":0")
+            ssh_client = subprocess.Popen(["ssh", "-N", "-D", f"127.0.0.1:{socks_port}", "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + str(known), "-o", "ExitOnForwardFailure=yes", "-o", "ProxyCommand=" + proxy_command, name + "@vpn.example.com"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log, env=env)
+            wait_port(socks_port, ssh_client)
+            import struct
+            from test_xray_core import read_exact
+            with socket.create_connection(("127.0.0.1", socks_port), timeout=10) as peer:
+                peer.settimeout(15)
+                peer.sendall(b"\x05\x01\x00"); assert read_exact(peer, 2) == b"\x05\x00"
+                peer.sendall(b"\x05\x01\x00\x01\x7f\x00\x00\x01" + struct.pack("!H", echo.server_address[1]))
+                assert read_exact(peer, 10)[:2] == b"\x05\x00"
+                payload = bytes(range(256)) * 8192
+                sender = threading.Thread(target=lambda: peer.sendall(payload), daemon=True); sender.start()
+                assert hashlib.sha256(read_exact(peer, len(payload))).digest() == hashlib.sha256(payload).digest()
+                sender.join(5); assert not sender.is_alive()
             for attempt in range(40):
                 state = ssh_sessions.snapshot()
                 rows = next((items for uid, items in state["sessions"].items() if state["users"][uid] == name), [])
@@ -125,9 +147,11 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
             request("set_sessions", username=name, max_sessions=1)
             session_enforcer.enforce_once()
             for attempt in range(40):
-                if not second.is_active(): break
+                if ssh_client.poll() is not None: break
                 time.sleep(.1)
-            assert first.is_active() and not second.is_active()
+            log.flush()
+            assert first.is_active() and ssh_client.poll() is not None, (root / "ssh-client.log").read_text()
+            log.close()
             channel.sendall(b"oldest-survives")
             assert channel.recv(15) == b"oldest-survives"
             # An unattributable direct-loopback source cannot bypass an IP cap.
@@ -140,6 +164,8 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
             assert subprocess.run(["systemctl", "is-active", "--quiet", "abdulbasit-sshd"]).returncode == 0
     finally:
         for transport in transports: transport.close()
+        if ssh_client is not None and ssh_client.poll() is None:
+            ssh_client.terminate(); ssh_client.wait(timeout=5)
         if nginx:
             nginx.terminate(); nginx.wait(timeout=5)
         echo.shutdown(); echo.server_close()
