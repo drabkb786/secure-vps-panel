@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.2.4 — Faster CI and protected completed builds
+
+- Cancel superseded workflow runs and avoid duplicate feature-push builds.
+- Run Python 3.15 compatibility checks without compiling the private runtime;
+  compile the full stack when build inputs change or a full run is requested.
+- Remove inherited group/other write access before a fresh runtime is marked
+  ready. Completed builds retain strict ownership and permission validation.
+
 ## 3.4.0 — CloudFront WS delivery and bridge tuning
 
 - Add guarded TLS CloudFront origin routes for VLESS, VMess, Trojan and binary WebSocket Dropbear, with a private CloudFormation setup export and restricted edge paths.

@@ -322,7 +322,6 @@ def build(manifest, jobs):
         script(bindir / name, ['/usr/bin/python3', f2b / 'usr/bin' / name],
                {'PYTHONPATH': packages[0].parent, 'PYTHONNOUSERSITE': '1'})
     write_file(existing / 'manifest.json', json.dumps(manifest, indent=2) + '\n')
-    verify_versions(existing, manifest)
     # Source trees are not needed to run the release. Keep logs, licenses and
     # source URLs/digests, so a failing build can be audited and reproduced.
     licenses = existing / 'licenses'
@@ -332,8 +331,28 @@ def build(manifest, jobs):
             if (source / filename).is_file():
                 shutil.copy2(source / filename, licenses / (name + '-' + filename))
     shutil.rmtree(sources)
+    seal_fresh_release(existing)
+    verify_versions(existing, manifest)
     write_file(existing / 'READY', fingerprint + '\n')
     return existing
+
+
+def seal_fresh_release(release):
+    """Remove inherited write permissions from a build we have just created.
+
+    This is never applied to cached/completed releases: those must pass the
+    existing strict trust checks without changing their ownership or modes.
+    """
+    for path in (release, *release.rglob('*')):
+        info = path.lstat()
+        if info.st_uid != 0:
+            raise RuntimeError(f'Unsafe fresh build owner: {path}')
+        if stat.S_ISLNK(info.st_mode):
+            continue
+        if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+            raise RuntimeError(f'Unsafe fresh build file type: {path}')
+        if info.st_mode & 0o022:
+            path.chmod(stat.S_IMODE(info.st_mode) & ~0o022)
 
 
 def verify_versions(release, manifest):
@@ -411,7 +430,7 @@ def completed_release(identifier, manifest):
                 if part == ROOT:
                     break
         elif not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)) or info.st_mode & 0o022:
-            raise RuntimeError(f'Unsafe completed build permissions/type: {path}')
+            raise RuntimeError(f'Unsafe completed build permissions/type: {path} (mode={stat.S_IMODE(info.st_mode):04o})')
     try:
         receipt = (release / 'READY').read_text().strip()
         recorded = json.loads((release / 'manifest.json').read_text())
