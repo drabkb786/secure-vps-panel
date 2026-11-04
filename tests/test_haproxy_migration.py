@@ -22,6 +22,7 @@ def test_mux_only_moves_nginx_listeners_and_preserves_route_guards(monkeypatch):
     assert 'listen 127.0.0.1:8081 ssl http2 proxy_protocol;' in site
     assert 'listen 80;' not in site and 'listen 443 ' not in site and 'listen [::]' not in site
     assert 'real_ip_header proxy_protocol;' in site
+    assert 'port_in_redirect off;' in site
     assert '$proxy_protocol_tlv_unique_id != "' + 'c' * 64 + '"' in site
     assert 'if ($noway_cf_forbidden) { return 403; }' in site
     assert 'if ($noway_bunny_forbidden) { return 403; }' in site

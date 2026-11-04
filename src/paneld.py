@@ -472,7 +472,7 @@ def nginx_text(domain: str, tls: bool, *, multiplexed: bool | None = None) -> st
         if multiplexed: suffix += " proxy_protocol"
         ipv6 = f"    listen [::]:{port}{suffix};\n" if not multiplexed and ipv6_enabled() else ""
         address = f"127.0.0.1:{port}" if multiplexed else str(port)
-        verified_proxy = (f'    set_real_ip_from 127.0.0.1;\n    real_ip_header proxy_protocol;\n'
+        verified_proxy = (f'    port_in_redirect off;\n    set_real_ip_from 127.0.0.1;\n    real_ip_header proxy_protocol;\n'
                           f'    if ($proxy_protocol_tlv_unique_id != "{ssh_backend.haproxy_secret()}") {{ return 403; }}\n') if multiplexed else ""
         certificates = f"""
     ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;

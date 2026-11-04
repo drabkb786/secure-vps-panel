@@ -4,6 +4,7 @@ Uses actual HAProxy, Nginx, Dropbear password auth, forwarding, kernel session
 identity and failed/successful rollback. Never run this against a user's VPS.
 """
 import hashlib
+import http.client
 import ipaddress
 import json
 import os
@@ -120,6 +121,14 @@ def test_real_gateway_migration_password_transports_ip_limits_and_recovery(monke
                 peer.sendall(metadata + b'GET /ssh/raw HTTP/1.1\r\nHost: vpn.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n')
                 assert peer.recv(4096).startswith(b'HTTP/1.1 403 ')
         context = ssl.create_default_context(cafile=str(cert))
+        for secure in (False, True):
+            peer = socket.create_connection((host, 443 if secure else 80), timeout=5)
+            if secure: peer = context.wrap_socket(peer, server_hostname=domain)
+            with peer:
+                peer.sendall(b'GET /panel HTTP/1.1\r\nHost: vpn.example.com\r\nConnection: close\r\n\r\n')
+                response = http.client.HTTPResponse(peer); response.begin(); response.read()
+                assert response.status == 302
+                assert response.getheader('Location') == ('https' if secure else 'http') + '://vpn.example.com/panel/'
         for port in (109, 447):
             transport, channel = login(socket.create_connection((host, port), timeout=5))
             channel.close(); transport.close()
