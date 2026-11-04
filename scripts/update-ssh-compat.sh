@@ -37,7 +37,14 @@ if [[ $sync_source == 1 ]]; then
   for asset in "${assets[@]}"; do files+=("$project_dir/src/web/$asset"); done
 fi
 for file in "${files[@]}"; do
-  [[ -f $file && ! -L $file ]] || { echo "Missing or unsafe installed file: $file" >&2; exit 1; }
+  [[ ! -L $file ]] || { echo "Unsafe update path: $file" >&2; exit 1; }
+  if [[ ! -f $file ]]; then
+    case "$file" in
+      "$app_dir/"*.py|"$app_dir/web/"*)
+        [[ ! -e $file ]] || { echo "Non-regular application file: $file" >&2; exit 1; } ;;
+      *) echo "Missing required update file: $file" >&2; exit 1 ;;
+    esac
+  fi
 done
 PYTHONPATH="$app_dir" /usr/bin/python3 - <<'CHECK'
 from common import DOMAIN_FILE, read_text, validate_domain
@@ -45,17 +52,25 @@ validate_domain(read_text(DOMAIN_FILE))
 CHECK
 backup_dir="/etc/abdulbasit/backups/ssh-compat-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 install -d -m 0700 "$backup_dir/files"
-for file in "${files[@]}"; do cp -a --parents -- "$file" "$backup_dir/files/"; done
+for file in "${files[@]}"; do
+  if [[ -f $file ]]; then cp -a --parents -- "$file" "$backup_dir/files/"; fi
+done
 # A manually edited working copy must not silently become the installed release.
 # Stage one pinned HEAD; keep original working/installed copies in the backup.
 /usr/bin/python3 "$project_dir/scripts/source-snapshot.py" "$project_dir" "$backup_dir/source" "${modules[@]}" --web-assets > "$backup_dir/source-release.json"
 cat "$backup_dir/source-release.json"
 rollback() {
-  local result=$?
+  local result=${1:-$?}
   local rollback_failed=0
-  trap - ERR
+  trap - ERR INT TERM
   echo "Compatibility update failed; restoring files from $backup_dir" >&2
-  for file in "${files[@]}"; do cp -a -- "$backup_dir/files$file" "$file" || rollback_failed=1; done
+  for file in "${files[@]}"; do
+    if [[ -f "$backup_dir/files$file" ]]; then
+      cp -a -- "$backup_dir/files$file" "$file" || rollback_failed=1
+    else
+      rm -f -- "$file" || rollback_failed=1
+    fi
+  done
   if [[ $backend == openssh ]]; then systemctl reload abdulbasit-sshd || rollback_failed=1; fi
   PYTHONPATH="$app_dir" /usr/bin/python3 - <<'RELOAD' || rollback_failed=1
 from paneld import binary
@@ -68,6 +83,8 @@ RELOAD
   exit "$result"
 }
 trap rollback ERR
+trap 'rollback 130' INT
+trap 'rollback 143' TERM
 for module in "${modules[@]}"; do
   if [[ $sync_source == 1 ]]; then
     cp -- "$backup_dir/source/$module.py" "$project_dir/src/$module.py"
@@ -126,6 +143,6 @@ while time.monotonic() < deadline:
     time.sleep(.2)
 raise SystemExit('Local SSH transport probe failed: ' + last)
 PROBE
-trap - ERR
+trap - ERR INT TERM
 echo "SSH compatibility update complete. Recovery copy: $backup_dir"
 echo 'Public reachability and the actual mobile/NetMod connection still require a client test.'

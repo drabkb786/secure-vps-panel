@@ -13,6 +13,8 @@
 - Reuse the small Dropbear build on repeat runs; never build the private SDK
   during migration. Support fast application updates with either SSH backend
   and preserve the selected pinned backend on subsequent full installations.
+  Install newly introduced modules on older deployments; remove them again
+  when recovering an interrupted/failed application update.
 - Add disposable-systemd acceptance for real password authentication, byte
   forwarding over direct/raw/WS/TLS, accurate IP/session enforcement, failed
   activation recovery, repeat migration and explicit rollback.

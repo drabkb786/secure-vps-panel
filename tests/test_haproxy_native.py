@@ -105,9 +105,16 @@ def test_real_gateway_migration_password_transports_ip_limits_and_recovery(monke
         assert injected and paneld.NGINX_CONFIG.read_bytes() == original
         assert ssh_backend.name() == 'openssh' and not ssh_backend.haproxy_enabled()
         installed(['systemctl', 'is-active', 'nginx', 'abdulbasit-sshd', 'abdulbasit-paneld', 'abdulbasit-ws'])
+        # Reproduce an older deployment that predates this new adapter module.
+        adapter = Path('/usr/local/lib/abdulbasit/ssh_ws_client.py')
+        adapter.unlink()
         output = installed(['bash', str(ROOT / 'scripts/migrate-dropbear-haproxy.sh')])
+        assert adapter.read_bytes() == (ROOT / 'src/ssh_ws_client.py').read_bytes()
         recovery = Path(re.search(r'^Recovery copy: (.+)$', output, re.M).group(1))
         assert 'Dropbear 2026.94 verified' in output
+        # Keep background enforcement from racing the intentional connection
+        # churn. Exercise real enforcement explicitly on two known live logins.
+        installed(['systemctl', 'stop', 'abdulbasit-session-enforcer'])
         assert ssh_backend.name() == 'dropbear' and ssh_backend.native_dropbear() and ssh_backend.haproxy_enabled()
         assert next(row for row in Path('/etc/shadow').read_text().splitlines() if row.startswith(name + ':')) == password_before
         assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest() == digest for p, digest in admin.items())

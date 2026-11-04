@@ -117,6 +117,9 @@ jobs:
           sudo install -o root -g root -m 0755 "$RUNNER_TEMP/noway-dropbear/dropbear-2026.94/dropbear" /usr/local/lib/abdulbasit/dropbear
           sudo install -o root -g root -m 0755 "$RUNNER_TEMP/noway-dropbear/dropbear-2026.94/dropbearkey" /usr/local/lib/abdulbasit/dropbearkey
           sudo env GITHUB_ACTIONS=true HAPROXY_NATIVE_SYSTEMD=1 "$pythonLocation/bin/python" -m pytest -q tests/test_haproxy_native.py
+      - name: Managed gateway failure details
+        if: failure()
+        run: sudo journalctl -u abdulbasit-haproxy -u nginx -u dropbear -u abdulbasit-paneld -u abdulbasit-ws -u abdulbasit-session-enforcer -n 120 --no-pager
       - name: Reject common committed secrets and unsafe subprocess shells
         shell: bash
         run: |

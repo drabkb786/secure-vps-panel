@@ -124,6 +124,10 @@ class Migration:
     def unit(self, action, name, *, check=True):
         if name not in UNITS:
             raise ValueError('Unmanaged service')
+        if action == 'start':
+            # A recovered, validated unit must get one fresh start attempt even
+            # if an earlier failed activation exhausted systemd's burst limit.
+            self.run(['systemctl', 'reset-failed', name], check=False, timeout=15)
         return self.run(['systemctl', action, name], check=check, timeout=30)
 
     def snapshot(self):
