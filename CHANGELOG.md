@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.2.5 — Reuse completed builds with the staged Fail2ban interpreter link
+
+- Validate the extracted package's relative fail2ban-python binding against
+  the OS interpreter already used by the managed wrappers. No package files
+  are rewritten and no compilation is needed for completed-build activation.
+- Continue rejecting unexpected dangling links and writable interpreter targets.
+
 ## 4.2.4 — Faster CI and protected completed builds
 
 - Cancel superseded workflow runs and avoid duplicate feature-push builds.

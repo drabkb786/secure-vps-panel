@@ -422,7 +422,20 @@ def completed_release(identifier, manifest):
         if info.st_uid != 0:
             raise RuntimeError(f'Unsafe completed build owner: {path}')
         if stat.S_ISLNK(info.st_mode):
-            target = path.resolve(strict=True)
+            candidate = path
+            # This DEB binding is relative to /usr/bin on an installed system.
+            # Extraction under a private prefix leaves it dangling. The managed
+            # Fail2ban wrappers invoke the OS interpreter explicitly, so check
+            # that same interpreter without rewriting the completed package.
+            staged_python = path.with_name('python3')
+            if (path == release / 'fail2ban/usr/bin/fail2ban-python'
+                    and os.readlink(path) == 'python3'
+                    and not staged_python.exists() and not staged_python.is_symlink()):
+                candidate = Path('/usr/bin/python3')
+            try:
+                target = candidate.resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                raise RuntimeError(f'Unsafe or missing completed build link target: {path}') from exc
             for part in (target, *target.parents):
                 details = part.stat()
                 if details.st_uid != 0 or details.st_mode & 0o022:

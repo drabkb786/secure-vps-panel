@@ -355,6 +355,46 @@ def test_completed_release_is_version_checked_without_rebuilding(completed_build
     assert checked == [(release, manifest)]
 
 
+def test_completed_release_accepts_staged_fail2ban_python_binding(completed_build):
+    release, manifest, checked = completed_build
+    bindir = release / 'fail2ban/usr/bin'; bindir.mkdir(parents=True)
+    # dpkg extracts this relative system-interpreter binding into a private
+    # prefix. The managed wrappers already invoke /usr/bin/python3 explicitly.
+    (bindir / 'fail2ban-python').symlink_to('python3')
+    assert not (bindir / 'python3').exists()
+    assert runtime.completed_release(release.name, manifest) == release
+    assert os.readlink(bindir / 'fail2ban-python') == 'python3'
+    assert checked == [(release, manifest)]
+
+
+def test_completed_release_rejects_unexpected_dangling_links(completed_build):
+    release, manifest, checked = completed_build
+    (release / 'unexpected-python').symlink_to('python3')
+    with pytest.raises(RuntimeError, match='link target'):
+        runtime.completed_release(release.name, manifest)
+    assert not checked
+
+
+@pytest.mark.parametrize('target', ['../python3', 'missing-python'])
+def test_staged_fail2ban_binding_exception_is_narrow(completed_build, target):
+    release, manifest, checked = completed_build
+    bindir = release / 'fail2ban/usr/bin'; bindir.mkdir(parents=True)
+    (bindir / 'fail2ban-python').symlink_to(target)
+    with pytest.raises(RuntimeError, match='link target'):
+        runtime.completed_release(release.name, manifest)
+    assert not checked
+
+
+def test_staged_fail2ban_binding_cannot_hide_an_unsafe_local_interpreter(completed_build):
+    release, manifest, checked = completed_build
+    bindir = release / 'fail2ban/usr/bin'; bindir.mkdir(parents=True)
+    (bindir / 'fail2ban-python').symlink_to('python3')
+    interpreter = bindir / 'python3'; interpreter.write_text('untrusted'); interpreter.chmod(0o777)
+    with pytest.raises(RuntimeError, match='Unsafe'):
+        runtime.completed_release(release.name, manifest)
+    assert not checked
+
+
 def test_fresh_runtime_sealing_removes_inherited_write_access_before_reuse(completed_build):
     release, manifest, checked = completed_build
     venv = release / 'venv'; venv.mkdir(); venv.chmod(0o775)
