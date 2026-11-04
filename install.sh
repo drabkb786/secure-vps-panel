@@ -204,7 +204,7 @@ for path in USERS_DIR.glob('*.json'):
     if account.pw_shell == '/bin/false' and account.pw_uid != 0:
         subprocess.run(['/usr/sbin/usermod', '--shell', '/usr/local/lib/abdulbasit/tunnel-shell', name], check=True)
 PY
-for module in web_auth web_server xray_manager diagnostics client_formats cdn_manager profile_backup operations traffic slowdns maintenance terminal_ui gateway_identity ssh_identity ssh_backend ssh_sessions openssh_sessions xray_runtime bunny_manager ssh_profiles ssh_ws_client reality_transport; do
+for module in web_auth web_server xray_manager diagnostics client_formats cdn_manager profile_backup operations traffic account_policy ssh_meter slowdns maintenance terminal_ui gateway_identity ssh_identity ssh_backend ssh_sessions openssh_sessions xray_runtime bunny_manager ssh_profiles ssh_ws_client reality_transport; do
   install -m 0755 -o root -g root "$PROJECT_DIR/src/$module.py" "$INSTALL_DIR/$module.py"
 done
 python3 "$INSTALL_DIR/gateway_identity.py"
@@ -342,7 +342,10 @@ for attempt in {1..30}; do
   [[ -S /run/abdulbasit/paneld.sock ]] && break
   sleep 0.2
 done
-[[ -S /run/abdulbasit/paneld.sock ]] || die "Panel daemon socket not ready; inspect journalctl -u abdulbasit-paneld"
+if [[ ! -S /run/abdulbasit/paneld.sock ]]; then
+  journalctl -u abdulbasit-paneld -u abdulbasit-ssh-meter -u abdulbasit-session-enforcer -n 50 --no-pager || true
+  die "Panel daemon socket not ready; inspect journalctl -u abdulbasit-paneld"
+fi
 systemctl enable --now abdulbasit-xray-expiry.timer
 systemctl restart abdulbasit-xray-expiry.timer
 if [[ -f /etc/abdulbasit-dnstt/config.json ]]; then

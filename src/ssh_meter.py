@@ -70,7 +70,7 @@ def state():
         if not isinstance(row, dict):
             raise RuntimeError("Invalid SSH ledger entry")
         reported = row.get("reported_at", 0)
-        if type(reported) not in (int, float) or not math.isfinite(reported) or reported < 0:
+        if type(reported) not in (int, float) or not 0 <= reported < 2**53 or not math.isfinite(reported):
             raise RuntimeError("Invalid SSH meter timestamp")
         for field in FIELDS:
             value = row.get(field, 0)

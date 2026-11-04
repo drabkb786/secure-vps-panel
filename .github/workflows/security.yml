@@ -211,7 +211,7 @@ jobs:
       - name: Build failure details
         if: failure()
         run: |
-          sudo stat -c '%U:%G %a %F %n' /opt/noway/runtime /opt/noway/runtime/releases
-          sudo find /opt/noway/runtime/releases -maxdepth 3 -name venv -exec stat -c '%U:%G %a %F %n' {} \;
-          sudo find /opt/noway/runtime -name build.log -exec tail -n 70 {} \;
-          sudo journalctl -u nginx -u fail2ban -u abdulbasit-paneld -u abdulbasit-ws -u abdulbasit-web -n 65 --no-pager
+          sudo stat -c '%U:%G %a %F %n' /opt/noway/runtime /opt/noway/runtime/releases || true
+          sudo find /opt/noway/runtime/releases -maxdepth 3 -name venv -exec stat -c '%U:%G %a %F %n' {} \; || true
+          sudo find /opt/noway/runtime -name build.log -exec tail -n 70 {} \; || true
+          sudo journalctl -u nginx -u fail2ban -u abdulbasit-paneld -u abdulbasit-ws -u abdulbasit-web -u abdulbasit-ssh-meter -n 65 --no-pager

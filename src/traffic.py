@@ -40,6 +40,21 @@ def state():
             raise RuntimeError("Traffic totals are corrupt")
         for key in ("upload_bytes", "download_bytes"):
             integer(values.get(key))
+    ip_totals = data.get("ip_totals", {})
+    if not isinstance(ip_totals, dict):
+        raise RuntimeError("IP traffic state is corrupt; saved totals retained")
+    for values in ip_totals.values():
+        if not isinstance(values, dict):
+            raise RuntimeError("IP traffic state is corrupt")
+        for address, entry in values.items():
+            try:
+                valid = canonical_ip(address) == address
+            except (ValueError, TypeError):
+                valid = False
+            if not valid or not isinstance(entry, dict):
+                raise RuntimeError("Invalid IP traffic ledger entry")
+            for key in ("upload_bytes", "download_bytes"):
+                integer(entry.get(key, 0))
     return data
 
 
