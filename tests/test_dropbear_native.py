@@ -75,6 +75,72 @@ class WebSocketSocket:
         self._closed = True; self.ws.close()
 
 
+def tls_socket(peer, context, hostname):
+    """Give Paramiko a plain socket while one event loop owns TLS.
+
+    SSLSocket.send/recv must not run concurrently in Paramiko's reader and
+    caller threads (CPython issue 33090). Keep the real verified TLS route,
+    bounded backpressure and full-duplex transfers without that test race.
+    """
+    import asyncio
+    import concurrent.futures
+
+    local, relay = socket.socketpair()
+    ready = concurrent.futures.Future()
+
+    async def run():
+        writers, tasks = [], []
+        try:
+            remote_reader, remote_writer = await asyncio.open_connection(
+                sock=peer, ssl=context, server_hostname=hostname,
+                ssl_handshake_timeout=10, limit=256 * 1024)
+            writers.append(remote_writer)
+            local_reader, local_writer = await asyncio.open_connection(
+                sock=relay, limit=256 * 1024)
+            writers.append(local_writer)
+            for writer in writers:
+                writer.transport.set_write_buffer_limits(
+                    high=256 * 1024, low=64 * 1024)
+
+            async def copy(reader, writer):
+                while data := await reader.read(65536):
+                    writer.write(data)
+                    await writer.drain()
+
+            tasks = [asyncio.create_task(copy(local_reader, remote_writer)),
+                     asyncio.create_task(copy(remote_reader, local_writer))]
+            ready.set_result(None)
+            done, _ = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()
+        except BaseException as exc:
+            if not ready.done():
+                ready.set_exception(exc)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for writer in writers:
+                writer.close()
+            for writer in writers:
+                try:
+                    await asyncio.wait_for(writer.wait_closed(), 3)
+                except (OSError, asyncio.TimeoutError):
+                    pass
+            peer.close()
+            relay.close()
+
+    threading.Thread(target=lambda: asyncio.run(run()), daemon=True).start()
+    try:
+        ready.result(timeout=15)
+    except BaseException:
+        local.close()
+        raise
+    local.settimeout(5)
+    return local
+
+
 @pytest.mark.parametrize("route", ["direct", "legacy", "wss", "cloudfront"])
 def test_real_dropbear_auth_forwarding_and_tunnel_only_policy(tmp_path, keydir, monkeypatch, route):
     from cloudfront_fixture import enable_origin, edge_server
