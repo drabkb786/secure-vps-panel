@@ -6,7 +6,8 @@ from wsproto import WSConnection, ConnectionType
 from wsproto.events import Request, AcceptConnection, BytesMessage, CloseConnection, Ping
 ADAPTER=str(Path(__file__).resolve().parents[1]/'src/ssh_ws_client.py')
 @pytest.mark.parametrize("remote_close", [False, True])
-def test_tls_full_duplex_under_backpressure(tmp_path, remote_close):
+@pytest.mark.parametrize("tls", [False, True])
+def test_tls_full_duplex_under_backpressure(tmp_path, remote_close, tls):
     d=str(tmp_path)
     base=Path(d); cert=base/'cert.pem'; key=base/'key.pem'
     subprocess.run(['/usr/bin/openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(key),'-out',str(cert),'-days','1','-subj','/CN=vpn.example.com','-addext','subjectAltName=DNS:vpn.example.com'],check=True,capture_output=True)
@@ -16,7 +17,7 @@ def test_tls_full_duplex_under_backpressure(tmp_path, remote_close):
     class Handler(socketserver.BaseRequestHandler):
         def handle(self):
             try:
-                with context.wrap_socket(self.request,server_side=True) as peer:
+                with (context.wrap_socket(self.request,server_side=True) if tls else self.request) as peer:
                     peer.settimeout(12); peer.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1); peer.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF,16384); peer.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,65536); ws=WSConnection(ConnectionType.SERVER); received=0
                     while True:
                         data=peer.recv(65536)
@@ -38,7 +39,7 @@ def test_tls_full_duplex_under_backpressure(tmp_path, remote_close):
         threading.Thread(target=server.serve_forever,daemon=True).start()
         payload=os.urandom(8*1024*1024); completed=0
         for case in range(1):
-            proc=subprocess.Popen([sys.executable,ADAPTER,'--host','vpn.example.com','--address','127.0.0.1','--port',str(server.server_address[1])],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0,env={**os.environ,'SSL_CERT_FILE':str(cert)})
+            proc=subprocess.Popen([sys.executable,ADAPTER,'--host','vpn.example.com','--address','127.0.0.1','--port',str(server.server_address[1])]+([] if tls else ['--no-tls']),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0,env={**os.environ,'SSL_CERT_FILE':str(cert)})
             def send():
                 try:
                     for offset in range(0,len(payload),65536):

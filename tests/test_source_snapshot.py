@@ -48,3 +48,23 @@ def test_missing_committed_module_does_not_leave_a_partial_stage(checkout, tmp_p
     with pytest.raises(subprocess.CalledProcessError):
         source.snapshot(checkout, tmp_path / 'stage', ['ws_proxy', 'missing_module'])
     assert not (tmp_path / 'stage').exists()
+
+
+def test_web_assets_are_staged_from_the_same_commit(checkout, tmp_path):
+    web = checkout / 'src/web'; web.mkdir()
+    (web / 'index.html').write_text('<main>committed</main>\n')
+    (web / 'app.js').write_text('const committed = true;\n')
+    subprocess.run(['git', '-C', str(checkout), 'add', '.'], check=True)
+    subprocess.run(['git', '-C', str(checkout), '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                    '-c', 'commit.gpgsign=false', 'commit', '-qm', 'web assets'], check=True)
+    (web / 'app.js').write_text('uncommitted edit')
+    result = source.snapshot(checkout, tmp_path / 'stage', ['paneld'], web_assets=True)
+    assert (tmp_path / 'stage/web/app.js').read_text() == 'const committed = true;\n'
+    assert result['local_edits'] == ['src/web/app.js']
+    assert set(result['sha256']) == {'paneld', 'web/index.html', 'web/app.js'}
+
+
+def test_missing_web_asset_leaves_no_partial_stage(checkout, tmp_path):
+    with pytest.raises(subprocess.CalledProcessError):
+        source.snapshot(checkout, tmp_path / 'stage', ['paneld'], web_assets=True)
+    assert not (tmp_path / 'stage').exists()

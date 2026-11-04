@@ -12,7 +12,9 @@ pytestmark = pytest.mark.skipif(not NGINX, reason="NGINX_TEST_BINARY is not set"
 
 
 @pytest.mark.parametrize("tls", [False, True])
-def test_real_nginx_accepts_generated_routes(tmp_path, tls, monkeypatch):
+@pytest.mark.parametrize("non_tls", [False, True])
+def test_real_nginx_accepts_generated_routes(tmp_path, tls, non_tls, monkeypatch):
+    monkeypatch.setattr(paneld.xray_manager, 'settings', lambda: {'enabled': True, 'vless_non_tls_enabled': non_tls})
     cert, key = tmp_path / "fullchain.pem", tmp_path / "privkey.pem"
     if tls:
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1", "-subj", "/CN=vpn.example.com"], check=True, capture_output=True, timeout=20)

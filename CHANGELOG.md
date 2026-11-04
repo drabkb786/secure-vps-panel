@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.4.0 — Explicit dual transports and client-side SSH probes
+
+- Add opt-in direct VLESS WS on port 80 alongside verified TLS on 443. Preserve
+  UUIDs, quota counters and encrypted VMess/Trojan/CDN routes; roll back Xray
+  settings if the Nginx change fails. Expose the switch in CLI and dashboard.
+- Export separate non-TLS VLESS URI/JSON, sing-box/Mihomo and live subscription
+  entries with an explicit unencrypted-transport notice.
+- Add non-TLS WS to the SSH adapter and real client-route probes for both raw
+  HTTP Upgrade and framed WS over HTTP/TLS, reporting HTTP rejection and EOF.
+- Include direct SSH 109/447, raw HTTP/TLS, WS/WSS and eligible dnstt settings
+  in private SSH bundles. Validate public DNS keys and omit unusable IP-limited
+  dnstt profiles. Use the managed SSH port for exported host-key lookup.
+- Update affected modules and web assets from one committed snapshot through
+  the fast compatibility updater, with backups and no runtime compilation.
+
 ## 4.3.2 — Wait for the daemon before reporting update success
 
 - Confirm the daemon's UNIX socket with a bounded read-only RPC after restart;

@@ -1,0 +1,102 @@
+# Dual transports and client route checks — 4.4.0
+
+An `ssh: handshake failed: EOF` before the server version is not an SSH login
+test. The peer or an intermediary closed the stream. A locally generated
+`Sending response pre request: HTTP/1.0 200` line is not the remote HTTP status.
+The supplied client probe observes the actual response on that client's route.
+It checks Upgrade and SSH identification, not passwords, SOCKS forwarding,
+carrier billing or sustained throughput. No change here guarantees access via
+an unrelated hostname or modifies CDN origin verification.
+
+| Transport | Public port | Outer TLS | Client handling |
+| --- | --- | --- | --- |
+| Managed OpenSSH | 109 / 447 | None | Plain SSH; no HTTP payload |
+| Raw SSH HTTP Upgrade | 80 | None | `/ssh/raw`; valid Upgrade/Connection; no WS key |
+| Raw SSH TLS Upgrade | 443 | Verified hostname | Same payload after TLS |
+| SSH WebSocket | 80 | None | `/ssh/ws`; real RFC6455 binary frames |
+| SSH WebSocket TLS | 443 | Verified hostname | Same framed transport after TLS |
+| VLESS WS | 443 | Verified hostname | Existing encrypted default |
+| VLESS WS non-TLS | 80 | None | Optional additional `/vless`; same managed UUID |
+| SSH dnstt | Configured UDP port, normally 53 | DNS tunnel security | dnstt client plus managed SSH login |
+
+SSH retains its own encryption with outer TLS disabled. This VLESS WS non-TLS
+variant uses `encryption=none` and has no transport encryption. Application
+HTTPS still protects its own contents. Prefer the existing TLS/REALITY profiles
+for sensitive traffic. VMess, Trojan and managed CDN routes stay TLS-only.
+
+## Apply without compiling
+
+On the VPS, update the checkout and apply the backed-up compatibility update:
+
+```bash
+git pull --ff-only origin main
+bash scripts/update-ssh-compat.sh --sync-source
+abdulbasit-panelctl xray-enable --non-tls
+abdulbasit-panelctl diagnostics
+```
+
+`--non-tls` enables an additional VLESS WS route, leaving TLS available.
+`xray-enable --no-non-tls` removes that additional route. Existing deployments
+remain TLS-only until explicitly enabled. The dashboard has the same switch.
+The fast updater includes the changed CLI, adapters and committed web assets.
+Refresh the dashboard after applying it. Administrative SSH remains unchanged.
+
+Create a new private bundle (the destination must not already exist):
+
+```bash
+abdulbasit-panelctl ssh-export basit --route direct --zip /root/basit-ssh-v4.4.0.zip
+```
+
+The ZIP contains settings, commands and `ssh-ws-client.py`. JSON/TXT settings are
+not fabricated NetMod `.nm` import files. No password is stored unless explicitly
+supplied with `--with-password`. Keep all exported credentials private.
+
+## Run the probes on the client network
+
+Extract the SSH ZIP on the Windows client. From the extracted directory:
+
+```powershell
+python -m pip install "wsproto==1.3.2" "h11==0.16.0"
+python ssh-ws-client.py --host vpn.arm-29.tech --no-tls --path /ssh/raw --probe --raw
+python ssh-ws-client.py --host vpn.arm-29.tech --path /ssh/raw --probe --raw
+python ssh-ws-client.py --host vpn.arm-29.tech --no-tls --probe
+python ssh-ws-client.py --host vpn.arm-29.tech --probe
+```
+
+Each successful result includes the actual HTTP 101 and SSH identification;
+HTTP 200/403, a TLS failure or closure before identification is reported as a
+failure. Run on the same network where the VPN fails. A result obtained on the
+VPS itself cannot establish the mobile route. SSH authentication and a real
+forwarded transfer are still necessary after the probe passes.
+
+For actual OpenSSH forwarding over plain WS, use the bundle's `connect.txt`.
+The adapter defaults to verified TLS; `--no-tls` explicitly selects plain WS.
+It never interprets raw HTTP responses as framed WebSocket messages.
+
+## dnstt
+
+An enabled, configured dnstt instance adds a per-user `*-dnstt.json` and
+`slowdns.txt` with its public key, delegated zone and two-terminal commands.
+The recursive DNS resolver is distinct from the authoritative `ns_host` and
+tunnel zone. Server private keys are never exported. Invalid public keys or an
+account IP cap omit the unusable profile and explain why. DNS tunnel clients
+must keep `dnstt-client` running before opening their managed SSH login.
+Installation, NS delegation and local UDP readiness do not prove external DNS
+transport. Existing working server keys and DNS configuration are retained.
+
+## Research and validation scope
+
+Primary implementation references:
+
+- [XTLS WebSocket documentation](https://github.com/XTLS/Xray-docs-next/blob/main/docs/en/config/transports/websocket.md): actual WebSocket framing and HTTP-server routing.
+- [XTLS examples](https://github.com/XTLS/Xray-examples): configuration comparison; the older TLS fallback example is itself marked deprecated and is not copied as a new deployment.
+- [wstunnel SSH ProxyCommand](https://github.com/erebe/wstunnel#as-proxy-command-for-ssh): explicit WS/WSS and stdio model. No external server code was copied.
+- [dnstt upstream](https://www.bamsoftware.com/software/dnstt/) and [GitHub mirror](https://github.com/Mygod/dnstt): DNS tunnel carries TCP; SSH authentication remains separate.
+- [NetMod tutorial search result](https://www.youtube.com/watch?v=7jMeFq_twC4): discovered title/description for client UI context only; video playback/transcript was not available and was not used as protocol evidence.
+
+Tests cover URI/JSON/subscription consistency, credential preservation and
+gateway rollback; raw/framed HTTP/TLS SSH probes and 8-MiB duplex WS/WSS streams.
+Disposable-runner acceptance additionally authenticates OpenSSH through real
+Nginx raw HTTP/TLS and WS/WSS routes and exercises real Xray non-TLS URI/JSON
+TCP/UDP forwarding with byte counters. These are not live NetMod or mobile
+network performance results.

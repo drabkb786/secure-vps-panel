@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import contextlib
 import ipaddress
+import json
 import os
 import queue
 import socket
@@ -171,18 +172,23 @@ async def close_writer(writer):
         await asyncio.wait_for(writer.wait_closed(), 3)
 
 
-async def connect(host, port, path, address=None):
+async def open_stream(host, port, path, address=None, *, tls=True):
     if any(ch in host + path for ch in '\r\n\x00') or not path.startswith('/'):
         raise ValueError('Invalid host/path')
     if not 1 <= port <= 65535:
         raise ValueError('Port must be 1-65535')
     if address:
         ipaddress.ip_address(address)
-    context = ssl.create_default_context()
-    context.set_alpn_protocols(['http/1.1'])
-    reader, writer = await asyncio.wait_for(asyncio.open_connection(
-        address or host, port, ssl=context, server_hostname=host,
-        ssl_handshake_timeout=10, limit=MAX_PENDING), 10)
+    options = {}
+    if tls:
+        context = ssl.create_default_context()
+        context.set_alpn_protocols(['http/1.1'])
+        options = dict(ssl=context, server_hostname=host, ssl_handshake_timeout=10)
+    return await asyncio.wait_for(asyncio.open_connection(address or host, port, limit=MAX_PENDING, **options), 10)
+
+
+async def connect(host, port, path, address=None, *, tls=True):
+    reader, writer = await open_stream(host, port, path, address, tls=tls)
     try:
         peer = writer.get_extra_info('socket')
         peer.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -199,7 +205,7 @@ async def connect(host, port, path, address=None):
                 raise OSError('WebSocket handshake timed out')
             data = await asyncio.wait_for(reader.read(IO_CHUNK), remaining)
             if not data:
-                raise OSError('CDN closed before the WebSocket handshake')
+                raise OSError('Peer closed before the WebSocket handshake')
             ws.receive_data(data)
             accepted = False
             for event in ws.events():
@@ -214,6 +220,62 @@ async def connect(host, port, path, address=None):
     except BaseException:
         await close_writer(writer)
         raise
+
+
+async def probe(host, port, path, address=None, *, tls=True, raw=False):
+    """Observe the real HTTP response and SSH identification on the client route."""
+    if raw:
+        reader, writer = await open_stream(host, port, path, address, tls=tls)
+        ws, pending = None, []
+    else:
+        reader, writer, ws, pending = await connect(host, port, path, address, tls=tls)
+    try:
+        if raw:
+            writer.write((f'GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n').encode('ascii'))
+            await writer.drain()
+            try:
+                header = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), 10)
+            except asyncio.IncompleteReadError as exc:
+                raise OSError('Peer closed before the HTTP Upgrade response (EOF)') from exc
+            lines = header.split(b'\r\n')
+            if len(header) > 16384 or lines[0].split()[1:2] != [b'101']:
+                raise OSError('Raw Upgrade rejected: ' + lines[0].decode('ascii', errors='replace'))
+            headers = {}
+            for line in lines[1:]:
+                if b':' in line:
+                    key, value = line.split(b':', 1); headers[key.lower()] = value.strip().lower()
+            if headers.get(b'upgrade') != b'websocket' or b'upgrade' not in {x.strip() for x in headers.get(b'connection', b'').split(b',')}:
+                raise OSError('HTTP 101 is missing Upgrade/Connection response headers')
+        data = bytearray()
+        deadline = time.monotonic() + 10
+        while True:
+            if ws:
+                for event in pending:
+                    if isinstance(event, BytesMessage): data.extend(event.data)
+                    elif isinstance(event, Ping):
+                        writer.write(ws.send(event.response())); await writer.drain()
+                    elif isinstance(event, (CloseConnection, TextMessage)):
+                        raise OSError('WebSocket ended or returned text before the SSH identification')
+                pending = []
+            if len(data) > 8192:
+                raise OSError('SSH identification exceeds the probe limit')
+            while b'\n' in data:
+                line, rest = bytes(data).split(b'\n', 1); data = bytearray(rest)
+                if line.startswith(b'SSH-2.0-'):
+                    if len(line) > 254: raise OSError('SSH identification is too long')
+                    return {'ok': True, 'host': host, 'port': port, 'tls': tls,
+                            'mode': 'raw-upgrade' if raw else 'websocket', 'http_status': 101,
+                            'ssh_banner': line.rstrip(b'\r').decode('ascii'),
+                            'authentication': 'not_tested', 'scope': 'This client route, Upgrade and SSH banner only'}
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: raise OSError('SSH identification timed out')
+            chunk = await asyncio.wait_for(reader.read(IO_CHUNK), remaining)
+            if not chunk: raise OSError('Peer closed before the SSH identification (EOF)')
+            if ws:
+                ws.receive_data(chunk); pending = list(ws.events())
+            else: data.extend(chunk)
+    finally:
+        await close_writer(writer)
 
 
 async def pump(reader, writer, ws, pending=(), source=None, sink=None):
@@ -309,16 +371,25 @@ async def pump(reader, writer, ws, pending=(), source=None, sink=None):
 
 
 async def run(args):
-    await pump(*await connect(args.host, args.port, args.path, args.address))
+    port = args.port if args.port is not None else (80 if args.no_tls else 443)
+    if args.probe:
+        print(json.dumps(await probe(args.host, port, args.path, args.address, tls=not args.no_tls, raw=args.raw), indent=2))
+    else:
+        await pump(*await connect(args.host, port, args.path, args.address, tls=not args.no_tls))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', required=True, help='Hostname used for Host, SNI and TLS verification')
-    parser.add_argument('--port', type=int, default=443)
+    parser.add_argument('--port', type=int, help='Defaults to 443, or 80 with --no-tls')
     parser.add_argument('--path', default='/ssh/ws')
     parser.add_argument('--address', help='Optional edge IP; TLS still verifies the hostname')
+    parser.add_argument('--no-tls', action='store_true', help='Direct-origin WS over HTTP; SSH remains encrypted')
+    parser.add_argument('--probe', action='store_true', help='Print the actual Upgrade/SSH banner result without logging in')
+    parser.add_argument('--raw', action='store_true', help='With --probe, test the raw HTTP Upgrade used by payload clients')
     args = parser.parse_args()
+    if args.raw and not args.probe:
+        parser.error('--raw is available only with --probe')
     if os.name == 'nt':
         import msvcrt
         msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
@@ -326,7 +397,7 @@ def main():
     try:
         asyncio.run(run(args))
     except Exception as exc:
-        print(f'WSS adapter: {exc}', file=sys.stderr)
+        print(f'SSH transport: {type(exc).__name__}: {exc}', file=sys.stderr)
         return 1
     return 0
 

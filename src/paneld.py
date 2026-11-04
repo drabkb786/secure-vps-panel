@@ -347,6 +347,7 @@ def nginx_text(domain: str, tls: bool) -> str:
     """Keep legacy SSH upgrades; route browsers and real Xray WebSockets separately."""
     cdn = cdn_manager.settings()
     bunny = bunny_manager.settings()
+    network = xray_manager.settings()
     def locations(secure: bool) -> str:
         blocks = """
     location ^~ /.well-known/acme-challenge/ {
@@ -399,7 +400,7 @@ def nginx_text(domain: str, tls: bool) -> str:
         else:
             blocks += "    location ^~ /xhttp/ { return 403; }\n"
         for protocol, (port, path) in xray_manager.PROTOCOLS.items():
-            if secure:
+            if secure or (protocol == "vless" and network.get("enabled") and network.get("vless_non_tls_enabled")):
                 blocks += f"""
     location = {path} {{
         proxy_pass http://127.0.0.1:{port};
@@ -455,9 +456,8 @@ def nginx_text(domain: str, tls: bool) -> str:
         limit_conn abdulbasit_per_ip 40;
     }
 """
-        if secure:
-            for protocol, (port, _) in {**xray_manager.PROTOCOLS, "xhttp": (10004, "/xhttp/")}.items():
-                blocks = blocks.replace(f"proxy_pass http://127.0.0.1:{port};", f"proxy_pass http://127.0.0.1:{port}{gateway_identity.backend_path(protocol)};")
+        for protocol, (port, _) in {**xray_manager.PROTOCOLS, "xhttp": (10004, "/xhttp/")}.items():
+            blocks = blocks.replace(f"proxy_pass http://127.0.0.1:{port};", f"proxy_pass http://127.0.0.1:{port}{gateway_identity.backend_path(protocol)};")
         return blocks + cdn_manager.nginx_locations(cdn, secure) + bunny_manager.nginx_locations(bunny, secure)
 
     def server(secure: bool) -> str:
@@ -641,7 +641,7 @@ def remove_admin(params: dict[str, Any]) -> dict[str, Any]:
     return {"super_admin": data["super_admin"], "admins": admins}
 
 
-XRAY = xray_manager.Manager(run)
+XRAY = xray_manager.Manager(run, gateway_apply=lambda: install_nginx_config(validate_domain(read_text(DOMAIN_FILE))))
 SLOWDNS = slowdns.Manager(run)
 OPS = operations.Manager(run, XRAY, service_status, install_nginx_config)
 

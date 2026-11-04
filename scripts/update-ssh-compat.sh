@@ -19,12 +19,15 @@ done
 [[ $(cat /etc/abdulbasit/ssh-backend) == openssh ]] || { echo 'Requires an existing managed OpenSSH installation' >&2; exit 1; }
 exec 9>/run/noway-ssh-update.lock
 flock -n 9 || { echo 'Another SSH compatibility update is running' >&2; exit 1; }
-modules=(ws_proxy paneld panel_client ssh_backend cdn_manager bunny_manager diagnostics ssh_profiles)
+modules=(ws_proxy paneld panel_client panelctl ssh_backend cdn_manager bunny_manager diagnostics ssh_profiles ssh_ws_client xray_manager client_formats profile_backup)
+assets=(index.html app.js)
 files=("$ssh_config" "$nginx_config")
 for module in "${modules[@]}"; do files+=("$app_dir/$module.py"); done
+for asset in "${assets[@]}"; do files+=("$app_dir/web/$asset"); done
 if [[ $sync_source == 1 ]]; then
   [[ -d $project_dir/src && ! -L $project_dir/src ]] || { echo 'Unsafe source directory' >&2; exit 1; }
   for module in "${modules[@]}"; do files+=("$project_dir/src/$module.py"); done
+  for asset in "${assets[@]}"; do files+=("$project_dir/src/web/$asset"); done
 fi
 for file in "${files[@]}"; do
   [[ -f $file && ! -L $file ]] || { echo "Missing or unsafe installed file: $file" >&2; exit 1; }
@@ -38,7 +41,7 @@ install -d -m 0700 "$backup_dir/files"
 for file in "${files[@]}"; do cp -a --parents -- "$file" "$backup_dir/files/"; done
 # A manually edited working copy must not silently become the installed release.
 # Stage one pinned HEAD; keep original working/installed copies in the backup.
-/usr/bin/python3 "$project_dir/scripts/source-snapshot.py" "$project_dir" "$backup_dir/source" "${modules[@]}" > "$backup_dir/source-release.json"
+/usr/bin/python3 "$project_dir/scripts/source-snapshot.py" "$project_dir" "$backup_dir/source" "${modules[@]}" --web-assets > "$backup_dir/source-release.json"
 cat "$backup_dir/source-release.json"
 rollback() {
   local result=$?
@@ -63,6 +66,10 @@ for module in "${modules[@]}"; do
     cp -- "$backup_dir/source/$module.py" "$project_dir/src/$module.py"
   fi
   install -o root -g root -m 0755 "$backup_dir/source/$module.py" "$app_dir/$module.py"
+done
+for asset in "${assets[@]}"; do
+  if [[ $sync_source == 1 ]]; then cp -- "$backup_dir/source/web/$asset" "$project_dir/src/web/$asset"; fi
+  install -o root -g root -m 0644 "$backup_dir/source/web/$asset" "$app_dir/web/$asset"
 done
 PYTHONPATH="$app_dir" /usr/bin/python3 -m ssh_backend "${generator_args[@]}" > "$backup_dir/sshd.candidate"
 /usr/sbin/sshd -t -f "$backup_dir/sshd.candidate"

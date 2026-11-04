@@ -23,7 +23,8 @@ import pytest
 pytestmark = pytest.mark.skipif(os.environ.get("OPENSSH_NATIVE_SYSTEMD") != "1", reason="Requires disposable installed systemd runner")
 
 
-def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
+@pytest.mark.parametrize('plain_ws', [False, True])
+def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch, plain_ws):
     assert os.geteuid() == 0 and os.environ.get("GITHUB_ACTIONS") == "true"
     import paramiko
     import paneld
@@ -101,6 +102,27 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
             request("configure_web", username="nativeadmin", password="native-web-password")
             import ssl
             context = ssl.create_default_context(cafile=str(cert))
+            # Authenticate real SSH over each raw Upgrade route and forward
+            # bytes, retaining any banner coalesced after the HTTP headers.
+            class BufferedPeer:
+                def __init__(self, peer, prefix): self.peer, self.prefix = peer, bytearray(prefix)
+                def recv(self, size):
+                    if self.prefix:
+                        result = bytes(self.prefix[:size]); del self.prefix[:size]; return result
+                    return self.peer.recv(size)
+                def __getattr__(self, name): return getattr(self.peer, name)
+            for use_tls in (False, True):
+                peer = socket.create_connection(('127.0.0.1', tls_port if use_tls else http_port), timeout=5)
+                if use_tls: peer = context.wrap_socket(peer, server_hostname='vpn.example.com')
+                peer.sendall(b'GET /ssh/raw HTTP/1.1\r\nHost: vpn.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n')
+                response = b''
+                while b'\r\n\r\n' not in response:
+                    chunk = peer.recv(4096); assert chunk; response += chunk
+                    assert len(response) <= 16384
+                header, banner = response.split(b'\r\n\r\n', 1)
+                assert header.startswith(b'HTTP/1.1 101 '), header
+                raw_login, raw_channel = login(BufferedPeer(peer, banner))
+                raw_channel.close(); raw_login.close()
             with context.wrap_socket(socket.create_connection(("127.0.0.1", tls_port), timeout=5), server_hostname="vpn.example.com") as peer:
                 body = json.dumps({"username": "nativeadmin", "password": "native-web-password"}).encode()
                 peer.sendall(b"POST /panel/api/login HTTP/1.1\r\nHost: vpn.example.com\r\nOrigin: https://vpn.example.com\r\nContent-Type: application/json\r\nContent-Length: " + str(len(body)).encode() + b"\r\nConnection: close\r\n\r\n" + body)
@@ -116,7 +138,7 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
             known = root / "known_hosts"
             known.write_text("vpn.example.com " + Path("/etc/abdulbasit-sshd/ssh_host_ed25519_key.pub").read_text())
             socks_port = free_port()
-            proxy_command = shlex.join([sys.executable, str(adapter), "--host", "vpn.example.com", "--address", "127.0.0.1", "--port", str(tls_port)])
+            proxy_command = shlex.join([sys.executable, str(adapter), "--host", "vpn.example.com", "--address", "127.0.0.1", "--port", str(http_port if plain_ws else tls_port)] + (["--no-tls"] if plain_ws else []))
             log = (root / "ssh-client.log").open("w+")
             env = dict(os.environ, SSH_ASKPASS=str(askpass), SSH_ASKPASS_REQUIRE="force", DISPLAY=":0")
             ssh_client = subprocess.Popen(["ssh", "-N", "-D", f"127.0.0.1:{socks_port}", "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + str(known), "-o", "ExitOnForwardFailure=yes", "-o", "ProxyCommand=" + proxy_command, name + "@vpn.example.com"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log, env=env)

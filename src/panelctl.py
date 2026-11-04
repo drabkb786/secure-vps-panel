@@ -79,6 +79,7 @@ def parser() -> argparse.ArgumentParser:
         sub.add_parser(action)
     enable = sub.add_parser("xray-enable")
     enable.add_argument("--xhttp", action=argparse.BooleanOptionalAction, default=None, help="Enable/disable the additional VLESS XHTTP TLS endpoint")
+    enable.add_argument("--non-tls", action=argparse.BooleanOptionalAction, default=None, help="Also expose direct VLESS WS on port 80 without transport encryption; TLS stays enabled")
     profile = sub.add_parser("xray-create")
     profile.add_argument("name")
     profile.add_argument("--days", type=int, default=30)
@@ -97,7 +98,7 @@ def parser() -> argparse.ArgumentParser:
     format_group.add_argument("--links", action="store_true", help="Print only the import links, one per line")
     link = sub.add_parser("xray-link", help="Print one direct import URI without JSON wrapping")
     link.add_argument("name")
-    link.add_argument("--protocol", choices=["vless", "vmess", "trojan", "vless-xhttp", "vless-reality"], default="vless")
+    link.add_argument("--protocol", choices=["vless", "vmess", "trojan", "vless-xhttp", "vless-reality", "vless-non-tls"], default="vless")
     for action in ("subscription-rotate", "subscription-revoke"):
         command = sub.add_parser(action)
         command.add_argument("name")
@@ -270,6 +271,8 @@ def main() -> int:
             params = {"enabled": args.action == "xray-enable"}
             if args.action == "xray-enable" and args.xhttp is not None:
                 params["xhttp_enabled"] = args.xhttp
+            if args.action == "xray-enable" and args.non_tls is not None:
+                params["vless_non_tls_enabled"] = args.non_tls
             result = request("xray_configure", **params)
         elif args.action in {"subscription-rotate", "subscription-revoke"}:
             result = request(args.action.replace("-", "_"), name=args.name)

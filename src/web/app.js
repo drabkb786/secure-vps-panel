@@ -140,7 +140,9 @@ function render() {
     const tr = element('tr'); tr.append(element('td', 'mono', user.username), element('td', 'mono muted', user.expiry), element('td', '', `${(s.sessions.find(x => x.username === user.username) || {}).count || 0} / ${user.max_sessions}`), element('td', 'muted', `GB unavailable · IP cap: ${user.max_ips || 'Unlimited'}`));
     const td = element('td'), actions = element('div', 'row-actions'); actions.append(button('Export ↗', () => exportSSH(user.username)), button('Limits', () => openUsage('ssh', user)), button(user.enabled === false ? 'Unlock' : 'Lock', () => command('set_user_lock', {username: user.username, enabled: user.enabled === false}, 'SSH account updated')), button('Renew', () => openRenew('ssh', user.username)), button('Delete', async () => { if (await confirmAction(`Delete SSH account “${user.username}”? Its active sessions will be disconnected.`)) await command('delete_user', {username: user.username}, 'Account deleted'); }, 'delete')); td.append(actions); tr.append(td); users.append(tr);
   });
-  setText('xray-summary', `${s.xray_installed ? 'Installed' : 'Core not installed · run install.sh --with-xray'} · ${s.network.enabled ? 'Enabled' : 'Disabled'} · TLS on port 443`);
+  setText('xray-summary', `${s.xray_installed ? 'Installed' : 'Core not installed · run install.sh --with-xray'} · ${s.network.enabled ? 'Enabled' : 'Disabled'} · TLS on port 443${s.network.vless_non_tls_enabled ? ' · VLESS non-TLS on port 80' : ''}`);
+  $('toggle-non-tls').textContent = s.network.vless_non_tls_enabled ? 'Disable VLESS non-TLS' : 'Enable VLESS non-TLS';
+  $('toggle-non-tls').disabled = !s.network.enabled || $('toggle-non-tls').hasAttribute('aria-busy');
   $('toggle-xray').textContent = s.network.enabled ? 'Disable Xray' : 'Enable Xray';
   $('toggle-xray').classList.toggle('primary', !s.network.enabled); $('toggle-xray').disabled = !s.xray_installed || $('toggle-xray').hasAttribute('aria-busy');
   $('toggle-xhttp').textContent = s.network.xhttp_enabled ? 'Disable XHTTP' : 'Enable XHTTP';
@@ -317,6 +319,10 @@ $('toggle-xray').addEventListener('click', () => busy($('toggle-xray'), async ()
 $('toggle-xhttp').addEventListener('click', () => busy($('toggle-xhttp'), async () => {
   const enabled = !state.network.xhttp_enabled;
   if (await confirmAction(`${enabled ? 'Enable' : 'Disable'} the additional VLESS XHTTP endpoint? The core will restart.`)) await command('xray_configure', {enabled: true, xhttp_enabled: enabled}, 'XHTTP transport updated');
+}));
+$('toggle-non-tls').addEventListener('click', () => busy($('toggle-non-tls'), async () => {
+  const enabled = !state.network.vless_non_tls_enabled;
+  if (await confirmAction(enabled ? 'Enable additional VLESS WS on port 80? This profile has no transport encryption; TLS profiles remain available.' : 'Disable VLESS non-TLS on port 80?')) await command('xray_configure', {enabled: true, vless_non_tls_enabled: enabled}, 'VLESS non-TLS updated');
 }));
 $('lookup-dns').addEventListener('click', () => busy($('lookup-dns'), async () => {
   const result = await api('command', {command: 'dns_lookup', params: {domain: $('domain-input').value.trim()}});

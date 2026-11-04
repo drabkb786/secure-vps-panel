@@ -81,6 +81,7 @@ def test_generated_configs_accepted_by_real_xray(tmp_path):
     cases.update({protocol: client_config(protocol, row, "vpn.example.com", DEFAULT_DNS) for protocol in PROTOCOLS})
     cases["xhttp-server"] = server_config({"dns": DEFAULT_DNS, "xhttp_enabled": True}, [row])
     cases["xhttp-client"] = client_config("vless-xhttp", row, "vpn.example.com", DEFAULT_DNS)
+    cases["non-tls-client"] = client_config("vless-non-tls", row, "vpn.example.com", DEFAULT_DNS)
     for name, config in cases.items():
         path = tmp_path / f"{name}.json"; path.write_text(json.dumps(config))
         result = subprocess.run([CORE, "run", "-test", "-config", str(path)], capture_output=True, text=True, timeout=20)
@@ -201,6 +202,7 @@ def test_real_reality_config_and_forwarding(tmp_path, monkeypatch):
 def imported_profile_from_uri(link):
     """Independent client-style URI decoding; deliberately does not call client_config."""
     protocol, encoded = link.split("://", 1)
+    plain = False
     if protocol == "vmess":
         data = json.loads(base64.b64decode(encoded, validate=True))
         assert data["net"] == "ws" and data["tls"] == "tls" and data["aid"] == "0"
@@ -209,14 +211,17 @@ def imported_profile_from_uri(link):
         alpn = data.get("alpn", "http/1.1").split(",")
     else:
         url = urlsplit(link); query = parse_qs(url.query, strict_parsing=True)
-        assert query["type"][0] in ("ws", "xhttp") and query["security"] == ["tls"]
+        assert query["type"][0] in ("ws", "xhttp") and query["security"][0] in ("tls", "none")
+        plain = query["security"] == ["none"]
         address, port = url.hostname, url.port
-        host, path, server_name = query["host"][0], query["path"][0], query["sni"][0]
+        host, path, server_name = query["host"][0], query["path"][0], query.get("sni", [""])[0]
         alpn = query.get("alpn", ["http/1.1"])[0].split(",")
         credential = {"password": unquote(url.username)} if protocol == "trojan" else {"id": unquote(url.username), "encryption": query["encryption"][0]}
     outbound_settings = {"servers": [{"address": address, "port": port, **credential}]} if protocol == "trojan" else {"vnext": [{"address": address, "port": port, "users": [credential]}]}
     stream = {"network": "ws", "security": "tls", "wsSettings": {"path": path, "host": host},
               "tlsSettings": {"serverName": server_name, "allowInsecure": False, "alpn": alpn}}
+    if plain:
+        stream["security"] = "none"; stream.pop("tlsSettings")
     if protocol != "vmess" and query["type"] == ["xhttp"]:
         stream.pop("wsSettings"); stream["network"] = "xhttp"
         stream["xhttpSettings"] = {"path": path, "host": host, "mode": query["mode"][0]}
@@ -226,12 +231,16 @@ def imported_profile_from_uri(link):
                            "streamSettings": stream}]}
 
 
-@pytest.mark.parametrize("source", ["json", "import_link", "xhttp_link", "cloudfront_json", "cloudfront_link", "cloudfront_xhttp", "bunny_json", "bunny_xhttp"])
+@pytest.mark.parametrize("source", ["json", "import_link", "xhttp_link", "cloudfront_json", "cloudfront_link", "cloudfront_xhttp", "bunny_json", "bunny_xhttp", "plain_json", "plain_link"])
 def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, monkeypatch):
     from cloudfront_fixture import enable_origin, edge_server
     cdn = source.startswith(("cloudfront", "bunny"))
     provider = "bunny" if source.startswith("bunny") else "cloudfront"
     xhttp = "xhttp" in source
+    plain = source.startswith('plain_')
+    if plain:
+        import xray_manager
+        monkeypatch.setattr(xray_manager, 'settings', lambda: {'enabled': True, 'vless_non_tls_enabled': True})
     secret = enable_origin(tmp_path, monkeypatch, provider) if cdn else ""
     domain = "d123example.cloudfront.net" if cdn else "vpn.example.com"
     prefix = "/" + provider if cdn else ""
@@ -299,14 +308,15 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, m
         front_log = (tmp_path / "nginx-console.log").open("w")
         front_proc = subprocess.Popen([nginx, "-p", str(tmp_path), "-c", str(config), "-g", "daemon off;"], stdout=front_log, stderr=front_log)
         wait_port(front_port, front_proc)
-        for protocol in (["vless-xhttp"] if xhttp else PROTOCOLS):
-            cfg = client_config(protocol, row, domain, DEFAULT_DNS, prefix) if source in ("json", "cloudfront_json", "bunny_json") else imported_profile_from_uri(share_link(protocol, row, domain, prefix))
+        for protocol in (["vless-non-tls"] if plain else ["vless-xhttp"] if xhttp else PROTOCOLS):
+            cfg = client_config(protocol, row, domain, DEFAULT_DNS, prefix) if source in ("json", "cloudfront_json", "bunny_json", "plain_json") else imported_profile_from_uri(share_link(protocol, row, domain, prefix))
             cfg["log"]["loglevel"] = "debug"
-            proxy = cfg["outbounds"][0]; proxy["streamSettings"]["tlsSettings"]["certificates"] = [{"certificateFile": str(cert), "usage": "verify"}]
+            proxy = cfg["outbounds"][0]
+            if not plain: proxy["streamSettings"]["tlsSettings"]["certificates"] = [{"certificateFile": str(cert), "usage": "verify"}]
             transport_settings = proxy["streamSettings"].get("wsSettings", proxy["streamSettings"].get("xhttpSettings"))
             transport_settings.setdefault("headers", {}).update({"X-Forwarded-For": "203.0.113.66", "X-Noway-Gateway": "client-spoof"})
             endpoint = proxy["settings"]["servers" if protocol == "trojan" else "vnext"][0]
-            endpoint.update({"address": "127.0.0.1", "port": edge_port if cdn else front_port})
+            endpoint.update({"address": "127.0.0.1", "port": http_port if plain else edge_port if cdn else front_port})
             port = free_port(); cfg["inbounds"][0]["port"] = port
             config_path = tmp_path / f"{protocol}-client.json"; config_path.write_text(json.dumps(cfg))
             proc, log = start_core(config_path)
@@ -326,7 +336,7 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, m
                     assert b"NOWAY verified transport test" in response, protocol
                 # A complete TCP transfer must match the core's integer payload
                 # counters byte-for-byte, including the HTTP bytes, excluding TLS.
-                email = f"{row['uuid']}-{'xhttp' if protocol == 'vless-xhttp' else protocol}@noway.local"
+                email = f"{row['uuid']}-{'vless' if plain else 'xhttp' if protocol == 'vless-xhttp' else protocol}@noway.local"
                 measured = subprocess.run([CORE, "api", "statsquery", "--server=unix://" + str(api_socket), "-pattern=user>>>"], check=True, capture_output=True, text=True, timeout=5)
                 counters = {item["name"]: int(item.get("value", 0)) for item in json.loads(measured.stdout).get("stat", [])}
                 assert counters[f"user>>>{email}>>>traffic>>>uplink"] == len(b"GET / HTTP/1.0\r\nHost: test.local\r\n\r\n")

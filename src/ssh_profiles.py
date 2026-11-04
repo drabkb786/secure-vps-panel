@@ -1,5 +1,6 @@
 """Portable SSH profiles. Passwords are optional, transient and never persisted."""
 import json
+import re
 from datetime import date
 from urllib.parse import quote
 from common import DOMAIN_FILE, ValidationError, read_text, validate_domain, validate_ssh_password, validate_username
@@ -28,7 +29,7 @@ def export(params, lookup):
     if password is not None:
         profile["password"] = password
     links = {"ssh": f"ssh://{credential}@{domain}:109", "wss": f"wss://{host}{path}"}
-    command = f'ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o "ProxyCommand=python3 ssh-ws-client.py --host {host} --path {path}" -N -D 127.0.0.1:10888 {user}@{domain}'
+    command = f'ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o "ProxyCommand=python3 ssh-ws-client.py --host {host} --path {path}" -p 109 -N -D 127.0.0.1:10888 {user}@{domain}'
     notes = ["The ssh:// URI is direct SSH on 109. App support for SSH URIs varies.",
              "The wss:// URL identifies a transport, not a complete SSH login/import URI.",
              "For WSS use the supplied adapter as OpenSSH ProxyCommand; a raw HTTP payload alone cannot encode WebSocket frames.",
@@ -40,6 +41,21 @@ def export(params, lookup):
              "connect.txt": f"Direct:\nssh -N -D 127.0.0.1:10888 -p 109 {user}@{domain}\n\nWSS:\n{command}\n"}
     # Never fabricate a proprietary .nm/.ehi format.
     if route == "direct":
+        direct = {"schema": "noway-ssh-direct-v1", "username": user, "host": domain,
+                  "port": 109, "tls": False, "transport": "ssh", "proxy_type": "none"}
+        if password is not None: direct["password"] = password
+        files[f"{user}-direct.json"] = json.dumps(direct, indent=2) + "\n"
+        files[f"{user}-direct-alt.json"] = json.dumps({**direct, "port": 447}, indent=2) + "\n"
+        plain_ws = {**profile, "port": 80, "tls": False}
+        for field in ("server_name", "verify_certificate"): plain_ws.pop(field, None)
+        files[f"{user}-ws-non-tls.json"] = json.dumps(plain_ws, indent=2) + "\n"
+        links["ws"] = f"ws://{domain}/ssh/ws"
+        files["links.txt"] = "\n".join(links.values()) + "\n"
+        files["connect.txt"] += (f'\nWS non-TLS:\nssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o "ProxyCommand=python3 ssh-ws-client.py --host {domain} --no-tls" -p 109 -N -D 127.0.0.1:10888 {user}@{domain}\n'
+                                 f'\nClient route probes (run on the client, not the VPS):\npython3 ssh-ws-client.py --host {domain} --no-tls --path /ssh/raw --probe --raw\n'
+                                 f'python3 ssh-ws-client.py --host {domain} --path /ssh/raw --probe --raw\n'
+                                 f'python3 ssh-ws-client.py --host {domain} --no-tls --probe\n'
+                                 f'python3 ssh-ws-client.py --host {domain} --probe\n')
         files["legacy-raw-payload.txt"] = f"GET /ssh/raw HTTP/1.1[crlf]Host: {domain}[crlf]Connection: Upgrade[crlf]Upgrade: websocket[crlf][crlf]\n"
         notes.append("legacy-raw-payload.txt is for direct origin port 80 (or TLS 443) and raw-upgrade SSH clients only; it is not a CDN WSS profile.")
         raw = {"schema": "noway-ssh-raw-v1", "username": user, "host": domain,
@@ -58,6 +74,7 @@ def export(params, lookup):
             f"Raw TLS Upgrade: {domain}:443; TLS on; verify certificate; SNI {domain}; proxy none.\n"
             f"Payload for either raw mode:\n{raw['payload']}\n"
             "Raw mode must omit Sec-WebSocket-Key and Sec-WebSocket-Version.\n\n"
+            f"Binary WS non-TLS: {domain}:80; TLS none; Host {domain}; path /ssh/ws.\n"
             f"Binary WSS: {host}:443; TLS on; SNI/Host {host}; path {path}.\n"
             "Use actual RFC6455 binary framing for WSS; a raw payload is not a framed WSS client.\n"
             "These JSON/TXT files document settings; they are not proprietary .nm/.ehi import files.\n"
@@ -74,10 +91,23 @@ def export(params, lookup):
     tunnel = slowdns.settings()
     if tunnel["enabled"]:
         key = read_text(slowdns.PUBLIC_KEY)
-        files["slowdns.txt"] = (f"dnstt-client -udp YOUR_DNS_RESOLVER:53 -pubkey {key} {tunnel['zone']} 127.0.0.1:7000\n"
-                                f"ssh -N -D 127.0.0.1:10888 -p 7000 {user}@127.0.0.1\n")
         if account.get("max_ips", 0):
             notes.append("This account has an IP limit and cannot use SlowDNS, whose viewer IP is unavailable. Set its IP cap to 0 first.")
+        elif not re.fullmatch(r"[a-fA-F0-9]{64}", key):
+            notes.append("SlowDNS is enabled but its public key is invalid; no unusable dnstt profile was exported.")
+        else:
+            zone, ns_host = validate_domain(tunnel["zone"]), validate_domain(tunnel["ns_host"])
+            dns_profile = {"schema": "noway-ssh-dnstt-v1", "transport": "dnstt", "username": user,
+                           "zone": zone, "nameserver": ns_host, "public_key": key,
+                           "resolver": "YOUR_DNS_RESOLVER:53", "server_udp_port": tunnel["port"],
+                           "local_host": "127.0.0.1", "local_port": 7000, "ssh_upstream": "127.0.0.1:109"}
+            if password is not None: dns_profile["password"] = password
+            files[f"{user}-dnstt.json"] = json.dumps(dns_profile, indent=2) + "\n"
+            files["slowdns.txt"] = (f"dnstt-client -udp YOUR_DNS_RESOLVER:53 -pubkey {key} {zone} 127.0.0.1:7000\n"
+                                    f"ssh -o HostKeyAlias={domain} -o ServerAliveInterval=30 -N -D 127.0.0.1:10888 -p 7000 {user}@127.0.0.1\n\n"
+                                    "Keep dnstt-client running in one terminal, then run SSH in another.\n"
+                                    "YOUR_DNS_RESOLVER is a reachable recursive resolver, separate from the tunnel zone and authoritative nameserver.\n"
+                                    "DNS delegation/listener checks do not prove an external DNS tunnel connection.\n")
     from pathlib import Path
     adapter = Path(__file__).with_name("ssh_ws_client.py")
     if adapter.is_file():
