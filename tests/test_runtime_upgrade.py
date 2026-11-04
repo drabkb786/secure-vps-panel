@@ -355,6 +355,26 @@ def test_completed_release_is_version_checked_without_rebuilding(completed_build
     assert checked == [(release, manifest)]
 
 
+def test_fresh_runtime_sealing_removes_inherited_write_access_before_reuse(completed_build):
+    release, manifest, checked = completed_build
+    venv = release / 'venv'; venv.mkdir(); venv.chmod(0o775)
+    binary = venv / 'python'; binary.write_text('fixture'); binary.chmod(0o775)
+    module = venv / 'module.py'; module.write_text('fixture'); module.chmod(0o664)
+    runtime.seal_fresh_release(release)
+    assert venv.stat().st_mode & 0o777 == 0o755
+    assert binary.stat().st_mode & 0o777 == 0o755
+    assert module.stat().st_mode & 0o777 == 0o644
+    assert runtime.completed_release(release.name, manifest) == release
+    assert checked == [(release, manifest)]
+
+
+def test_fresh_runtime_sealing_rejects_special_files(completed_build):
+    release, _, _ = completed_build
+    os.mkfifo(release / 'unexpected-pipe')
+    with pytest.raises(RuntimeError, match='file type'):
+        runtime.seal_fresh_release(release)
+
+
 @pytest.mark.parametrize('problem', ['missing_ready', 'wrong_receipt', 'wrong_versions', 'writable', 'symlink', 'foreign_owner'])
 def test_incomplete_or_untrusted_releases_are_rejected(completed_build, problem):
     release, manifest, checked = completed_build

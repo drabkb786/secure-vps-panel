@@ -151,3 +151,14 @@ The OS admin SSH listener is not restarted or reconfigured by this operation.
 - [OpenSSL 3.5.9 official assets](https://github.com/openssl/openssl/releases/tag/openssl-3.5.9)
 - [Certbot 5.9.0 official assets](https://github.com/certbot/certbot/releases/tag/v5.9.0)
 - [Fail2ban 1.1.1 official package](https://github.com/fail2ban/fail2ban/releases/tag/1.1.1)
+
+## CI feedback
+
+PRs and main receive ordinary unit/native checks plus a fast hosted-Python 3.15
+compatibility suite. Superseded runs are cancelled and feature pushes do not
+duplicate the PR workflow. Full private source compilation runs automatically
+when build functions, prerequisites, the runtime manifest, installer/interpreter
+selector or systemd units change. Parser, activation and CLI routing fixes do
+not automatically rebuild the stack. A full build remains available through
+workflow_dispatch with full_runtime enabled. Missing/invalid diff metadata
+conservatively requests the full build.
