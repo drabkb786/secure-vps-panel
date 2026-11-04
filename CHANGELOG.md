@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.3.0 — Direct SSH transport compatibility and reversible MSS tuning
+
+- Select raw or RFC6455 framing using a valid WebSocket key on direct SSH
+  routes; accept supported legacy methods/HTTP versions and preserve split data.
+- Add explicit Nginx direct SSH locations and upstream socket keepalive while
+  preserving panel routing, bounded parsing and authenticated CDN origin routes.
+- Allow ten managed SSH session channels and PTYs behind the forced tunnel-only
+  command. Offer old-client crypto only through an explicit migration option.
+- Add optional tagged PMTU MSS rules, boot reapplication, MSS-only mode and
+  transactional rollback that preserves existing firewall rules and sysctls.
+
 ## 4.2.5 — Reuse completed builds with the staged Fail2ban interpreter link
 
 - Validate the extracted package's relative fail2ban-python binding against

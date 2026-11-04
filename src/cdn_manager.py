@@ -131,6 +131,7 @@ def nginx_locations(cfg: dict, secure: bool) -> str:
         proxy_set_header Authorization "";
         proxy_buffering off;
         proxy_request_buffering off;
+        proxy_socket_keepalive on;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }}

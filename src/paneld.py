@@ -418,6 +418,25 @@ def nginx_text(domain: str, tls: bool) -> str:
 """
             else:
                 blocks += f"    location = {path} {{ return 403; }}\n"
+        for ssh_path in ("/ssh/ws", "/ssh/raw"):
+            blocks += f"""
+    location = {ssh_path} {{
+        proxy_pass http://127.0.0.1:2082;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $abdulbasit_connection_upgrade;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Noway-Gateway 1;
+        proxy_socket_keepalive on;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        limit_conn abdulbasit_per_ip 40;
+    }}
+"""
         blocks += """
     location / {
         proxy_pass http://$abdulbasit_root_upstream;
@@ -429,6 +448,7 @@ def nginx_text(domain: str, tls: bool) -> str:
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Noway-Gateway 1;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_socket_keepalive on;
         proxy_buffering off;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;

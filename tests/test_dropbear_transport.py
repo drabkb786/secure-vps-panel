@@ -92,10 +92,38 @@ def test_unmasked_frame_gets_protocol_close_not_http_error(echo_bridge):
         assert b"HTTP/1.1 400" not in response
 
 
-def test_legacy_route_preserves_raw_bytes_even_when_client_supplies_ws_key(echo_bridge):
-    with raw_handshake(echo_bridge, "/ssh/raw") as peer:
-        peer.sendall(b"SSH-2.0-legacy-test\r\n")
-        assert peer.recv(128) == b"SSH-2.0-legacy-test\r\n"
+@pytest.mark.parametrize("path", ["/", "/ssh/raw", "/ssh/ws?client=standard"])
+def test_key_selects_binary_websocket_on_direct_routes(echo_bridge, path):
+    with connect(f"ws://127.0.0.1:{echo_bridge}{path}", compression=None, proxy=None) as ws:
+        ws.send(b"SSH-2.0-framed-test\r\n")
+        assert ws.recv(timeout=3) == b"SSH-2.0-framed-test\r\n"
+        assert ws.ping(b"alive").wait(2)
+
+
+@pytest.mark.parametrize("method,version,path", [("GET", "1.1", "/"), ("POST", "1.0", "/ssh/raw"),
+    ("CONNECT", "1.1", "/ssh/raw?client=legacy"), ("HEAD", "1.0", "/ssh/raw"),
+    ("OPTIONS", "1.1", "/ssh/raw"), ("GET", "1.1", "/ssh/ws")])
+def test_legacy_without_key_preserves_coalesced_ssh_bytes(echo_bridge, method, version, path):
+    payload = b"SSH-2.0-legacy-test\r\n"
+    with socket.create_connection(("127.0.0.1", echo_bridge), timeout=3) as peer:
+        peer.sendall(f"{method} {path} HTTP/{version}\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n".encode() + payload)
+        response = b""
+        while b"\r\n\r\n" not in response:
+            response += peer.recv(512)
+        headers, echoed = response.split(b"\r\n\r\n", 1)
+        assert headers.startswith(b"HTTP/1.1 101 ")
+        while len(echoed) < len(payload): echoed += peer.recv(512)
+        assert echoed == payload
+
+
+def test_headers_split_across_tcp_reads_preserve_initial_ssh_data():
+    chunks = iter([b"GET /ssh/", b"raw HTTP/1.1\r\nHost: localhost\r", b"\nUpgrade: websocket\r\nConnection: Up", b"grade\r\n\r\nSSH-2.0-client\r\n"])
+    class Peer:
+        def settimeout(self, value): pass
+        def recv(self, size): return next(chunks)
+    header, initial = bridge.recv_headers(Peer())
+    assert bridge.parse_request(header)[0] == "/ssh/raw"
+    assert initial == b"SSH-2.0-client\r\n"
 
 
 @pytest.mark.parametrize("header", [

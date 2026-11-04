@@ -69,7 +69,12 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch):
             received.extend(chunk)
         sender.join(10)
         assert not sender.is_alive() and hashlib.sha256(received).digest() == hashlib.sha256(payload).digest()
-        with pytest.raises(paramiko.SSHException): transport.open_session(timeout=5)
+        session = transport.open_session(timeout=5)
+        session.settimeout(5)
+        session.get_pty()
+        session.exec_command("id")
+        assert session.recv_exit_status() == 1, "The forced tunnel shell must reject commands"
+        session.close()
         with pytest.raises(paramiko.SSHException): transport.request_port_forward("127.0.0.1", 0)
         return transport, channel
     try:

@@ -15,7 +15,9 @@ the distribution's `python3-wsproto` package; no third-party panel code is copie
 | Standard WebSocket | `wss://YOUR-DOMAIN/ssh/ws`, port `443` | RFC 6455 binary frames, version 13; optional `binary` subprotocol |
 | Legacy HTTP Upgrade | `/` or `/ssh/raw`, port `80` or TLS `443` | Raw SSH after HTTP 101 |
 
-`/` remains legacy for existing clients, even if they send a WebSocket key.
+As of 4.3.0, a valid WebSocket key selects RFC6455 on all three direct paths.
+Legacy raw clients must omit WebSocket key/version headers. See
+[current SSH compatibility](SSH_COMPATIBILITY.md) for the updated behavior.
 Use `/ssh/ws` only when the client actually frames WebSocket data. Arbitrary paths
 are rejected; migrate a previously custom legacy path to `/ssh/raw`. Plain `ws://`
 on port 80 is supported, but WSS with a valid certificate is recommended. SSH

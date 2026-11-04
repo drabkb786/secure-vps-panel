@@ -19,6 +19,7 @@ def test_valid_upgrade() -> None:
         b"Upgrade: websocket\r\n"
         b"Connection: keep-alive, Upgrade\r\n"
         b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        b"Sec-WebSocket-Version: 13\r\n"
     )
     path, headers = parse_request(raw)
     assert path == "/"

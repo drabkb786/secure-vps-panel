@@ -17,6 +17,7 @@ import socketserver
 import threading
 import time
 from typing import Final
+from urllib.parse import urlsplit
 import gateway_identity
 import ssh_identity
 
@@ -72,8 +73,9 @@ def parse_request(raw_header: bytes) -> tuple[str, dict[str, str]]:
     if not lines:
         raise ValueError("Missing request line")
     parts = lines[0].split()
-    if len(parts) != 3 or parts[0] not in {"GET", "CONNECT"} or parts[2] != "HTTP/1.1":
-        raise ValueError("Only HTTP GET/CONNECT upgrade requests are accepted")
+    if (len(parts) != 3 or parts[0] not in {"GET", "POST", "CONNECT", "HEAD", "OPTIONS"}
+            or parts[2] not in {"HTTP/1.0", "HTTP/1.1"}):
+        raise ValueError("Use a supported HTTP/1.0 or HTTP/1.1 upgrade request")
     if len(parts[1]) > 2048 or any(ord(ch) < 32 for ch in parts[1]):
         raise ValueError("Invalid request target")
 
@@ -102,11 +104,12 @@ def parse_request(raw_header: bytes) -> tuple[str, dict[str, str]]:
         raise ValueError("Request bodies are not accepted")
     if "transfer-encoding" in headers:
         raise ValueError("Transfer encoding is not accepted")
-    if parts[1] not in LEGACY_PATHS | {WS_PATH}:
+    target = urlsplit(parts[1])
+    if target.scheme or target.netloc or target.fragment or target.path not in LEGACY_PATHS | {WS_PATH}:
         raise ValueError("Use /ssh/ws for WebSocket or /ssh/raw for legacy Upgrade")
-    if parts[1] == WS_PATH:
-        if parts[0] != "GET" or headers.get("sec-websocket-version") != "13":
-            raise ValueError("WebSocket requires GET and version 13")
+    if "sec-websocket-key" in headers:
+        if parts[0] != "GET" or parts[2] != "HTTP/1.1" or headers.get("sec-websocket-version") != "13":
+            raise ValueError("WebSocket requires HTTP/1.1 GET and version 13")
         try:
             key = base64.b64decode(headers.get("sec-websocket-key", ""), validate=True)
         except (ValueError, UnicodeError) as exc:
@@ -115,7 +118,15 @@ def parse_request(raw_header: bytes) -> tuple[str, dict[str, str]]:
             raise ValueError("WebSocket key must contain 16 bytes")
         if not headers.get("host"):
             raise ValueError("WebSocket Host is required")
-    return parts[1], headers
+    elif "sec-websocket-version" in headers:
+        raise ValueError("WebSocket version requires a WebSocket key")
+    return target.path, headers
+
+
+def tune_socket(peer: socket.socket) -> None:
+    """Set transport options before either the HTTP reply or SSH banner flows."""
+    peer.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, int(TCP_NODELAY))
+    peer.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 
 
 def client_ip(peer_ip: str, headers: dict[str, str]) -> str:
@@ -299,7 +310,7 @@ class Handler(socketserver.BaseRequestHandler):
             header, remainder = recv_headers(self.request)
             path, headers = parse_request(header)
             ws = None
-            if path == WS_PATH:
+            if "sec-websocket-key" in headers:
                 ws = WSConnection(ConnectionType.SERVER)
                 ws.receive_data(header + b"\r\n\r\n")
                 requests = list(ws.events())
@@ -312,7 +323,7 @@ class Handler(socketserver.BaseRequestHandler):
             target = socket.create_connection((TARGET_HOST, TARGET_PORT), timeout=10)
             peer_record = ssh_identity.register(target, real_ip, headers.get(gateway_identity.header_name().lower()) == "1")
             for tcp in (self.request, target):
-                tcp.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, int(TCP_NODELAY))
+                tune_socket(tcp)
             response = ws.send(AcceptConnection(subprotocol=subprotocol)) if ws else switching_protocols(headers)
             self.request.sendall(response)
             upgraded = True

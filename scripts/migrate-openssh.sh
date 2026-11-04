@@ -3,6 +3,12 @@
 set -Eeuo pipefail
 umask 077
 [[ $EUID -eq 0 ]] || { echo 'Run as root' >&2; exit 1; }
+generator_args=()
+if [[ $# -eq 1 && $1 == --legacy-crypto ]]; then
+  generator_args+=(--legacy-crypto)
+elif [[ $# -ne 0 ]]; then
+  echo 'Usage: migrate-openssh.sh [--legacy-crypto]' >&2; exit 1
+fi
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 config_dir=/etc/abdulbasit-sshd
 backup_dir="/etc/abdulbasit/backups/openssh-$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -30,8 +36,17 @@ for type in ed25519 rsa; do
     ssh-keygen -q -t "$type" -N '' -f "$key"
   fi
 done
-PYTHONPATH=/usr/local/lib/abdulbasit python3 -m ssh_backend > "$config_dir/sshd_config.candidate"
+PYTHONPATH=/usr/local/lib/abdulbasit python3 -m ssh_backend "${generator_args[@]}" > "$config_dir/sshd_config.candidate"
 /usr/sbin/sshd -t -f "$config_dir/sshd_config.candidate"
+python3 - "$config_dir/sshd_config.candidate" <<'PY'
+import subprocess, sys
+result = subprocess.run(['/usr/sbin/sshd', '-T', '-f', sys.argv[1]], check=True, text=True, capture_output=True)
+settings = dict(line.split(' ', 1) for line in result.stdout.splitlines() if ' ' in line)
+for name, value in {'maxsessions': '10', 'permittty': 'yes', 'allowtcpforwarding': 'local',
+                    'permitrootlogin': 'no', 'forcecommand': '/usr/local/lib/abdulbasit/tunnel-shell'}.items():
+    if settings.get(name) != value:
+        raise SystemExit(f'Unexpected managed SSH policy: {name}')
+PY
 was_dropbear=0
 was_openssh=0
 systemctl is-active --quiet dropbear && was_dropbear=1

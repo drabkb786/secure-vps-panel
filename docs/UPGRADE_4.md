@@ -179,7 +179,11 @@ python3 scripts/tune-network.py apply
 python3 scripts/tune-network.py rollback
 ```
 
-No unconditional socket-buffer inflation, TCPMSS firewall rewrite, catch-all SNI,
+Optional tagged TCPMSS rules are available with `apply --mss-clamp` (BBR plus MSS)
+or `apply --mss-only`. They persist through a managed boot service and can be
+rolled back without flushing other firewall rules. See [SSH compatibility](SSH_COMPATIBILITY.md).
+
+No unconditional socket-buffer inflation, automatic TCPMSS rewrite, catch-all SNI,
 malformed multi-request acceptance or certificate bypass is applied. Diagnose a
 specific path first. Compare direct and CDN connections using the same client,
 region, cipher, payload and time window, and measure a long transfer plus idle
