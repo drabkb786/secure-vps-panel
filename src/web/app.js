@@ -382,7 +382,11 @@ function openUsage(type, row) {
 $('profile-search').addEventListener('input', renderProfiles); $('profile-filter').addEventListener('change', renderProfiles);
 bindForm('usage-form', async data => {
   const target = usageTarget;
-  if (target.type === 'ssh') { await command('set_quota', {username: target.name, quota_gb: data.get('quota') || 'Unlimited', quota_unit: data.get('unit') || 'GB', max_sessions: Number(data.get('sessions')), max_ips: Number(data.get('ips'))}, 'SSH limits updated'); }
+  if (target.type === 'ssh') {
+    const params = {username: target.name, max_sessions: Number(data.get('sessions')), max_ips: Number(data.get('ips'))};
+    if ($('usage-quota').disabled) await command('set_sessions', params, 'SSH IP/session limits updated; existing quota preserved');
+    else await command('set_quota', {...params, quota_gb: data.get('quota') || 'Unlimited', quota_unit: data.get('unit') || 'GB'}, 'SSH limits updated');
+  }
   else await command('xray_update', {name: target.name, action: 'limits', quota_gb: data.get('quota'), quota_unit: data.get('unit'), max_ips: Number(data.get('ips'))}, 'Limits updated');
   $('usage-dialog').close();
 });

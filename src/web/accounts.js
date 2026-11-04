@@ -34,7 +34,7 @@ function accountDetail(kind, name) {
   if (!result.connections.length) emptyRow(body, 7, 'No authenticated IPs recorded for this account.');
   result.connections.forEach(ip => {
     const row = element('tr'), identity = element('td', 'mono');
-    identity.append(element('strong', '', ip.ip === 'unknown' ? 'Unknown / SlowDNS' : ip.ip), element('div', 'small muted', ip.online ? 'Connected now' : ip.last_seen ? 'Last seen ' + new Date(ip.last_seen).toLocaleString() : 'Offline / policy entry'));
+    identity.append(element('strong', '', ip.ip === 'unknown' ? 'Unknown / unavailable source' : ip.ip), element('div', 'small muted', ip.online ? 'Connected now' : ip.last_seen ? 'Last seen ' + new Date(ip.last_seen).toLocaleString() : 'Offline / policy entry'));
     row.append(identity, accountByteCell(ip, 'upload_bytes', ip.usage_available), accountByteCell(ip, 'download_bytes', ip.usage_available), accountByteCell({...ip, quota_gb: null}, 'used_bytes', ip.usage_available));
     const access = element('td'); access.append(pill(ip.blocked ? 'Blocked' : 'Allowed', ip.blocked ? 'warn' : 'good'));
     const protocols = element('td'); protocols.append(tags(ip.protocols)); const action = element('td');
@@ -61,7 +61,7 @@ function accountDetail(kind, name) {
   form.append(input, submit); form.addEventListener('submit', event => {
     event.preventDefault(); busy(submit, async () => {
       await command('account_ip_set', {kind, name, ip: input.value.trim(), blocked: true}, 'Account IP policy saved');
-      ipDrafts.delete(key); await fetchAccountDetails(kind, name, expandedAccounts.get(key));
+      ipDrafts.delete(key); input.blur(); await fetchAccountDetails(kind, name, expandedAccounts.get(key));
     });
   }); box.append(form, element('p', 'small muted', 'Block/Allow applies to this account only. IPs are network sources; shared Wi-Fi can use one IP.'));
   return box;

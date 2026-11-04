@@ -1,5 +1,8 @@
 """Usage continuity, per-account IP isolation and server-side quota enforcement."""
 import json
+import os
+import time
+from pathlib import Path
 from datetime import date, timedelta
 from types import SimpleNamespace
 
@@ -83,6 +86,39 @@ def test_ssh_real_quota_rejects_missing_meter_and_disconnects_exhausted_account(
     monkeypatch.setattr(session_enforcer, "terminate", lambda pids, uid: calls.append(pids))
     session_enforcer.enforce_once()
     assert calls == [[11]]
+
+
+def test_finite_ssh_quota_cannot_be_bypassed_through_an_unmetered_listener(ssh_account, monkeypatch):
+    ssh_account.update(quota_gb=1, quota_unit="GB", quota_enforced=True, max_ips=0)
+    atomic_write_json(paneld.user_file("basit"), ssh_account)
+    monkeypatch.setattr(ssh_meter, "available", lambda: True)
+    monkeypatch.setattr(session_enforcer, "dropbear_pids_by_uid", lambda: {1001: [22]})
+    monkeypatch.setattr(session_enforcer.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=1001))
+    tick = [10.0]
+    monkeypatch.setattr(session_enforcer.time, "monotonic", lambda: tick[0])
+    session_enforcer._METER_WAIT.clear()
+    calls = []
+    monkeypatch.setattr(session_enforcer, "terminate", lambda pids, uid: calls.append(pids))
+    session_enforcer.enforce_once()
+    assert calls == []
+    tick[0] = 18.0
+    session_enforcer.enforce_once()
+    assert calls == [[22]]
+
+
+def test_meter_coverage_rejects_reused_pid_and_stale_reports(ssh_account):
+    boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    try:
+        ticks = Path('/proc', str(os.getpid()), 'stat').read_text().rsplit(')', 1)[1].split()[19]
+    except OSError:
+        pytest.skip('Host /proc does not expose the execution process namespace')
+    token = f'{boot}:{os.getpid()}:{ticks}'
+    data = {'sessions': {token: {'identity': 'account', 'reported_at': time.time()}}}
+    assert ssh_meter.coverage(data) == {'account': {os.getpid()}}
+    data['sessions'][token]['reported_at'] -= 30
+    assert ssh_meter.coverage(data) == {}
+    data['sessions'] = {token + '1': {'identity': 'account', 'reported_at': time.time()}}
+    assert ssh_meter.coverage(data) == {}
 
 
 def test_xray_ip_counters_are_not_double_counted_or_inherited(manager):

@@ -77,6 +77,9 @@ builds, rather than represented as official upstream binaries.
   OpenSSH and old Dropbear remain compatible with unlimited SSH accounts but do
   not gain fictional byte counters. Old quota notes remain unenforced until
   the owner explicitly saves a new metered quota.
+- A capped SSH account must report counters for each verified live process.
+  Unmetered sessions, including access through another SSH listener, are
+  terminated after a short startup grace instead of bypassing the quota.
 - GB = 1,000,000,000 bytes; GiB = 1,073,741,824 bytes. The API includes exact
   decimal byte strings. Quota/IP enforcement targets five-second checks plus
   processing time and can overshoot; it is not a packet-level hard cutoff.

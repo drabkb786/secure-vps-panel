@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
+import math
 import os
 import pwd
 import socket
@@ -68,6 +69,9 @@ def state():
     for row in list(data["accounts"].values()) + list(data["sessions"].values()):
         if not isinstance(row, dict):
             raise RuntimeError("Invalid SSH ledger entry")
+        reported = row.get("reported_at", 0)
+        if type(reported) not in (int, float) or not math.isfinite(reported) or reported < 0:
+            raise RuntimeError("Invalid SSH meter timestamp")
         for field in FIELDS:
             value = row.get(field, 0)
             if type(value) is not int or not 0 <= value < 2**63:
@@ -144,6 +148,7 @@ class Ledger:
             ip[key] = ip.get(key, 0) + value
         ip["last_seen"] = now()
         self.data["sessions"][token] = {"identity": identity, "upload_bytes": up, "download_bytes": down}
+        self.data["sessions"][token]["reported_at"] = time.time()
         self.dirty = True
 
     def reset(self, account):
@@ -280,6 +285,24 @@ def reset(username):
         peer.sendall(("RESET " + name + "\n").encode())
         if peer.recv(32) != b"OK\n":
             raise RuntimeError("SSH meter did not confirm the reset")
+
+
+def coverage(data):
+    """Live kernel process identities with a recent authenticated meter report."""
+    result = {}
+    boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    current = time.time()
+    for token, row in data["sessions"].items():
+        try:
+            token_boot, pid, ticks = token.split(":")
+            if token_boot != boot or not 0 <= current - row.get("reported_at", 0) < 12:
+                continue
+            actual = Path("/proc", pid, "stat").read_text().rsplit(")", 1)[1].split()[19]
+            if actual == ticks:
+                result.setdefault(row["identity"], set()).add(int(pid))
+        except (ValueError, KeyError, OSError, IndexError, TypeError):
+            continue
+    return result
 
 
 def main():

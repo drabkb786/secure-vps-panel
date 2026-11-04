@@ -700,10 +700,18 @@ def dashboard_status(params: dict[str, Any]) -> dict[str, Any]:
     for line in Path("/proc/meminfo").read_text().splitlines():
         key, value = line.split(":", 1)
         mem[key] = int(value.strip().split()[0]) * 1024
-    return {**service_status(params), **XRAY.status(params), **list_users(params), **list_sessions(params),
-            "slowdns": SLOWDNS.status({}), "bunny": BUNNY.status(), "cloudfront": CLOUDFRONT.status(), "traffic": {"sampled_at": xray_manager.traffic.state().get("sampled_at"), "scope": "Authenticated Xray and SSH channel payload bytes", "sample_interval_seconds": 5,
-                "ssh_available": ssh_meter.available(), "ssh_sampled_at": ssh_meter.state().get("sampled_at"),
-                "ip_meter_available": xray_manager.traffic.state().get("ip_meter_available", False)},
+    users, sessions = list_users(params), list_sessions(params)
+    ssh_state, xray_state = ssh_meter.state(), xray_manager.traffic.state()
+    covered = ssh_meter.coverage(ssh_state)
+    processes = {row["username"]: set(row["pids"]) for row in sessions["sessions"]}
+    for row in users["users"]:
+        if processes.get(row["username"], set()) - covered.get(account_policy.ssh_id(row), set()):
+            row["usage_available"] = False
+            row["usage_note"] = "One or more live SSH sessions have not reported authenticated payload counters"
+    return {**service_status(params), **XRAY.status(params), **users, **sessions,
+            "slowdns": SLOWDNS.status({}), "bunny": BUNNY.status(), "cloudfront": CLOUDFRONT.status(), "traffic": {"sampled_at": xray_state.get("sampled_at"), "scope": "Authenticated Xray and metered Dropbear channel payload bytes", "sample_interval_seconds": 5,
+                "ssh_available": ssh_meter.available(), "ssh_sampled_at": ssh_state.get("sampled_at"),
+                "ip_meter_available": xray_state.get("ip_meter_available", False)},
             "system": {"hostname": socket.gethostname(), "load": list(os.getloadavg()),
                        "cpu_count": os.cpu_count(), "uptime_seconds": float(Path("/proc/uptime").read_text().split()[0]),
                        "disk_total": stat.total, "disk_used": stat.used,

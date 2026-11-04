@@ -73,7 +73,7 @@ def test_real_xray_per_ip_bytes_and_account_scoped_block(tmp_path, monkeypatch):
         transfer(other, "127.0.0.4", 8192)  # Same address, another account is allowed.
         time.sleep(.1)
         response = subprocess.run([METER_CORE, "api", "statsquery", "--server=unix://" + str(api), "-pattern=user>>>"], capture_output=True, text=True, check=True, timeout=5)
-        counters = {s["name"]: int(s["value"]) for s in json.loads(response.stdout)["stat"]}
+        counters = {s["name"]: int(s.get("value", 0)) for s in json.loads(response.stdout)["stat"]}
         email = f"{first['uuid']}-vless@noway.local"
         for address, size in (("127.0.0.2", 65536), ("127.0.0.3", 131072)):
             for direction in ("uplink", "downlink"):
@@ -143,16 +143,18 @@ def test_real_dropbear_authenticated_payload_and_ip_policy(tmp_path, monkeypatch
         assert (totals["upload_bytes"], totals["download_bytes"]) == (len(payload), len(payload))
         assert totals["ips"][address]["upload_bytes"] == len(payload)
         row["blocked_ips"] = [address]; atomic_write_json(directory / (name + ".json"), row)
-        denied = connect()
+        denied = None
         try:
             try:
+                denied = connect()
                 forwarded = denied.open_channel("direct-tcpip", echo.server_address, ("127.0.0.1", 1), timeout=3)
                 forwarded.sendall(b"blocked")
                 assert forwarded.recv(7) != b"blocked", "Blocked account IP forwarded application data"
             except (paramiko.SSHException, EOFError, OSError):
                 pass
         finally:
-            denied.close()
+            if denied:
+                denied.close()
     finally:
         if process:
             process.terminate(); process.wait(timeout=5)

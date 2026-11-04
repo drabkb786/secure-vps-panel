@@ -16,6 +16,7 @@ bash "$project_dir/scripts/migrate-dropbear-haproxy.sh"
 systemctl restart abdulbasit-ssh-meter dropbear
 if [[ -x "$app_dir/xray" ]]; then
   if ! "$app_dir/xray" version | grep -q 'noway-ip-meter-v1'; then
+    install -d -m 0700 /var/cache/abdulbasit /etc/abdulbasit/backups
     build_dir="$(mktemp -d /var/cache/abdulbasit/xray-meter.XXXXXXXX)"
     echo "Building metered Xray from pinned upstream source. Log: $build_dir/build.log"
     bash "$project_dir/scripts/build-xray-meter.sh" "$build_dir" > "$build_dir/build.log" 2>&1 &
@@ -27,7 +28,7 @@ if [[ -x "$app_dir/xray" ]]; then
     done
     if ! wait "$build_pid"; then tail -n 30 "$build_dir/build.log" >&2; exit 1; fi
     trap - INT TERM
-    "$build_dir/xray" run -test -config /etc/abdulbasit-xray/config.json
+    if [[ -f /etc/abdulbasit-xray/config.json ]]; then "$build_dir/xray" run -test -config /etc/abdulbasit-xray/config.json; fi
     "$app_dir/panelctl.py" traffic
     backup="/etc/abdulbasit/backups/xray-before-meter-$(date -u +%Y%m%dT%H%M%SZ)-$$"
     cp -a "$app_dir/xray" "$backup"

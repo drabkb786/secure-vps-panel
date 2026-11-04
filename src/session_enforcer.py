@@ -22,6 +22,7 @@ from account_policy import blocked_ips, ssh_id, ssh_quota_bytes
 
 LOG = logging.getLogger("abdulbasit-session-enforcer")
 INTERVAL = 5
+_METER_WAIT = {}
 
 
 def dropbear_pids_by_uid() -> dict[int, list[int]]:
@@ -42,7 +43,11 @@ def enforce_once() -> None:
     try:
         ledger = ssh_meter.state()
     except RuntimeError:
-        ledger, meter_ready = {"accounts": {}}, False
+        ledger, meter_ready = {"accounts": {}, "sessions": {}}, False
+    measured = ssh_meter.coverage(ledger)
+    live_keys = {(uid, pid) for uid, pids in by_uid.items() for pid in pids}
+    for key in set(_METER_WAIT) - live_keys:
+        _METER_WAIT.pop(key, None)
     # One kernel socket snapshot per cycle, separate from authenticated identity.
     ips = None  # Most SSH/SlowDNS accounts have no IP cap; skip unused FD scans.
     today = date.today()
@@ -81,6 +86,14 @@ def enforce_once() -> None:
             limit = 1
         limit = min(max(limit, 1), 20)
         excess = pids[limit:]
+        if quota is not None:
+            covered = measured.get(ssh_id(data), set())
+            for pid in pids:
+                key = uid, pid
+                if pid in covered:
+                    _METER_WAIT.pop(key, None)
+                elif time.monotonic() - _METER_WAIT.setdefault(key, time.monotonic()) >= 7:
+                    excess.append(pid)
         try:
             from common import validate_max_ips
             ip_limit = validate_max_ips(data.get("max_ips", 0))
