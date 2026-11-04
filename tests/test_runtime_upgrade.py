@@ -145,3 +145,63 @@ def test_activation_can_be_rolled_back_to_package_commands_when_no_private_runti
     runtime.restore(backup, state)
     assert not (paths['ROOT'] / 'current').is_symlink()
     assert all(not path.exists() for path in runtime.managed_files())
+
+
+def test_source_build_uses_native_compiler_despite_poisoned_login_environment(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    for name, value in {'PATH': '/not-a-toolchain', 'CC': '/missing/compiler', 'CXX': '/missing/cxx',
+                        'CROSS_COMPILE': 'missing-cross-', 'CFLAGS': '-invalid-login-flag',
+                        'CPPFLAGS': '-invalid-preprocessor-flag', 'LDFLAGS': '-invalid-linker-flag',
+                        'LD_LIBRARY_PATH': '/foreign-libraries', 'CONFIG_SITE': '/foreign-config',
+                        'MAKEFLAGS': '--invalid-make-flag'}.items():
+        monkeypatch.setenv(name, value)
+    inherited = dict(os.environ)
+    observed = []
+    def execute(args, **kwargs):
+        observed.append(kwargs['env'])
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(runtime.subprocess, 'run', execute)
+    runtime.build_run(['./config'], tmp_path, tmp_path / 'build.log')
+    environment = observed[0]
+    assert environment['CC'] == '/usr/bin/gcc' and environment['CXX'] == '/usr/bin/g++'
+    assert environment['PATH'] == '/usr/sbin:/usr/bin:/sbin:/bin'
+    assert environment['CONFIG_SITE'] == '/dev/null'
+    for name in ('CROSS_COMPILE', 'CFLAGS', 'CPPFLAGS', 'LDFLAGS', 'LD_LIBRARY_PATH', 'MAKEFLAGS'):
+        assert name not in environment
+    assert dict(os.environ) == inherited, 'Build sanitization must not alter caller/service environment'
+
+
+@pytest.mark.skipif(not (Path('/usr/bin/gcc').is_file() and Path('/usr/bin/g++').is_file()),
+                    reason='Requires distribution C and C++ compilers')
+def test_native_compiler_probe_links_and_executes_with_bad_inherited_flags(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, 'ROOT', tmp_path)
+    monkeypatch.setenv('CC', '/missing/compiler')
+    monkeypatch.setenv('CROSS_COMPILE', 'missing-cross-')
+    monkeypatch.setenv('CFLAGS', '-not-a-valid-compiler-option')
+    monkeypatch.setenv('LDFLAGS', '-not-a-valid-linker-option')
+    runtime.verify_toolchain()
+    assert not list(tmp_path.glob('.compiler-check-*')), 'Compiler probes must clean up their temporary binaries'
+
+
+def test_missing_or_broken_compiler_fails_before_any_source_build(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, 'STATE', tmp_path)
+    monkeypatch.setattr(runtime, 'preflight', lambda: None)
+    monkeypatch.setattr(runtime, 'run', lambda *args, **kwargs: '')
+    monkeypatch.setattr(runtime.sys, 'argv', ['upgrade-runtime.py', '--apply'])
+    def broken():
+        raise RuntimeError('Native C/C++ compiler check failed before downloads/activation')
+    monkeypatch.setattr(runtime, 'verify_toolchain', broken)
+    monkeypatch.setattr(runtime, 'build', lambda *a: pytest.fail('No downloads or builds after failed compiler probe'))
+    monkeypatch.setattr(runtime, 'activate', lambda *a: pytest.fail('No activation after failed compiler probe'))
+    with pytest.raises(RuntimeError, match='compiler check failed'):
+        runtime.main()
+
+
+def test_compiler_failure_reports_the_actual_problem_and_repair_command(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, 'ROOT', tmp_path)
+    def failure(args, **kwargs):
+        raise RuntimeError('gcc: cannot find crt1.o')
+    monkeypatch.setattr(runtime, 'run', failure)
+    with pytest.raises(RuntimeError, match='gcc: cannot find crt1.o.*apt-get install --reinstall'):
+        runtime.verify_toolchain()
+    assert not list(tmp_path.glob('.compiler-check-*'))

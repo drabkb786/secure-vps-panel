@@ -49,6 +49,29 @@ The installer needs updated system Python with `tarfile.data_filter`. Full nativ
 acceptance is exercised on Ubuntu 24.04; older OS releases may need additional
 build dependencies or updated Python before this optional operation can run.
 
+## Compiler detection and retry
+
+The runtime builder uses the distribution `/usr/bin/gcc` and `/usr/bin/g++` with
+an explicit system PATH. Source builds ignore inherited cross-compiler prefixes,
+compiler/linker flags and foreign library/config paths. A C and C++ compile,
+link and execution probe runs before source downloads or activation. This catches
+missing compilers, development headers, linker failures and execution restrictions
+with their actual error, instead of only OpenSSL's generic detection failure.
+
+After an interrupted/failed build, update the repository and retry only the runtime:
+
+```sh
+cd /root/secure-vps-panel &&
+git pull --ff-only origin main &&
+/usr/bin/python3 scripts/upgrade-runtime.py --apply --jobs 2
+```
+
+Verified downloads are reused. An incomplete build remains available for inspection
+and a fresh build directory is used; the previously active runtime stays in place
+until the candidate finishes verification. If the native compiler probe still
+fails, its error includes the distribution toolchain repair command. A failed
+compile/link/run probe must be resolved before continuing.
+
 ## Integrity, configuration and recovery
 
 `RUNTIME_VERSIONS.json` records official URLs, exact versions and independently
@@ -58,7 +81,9 @@ is saved in `python-packages.txt`. This is not a hash lock of every transitive
 dependency, so future builds can resolve newer compatible dependencies.
 
 Each build has an immutable directory under `/opt/noway/runtime/releases/`.
-Failed work and build logs are retained under `/var/lib/noway-runtime/`. The
+Failed source builds and their logs stay beside the release under
+`/opt/noway/runtime/releases/`; downloads and recovery state are retained under
+`/var/lib/noway-runtime/`. The
 current symlink changes only after version/linkage checks, panel imports, Nginx
 config validation and Fail2ban jail validation. Incompatible third-party Nginx
 dynamic modules block activation; they are never silently removed.

@@ -110,7 +110,8 @@ jobs:
           sudo chmod 0755 /opt
           sudo install -d -o root -g root -m 0755 /opt/noway /opt/noway/runtime
           sudo stat -c '%U:%G %a %n' /opt /opt/noway /opt/noway/runtime
-          sudo /usr/bin/python3 scripts/upgrade-runtime.py --apply --jobs 2
+          # Reproduce VPS compiler autodetection failures from inherited build variables.
+          sudo env CC=/missing/login-compiler CXX=/missing/login-cxx CROSS_COMPILE=missing-cross- CFLAGS=-invalid-login-flag LDFLAGS=-invalid-login-flag /usr/bin/python3 scripts/upgrade-runtime.py --apply --jobs 2
       - name: Prepare Python 3.15 test environment outside the production runtime
         run: |
           /opt/noway/runtime/current/bin/python3 -m venv "$RUNNER_TEMP/runtime-qa"
