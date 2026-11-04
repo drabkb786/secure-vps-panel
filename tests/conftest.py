@@ -8,6 +8,7 @@ import xray_manager as xray
 import traffic
 import gateway_identity
 import ssh_identity
+from reality_transport import vless_encryption
 from types import SimpleNamespace
 
 
@@ -21,6 +22,7 @@ def private_gateway(tmp_path, monkeypatch):
 
 @pytest.fixture
 def manager(tmp_path, monkeypatch):
+    monkeypatch.setattr(vless_encryption, 'KEY_FILE', tmp_path / 'vless-keys.json')
     monkeypatch.setattr(traffic, "STATE_FILE", tmp_path / "traffic.json")
     for attr, value in {"SETTINGS_FILE": tmp_path / "network.json", "BACKUP_DIR": tmp_path / "backups", "ACCOUNTS_FILE": tmp_path / "accounts.json",
                         "CONFIG_DIR": tmp_path / "xray", "CONFIG_FILE": tmp_path / "xray/config.json",
@@ -36,6 +38,8 @@ def manager(tmp_path, monkeypatch):
     calls = []
     def run(args, **kwargs):
         calls.append(args)
+        if args[-1] == 'vlessenc':
+            return SimpleNamespace(stdout='"decryption": "mlkem768x25519plus.native.600s.' + 'a' * 43 + '"\n"encryption": "mlkem768x25519plus.native.0rtt.' + 'b' * 43 + '"\n')
         if "--property=InvocationID" in args:
             return SimpleNamespace(stdout="1" * 32)
     obj = xray.Manager(run, health_probe=lambda: True)

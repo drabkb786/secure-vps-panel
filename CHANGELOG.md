@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.4.1 — Modern Xray-compatible non-TLS VLESS
+
+- Real-core validation found that the pinned Xray refuses unencrypted VLESS
+  client configurations for public hosts. Generate a matching pair with official
+  `xray vlessenc` and use a separate loopback VLESS Encryption listener on 10005.
+- Preserve existing TLS UUIDs/profiles and aggregate non-TLS usage under the
+  same VLESS account identity. Never export the server decryption identity.
+- Export the non-TLS URI/JSON for compatible Xray clients; keep sing-box/Mihomo
+  exports on supported TLS profiles rather than emitting incompatible entries.
+
 ## 4.4.0 — Explicit dual transports and client-side SSH probes
 
 - Add opt-in direct VLESS WS on port 80 alongside verified TLS on 443. Preserve

@@ -29,12 +29,19 @@ def test_non_tls_is_additional_and_reuses_the_same_vless_account(manager):
     config = json.loads(data['files']['dual-vless-non-tls.json'])['outbounds'][0]
     assert config['settings']['vnext'][0]['port'] == 80
     assert config['streamSettings']['security'] == 'none' and 'tlsSettings' not in config['streamSettings']
-    assert any('no transport encryption' in s for s in data['readiness']['warnings'])
+    encryption = xray.vless_encryption.keys()['encryption']
+    assert query['encryption'] == [encryption]
+    assert config['settings']['vnext'][0]['users'][0]['encryption'] == encryption
+    assert any('compatible Xray client' in s for s in data['readiness']['warnings'])
+    server = json.loads(xray.CONFIG_FILE.read_text())
+    extra = next(i for i in server['inbounds'] if i['port'] == 10005)
+    assert extra['listen'] == '127.0.0.1' and extra['settings']['decryption'] == xray.vless_encryption.keys()['decryption']
+    assert next(i for i in server['inbounds'] if i['port'] == 10001)['settings']['decryption'] == 'none'
+    assert 'decryption' not in json.dumps(manager.status({}))
     box = json.loads(data['files']['dual-singbox.json'])
-    plain_box = next(p for p in box['outbounds'] if p.get('server_port') == 80)
-    assert plain_box['uuid'] == row['uuid'] and 'tls' not in plain_box
+    assert all(p.get('server_port', 443) == 443 for p in box['outbounds'])
     clash = json.loads(data['files']['dual-clash.yaml'])
-    assert next(p for p in clash['proxies'] if p['port'] == 80)['tls'] is False
+    assert all(p['port'] == 443 and p['tls'] is True for p in clash['proxies'])
     manager.configure({'enabled': True, 'vless_non_tls_enabled': False})
     assert 'vless-non-tls' not in manager.export({'name': 'dual'})['links']
     assert xray.accounts()[0]['uuid'] == row['uuid']
@@ -61,7 +68,7 @@ def test_nginx_non_tls_switch_keeps_other_protocols_and_cdn_tls_only(manager, fl
     manager.configure({'enabled': True, 'vless_non_tls_enabled': flag})
     http = paneld.nginx_text('vpn.example.com', False)
     if flag:
-        assert 'proxy_pass http://127.0.0.1:10001' + xray.gateway_identity.backend_path('vless') + ';' in http
+        assert 'proxy_pass http://127.0.0.1:10005' + xray.gateway_identity.backend_path('vless') + ';' in http
     else:
         assert 'location = /vless { return 403; }' in http
     assert 'location = /vmess { return 403; }' in http and 'location = /trojan { return 403; }' in http
@@ -89,6 +96,27 @@ def test_backup_restore_preserves_the_transport_switch_and_reloads_gateway(manag
     manager.gateway_apply = lambda: observed.append(xray.settings()['vless_non_tls_enabled'])
     manager.backup_restore({'backup': backup})
     assert xray.settings()['vless_non_tls_enabled'] is True and observed == [True]
+
+
+def test_non_tls_identity_is_private_preserved_and_never_exported(manager):
+    manager.configure({'enabled': True, 'vless_non_tls_enabled': True})
+    key_file = xray.vless_encryption.KEY_FILE
+    original = key_file.read_bytes()
+    manager.configure({'enabled': True, 'vless_non_tls_enabled': True})
+    manager.create({'name': 'identity', 'days': 7})
+    assert key_file.read_bytes() == original and key_file.stat().st_mode & 0o777 == 0o600
+    assert len([c for c in manager.calls if c[-1] == 'vlessenc']) == 1
+    exported = manager.export({'name': 'identity'})
+    assert xray.vless_encryption.keys()['decryption'] not in json.dumps(exported)
+
+
+def test_malformed_key_generation_does_not_save_an_identity(manager):
+    from types import SimpleNamespace
+    manager.run = lambda *a, **kw: SimpleNamespace(stdout='unexpected output')
+    with pytest.raises(RuntimeError, match='no identity was saved'):
+        manager.configure({'enabled': True, 'vless_non_tls_enabled': True})
+    assert not xray.vless_encryption.KEY_FILE.exists()
+    assert xray.settings()['vless_non_tls_enabled'] is False
 
 
 def test_plain_switch_is_typed_and_exposed_in_cli(manager):

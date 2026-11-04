@@ -27,13 +27,12 @@ def test_client_exports_have_matching_credentials_tls_and_loopback_listener(mana
 
 
 @pytest.mark.parametrize("kind,environment", [("singbox", "SINGBOX_TEST_BINARY"), ("clash", "MIHOMO_TEST_BINARY")])
-@pytest.mark.parametrize("include_non_tls", [False, True])
-def test_export_accepted_by_native_client_binary(manager, tmp_path, kind, environment, include_non_tls):
+def test_export_accepted_by_native_client_binary(manager, tmp_path, kind, environment):
     binary = os.environ.get(environment)
     if not binary: pytest.skip(f"{environment} is not set")
     manager.configure({"enabled": True}); manager.create({"name": "native", "days": 7})
     row = xray.accounts()[0]
-    config = (singbox_config if kind == "singbox" else clash_config)(row, "vpn.example.com", include_non_tls=include_non_tls)
+    config = (singbox_config if kind == "singbox" else clash_config)(row, "vpn.example.com")
     path = tmp_path / ("client.json" if kind == "singbox" else "client.yaml")
     path.write_text(json.dumps(config))
     command = [binary, "check", "-c", str(path)] if kind == "singbox" else [binary, "-t", "-f", str(path), "-d", str(tmp_path)]

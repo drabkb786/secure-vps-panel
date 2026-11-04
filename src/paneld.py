@@ -401,6 +401,8 @@ def nginx_text(domain: str, tls: bool) -> str:
             blocks += "    location ^~ /xhttp/ { return 403; }\n"
         for protocol, (port, path) in xray_manager.PROTOCOLS.items():
             if secure or (protocol == "vless" and network.get("enabled") and network.get("vless_non_tls_enabled")):
+                if not secure:
+                    port = xray_manager.vless_encryption.PORT
                 blocks += f"""
     location = {path} {{
         proxy_pass http://127.0.0.1:{port};
@@ -458,6 +460,7 @@ def nginx_text(domain: str, tls: bool) -> str:
 """
         for protocol, (port, _) in {**xray_manager.PROTOCOLS, "xhttp": (10004, "/xhttp/")}.items():
             blocks = blocks.replace(f"proxy_pass http://127.0.0.1:{port};", f"proxy_pass http://127.0.0.1:{port}{gateway_identity.backend_path(protocol)};")
+        blocks = blocks.replace("proxy_pass http://127.0.0.1:10005;", f"proxy_pass http://127.0.0.1:10005{gateway_identity.backend_path('vless')};")
         return blocks + cdn_manager.nginx_locations(cdn, secure) + bunny_manager.nginx_locations(bunny, secure)
 
     def server(secure: bool) -> str:

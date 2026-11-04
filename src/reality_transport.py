@@ -1,4 +1,4 @@
-"""Opt-in direct VLESS REALITY using the node's own TLS origin as fallback."""
+"""Private identities for opt-in VLESS REALITY and non-TLS VLESS Encryption."""
 import re
 import secrets
 from urllib.parse import urlencode, quote
@@ -7,12 +7,47 @@ from common import BASE_DIR, ValidationError, atomic_write_json, read_json, vali
 KEY_FILE = BASE_DIR / "reality-keys.json"
 
 
+class vless_encryption:
+    """Use the pinned core's matching X25519 VLESS Encryption pair."""
+    KEY_FILE = BASE_DIR / 'vless-non-tls-keys.json'
+    PORT = 10005
+    SERVER = r'mlkem768x25519plus\.native\.600s\.[A-Za-z0-9_-]{43}'
+    CLIENT = r'mlkem768x25519plus\.native\.0rtt\.[A-Za-z0-9_-]{43}'
+
+    @classmethod
+    def keys(cls):
+        if cls.KEY_FILE.is_symlink():
+            raise ValidationError('Symlinked VLESS Encryption identity is not allowed')
+        data = read_json(cls.KEY_FILE, {})
+        if (not isinstance(data, dict) or not re.fullmatch(cls.SERVER, str(data.get('decryption', '')))
+                or not re.fullmatch(cls.CLIENT, str(data.get('encryption', '')))):
+            raise ValidationError('VLESS Encryption identity missing/invalid; enable the non-TLS route first')
+        return data
+
+    @classmethod
+    def initialize(cls, run, binary):
+        if cls.KEY_FILE.is_symlink() or cls.KEY_FILE.parent.is_symlink():
+            raise ValidationError('Unsafe VLESS Encryption identity path')
+        if cls.KEY_FILE.exists():
+            cls.keys()
+            return
+        output = run([str(binary), 'vlessenc'], timeout=10).stdout
+        # Upstream prints distinct X25519 and ML-KEM authentication pairs.
+        # Select the complete X25519 pair; never mix the two methods.
+        server = re.findall(r'"decryption":\s*"(' + cls.SERVER + r')"', output)
+        client = re.findall(r'"encryption":\s*"(' + cls.CLIENT + r')"', output)
+        if len(server) != 1 or len(client) != 1:
+            raise RuntimeError('Unexpected official Xray vlessenc output; no identity was saved')
+        atomic_write_json(cls.KEY_FILE, {'decryption': server[0], 'encryption': client[0]})
+        cls.keys()
+
+
 def port(value):
     try:
         value = int(str(value))
     except (ValueError, TypeError):
         raise ValidationError("REALITY port must be an integer")
-    if not 1024 <= value <= 65535 or value in {2082, 9090, 10001, 10002, 10003, 10004}:
+    if not 1024 <= value <= 65535 or value in {2082, 9090, 10001, 10002, 10003, 10004, 10005}:
         raise ValidationError("Choose a free public port >=1024, excluding internal listeners")
     return value
 

@@ -30,6 +30,7 @@ import traffic
 import gateway_identity
 import xray_runtime
 import reality_transport
+from reality_transport import vless_encryption
 
 from common import (BASE_DIR, DOMAIN_FILE, ValidationError, atomic_write,
                     atomic_write_json, calculate_expiry, read_json, read_text,
@@ -149,6 +150,14 @@ def server_config(config: dict, rows: list[dict]) -> dict:
             "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": gateway_identity.backend_path(protocol)},
                                "sockopt": {"trustedXForwardedFor": [gateway_identity.header_name()]}},
         })
+    if config.get("vless_non_tls_enabled"):
+        # Preserve existing TLS/UUID profiles on 10001. The public HTTP route
+        # uses a distinct encrypted VLESS listener with the same usage identity.
+        import copy
+        plain = copy.deepcopy(inbounds[0])
+        plain.update(tag="noway-vless-non-tls", port=vless_encryption.PORT)
+        plain["settings"]["decryption"] = vless_encryption.keys()["decryption"]
+        inbounds.append(plain)
     if config.get("xhttp_enabled"):
         clients = [{"id": row["uuid"], "email": f"{row['uuid']}-xhttp@noway.local"} for row in rows if active(row) and "vless" in row["protocols"]]
         inbounds.append({"tag": "noway-xhttp", "listen": "127.0.0.1", "port": XHTTP_PORT,
@@ -190,6 +199,8 @@ def client_config(protocol: str, row: dict, domain: str, dns: dict, prefix: str 
     _, path = PROTOCOLS[protocol]
     path = prefix + path
     credential = {"password": row["trojan_password"]} if protocol == "trojan" else {"id": row["uuid"], "encryption": "none"} if protocol == "vless" else {"id": row["uuid"], "security": "auto", "alterId": 0}
+    if plain:
+        credential["encryption"] = vless_encryption.keys()["encryption"]
     proxy_settings = {"servers": [{"address": domain, "port": 443, **credential}]} if protocol == "trojan" else {"vnext": [{"address": domain, "port": 80 if plain else 443, "users": [credential]}]}
     return {
         "log": {"loglevel": "warning"},
@@ -233,7 +244,7 @@ def share_link(protocol: str, row: dict, domain: str, prefix: str = "") -> str:
     if xhttp:
         query.update({"type": "xhttp", "path": prefix + XHTTP_PATH, "mode": "packet-up", "alpn": "h2"})
     if protocol == "vless":
-        query["encryption"] = "none"
+        query["encryption"] = vless_encryption.keys()["encryption"] if plain else "none"
     return f"{protocol}://{quote(credential, safe='')}@{domain}:{80 if plain else 443}?{urlencode(query)}#{quote(label)}"
 
 
@@ -248,6 +259,8 @@ class Manager:
         try:
             self.run(["/bin/systemctl", "is-active", "--quiet", "abdulbasit-xray"], timeout=3)
             ports = [p for p, _ in PROTOCOLS.values()] + ([XHTTP_PORT] if settings().get("xhttp_enabled") else [])
+            if settings().get("vless_non_tls_enabled"):
+                ports.append(vless_encryption.PORT)
             if settings().get("reality_enabled"):
                 ports.append(settings()["reality_port"])
             for port in ports:
@@ -419,7 +432,7 @@ class Manager:
         cfg = settings()
         endpoints = [{"protocol": p, "port": 443, "path": v[1], "transport": "ws+tls"} for p, v in PROTOCOLS.items()]
         if cfg.get("vless_non_tls_enabled"):
-            endpoints.append({"protocol": "vless-non-tls", "port": 80, "path": "/vless", "transport": "ws", "encrypted": False})
+            endpoints.append({"protocol": "vless-non-tls", "port": 80, "path": "/vless", "transport": "ws+vless-encryption", "encrypted": True})
         if cfg.get("xhttp_enabled"):
             endpoints.append({"protocol": "vless-xhttp", "port": 443, "path": XHTTP_PATH, "transport": "xhttp+tls"})
         if cfg.get("reality_enabled"):
@@ -438,6 +451,9 @@ class Manager:
             if not isinstance(params["vless_non_tls_enabled"], bool):
                 raise ValidationError("vless_non_tls_enabled must be a boolean")
             cfg["vless_non_tls_enabled"] = params["vless_non_tls_enabled"]
+            if cfg["vless_non_tls_enabled"]:
+                self.ready()
+                vless_encryption.initialize(self.run, XRAY_BINARY)
         if "reality_enabled" in params:
             if not isinstance(params["reality_enabled"], bool):
                 raise ValidationError("reality_enabled must be boolean")
@@ -563,15 +579,14 @@ class Manager:
         links = self.profile_links(row, domain, cfg, prefix)
         text = "\n".join(links.values()) + "\n"
         files = {f"{name}-{p}.json": json.dumps(client_config(p, row, domain, cfg["dns"], prefix), indent=2) + "\n" for p in links}
-        plain = bool(cfg.get("vless_non_tls_enabled")) and not prefix
-        files[f"{name}-singbox.json"] = json.dumps(singbox_config(row, domain, prefix, include_non_tls=plain), indent=2) + "\n"
-        files[f"{name}-clash.yaml"] = json.dumps(clash_config(row, domain, prefix, include_non_tls=plain), indent=2) + "\n"
+        files[f"{name}-singbox.json"] = json.dumps(singbox_config(row, domain, prefix), indent=2) + "\n"
+        files[f"{name}-clash.yaml"] = json.dumps(clash_config(row, domain, prefix), indent=2) + "\n"
         files.update({f"{name}-{p}.txt": link + "\n" for p, link in links.items()})
         files.update({"links.txt": text, "subscription.txt": base64.b64encode(text.encode()).decode() + "\n"})
         running = self.health_probe()
         warnings = [] if running else ["The link is configured, but Xray is not currently ready. Enable/restart Xray and run diagnostics before connecting."]
         if "vless-non-tls" in links:
-            warnings.append("VLESS WS on port 80 has no transport encryption. Prefer TLS/REALITY; application HTTPS still protects its own payload.")
+            warnings.append("Non-TLS VLESS uses VLESS Encryption and needs a compatible Xray client. sing-box/Mihomo exports retain TLS profiles; they do not advertise this unsupported variant.")
         if prefix:
             warnings.append(("Bunny" if route == "bunny" else "CloudFront") + " delivery: run endpoint checks and a real client transfer; CDN deployment and speed are not verified by this export.")
         return {"name": name, "route": route, "links": links, "files": files,
@@ -624,7 +639,7 @@ class Manager:
             content = json.dumps([client_config(p, row, domain, cfg["dns"], prefix) for p in links], indent=2)
             mime = "application/json"
         elif format_name in ("clash", "singbox"):
-            content = json.dumps((clash_config if format_name == "clash" else singbox_config)(row, domain, prefix, include_non_tls=bool(cfg.get("vless_non_tls_enabled")) and not prefix), indent=2)
+            content = json.dumps((clash_config if format_name == "clash" else singbox_config)(row, domain, prefix), indent=2)
             mime = "text/yaml; charset=utf-8" if format_name == "clash" else "application/json"
         else:
             raise ValidationError("Unsupported subscription format")

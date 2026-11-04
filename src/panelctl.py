@@ -79,7 +79,7 @@ def parser() -> argparse.ArgumentParser:
         sub.add_parser(action)
     enable = sub.add_parser("xray-enable")
     enable.add_argument("--xhttp", action=argparse.BooleanOptionalAction, default=None, help="Enable/disable the additional VLESS XHTTP TLS endpoint")
-    enable.add_argument("--non-tls", action=argparse.BooleanOptionalAction, default=None, help="Also expose direct VLESS WS on port 80 without transport encryption; TLS stays enabled")
+    enable.add_argument("--non-tls", action=argparse.BooleanOptionalAction, default=None, help="Also expose direct VLESS WS + VLESS Encryption on port 80; requires a compatible Xray client, TLS stays enabled")
     profile = sub.add_parser("xray-create")
     profile.add_argument("name")
     profile.add_argument("--days", type=int, default=30)

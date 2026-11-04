@@ -19,7 +19,7 @@ done
 [[ $(cat /etc/abdulbasit/ssh-backend) == openssh ]] || { echo 'Requires an existing managed OpenSSH installation' >&2; exit 1; }
 exec 9>/run/noway-ssh-update.lock
 flock -n 9 || { echo 'Another SSH compatibility update is running' >&2; exit 1; }
-modules=(ws_proxy paneld panel_client panelctl ssh_backend cdn_manager bunny_manager diagnostics ssh_profiles ssh_ws_client xray_manager client_formats profile_backup)
+modules=(ws_proxy paneld panel_client panelctl ssh_backend cdn_manager bunny_manager diagnostics ssh_profiles ssh_ws_client xray_manager client_formats profile_backup reality_transport)
 assets=(index.html app.js)
 files=("$ssh_config" "$nginx_config")
 for module in "${modules[@]}"; do files+=("$app_dir/$module.py"); done

@@ -322,7 +322,7 @@ $('toggle-xhttp').addEventListener('click', () => busy($('toggle-xhttp'), async 
 }));
 $('toggle-non-tls').addEventListener('click', () => busy($('toggle-non-tls'), async () => {
   const enabled = !state.network.vless_non_tls_enabled;
-  if (await confirmAction(enabled ? 'Enable additional VLESS WS on port 80? This profile has no transport encryption; TLS profiles remain available.' : 'Disable VLESS non-TLS on port 80?')) await command('xray_configure', {enabled: true, vless_non_tls_enabled: enabled}, 'VLESS non-TLS updated');
+  if (await confirmAction(enabled ? 'Enable additional VLESS WS on port 80 with VLESS Encryption? A compatible Xray client is required; TLS profiles remain available.' : 'Disable VLESS non-TLS on port 80?')) await command('xray_configure', {enabled: true, vless_non_tls_enabled: enabled}, 'VLESS non-TLS updated');
 }));
 $('lookup-dns').addEventListener('click', () => busy($('lookup-dns'), async () => {
   const result = await api('command', {command: 'dns_lookup', params: {domain: $('domain-input').value.trim()}});

@@ -47,6 +47,13 @@ def record():
             "protocols": list(PROTOCOLS), "enabled": True, "expiry": (date.today() + timedelta(days=1)).isoformat()}
 
 
+def encryption_identity(tmp_path, monkeypatch):
+    from reality_transport import vless_encryption
+    monkeypatch.setattr(vless_encryption, 'KEY_FILE', tmp_path / 'vless-encryption.json')
+    run = lambda args, **kw: subprocess.run(args, check=True, capture_output=True, text=True, timeout=kw['timeout'])
+    vless_encryption.initialize(run, CORE)
+
+
 def start_core(path: Path):
     log = path.with_suffix(".log").open("w+")
     proc = subprocess.Popen([CORE, "run", "-config", str(path)], stdout=log, stderr=log)
@@ -75,13 +82,15 @@ def read_exact(sock, size):
     return data
 
 
-def test_generated_configs_accepted_by_real_xray(tmp_path):
+def test_generated_configs_accepted_by_real_xray(tmp_path, monkeypatch):
+    encryption_identity(tmp_path, monkeypatch)
     row = record()
     cases = {"server": server_config({"dns": DEFAULT_DNS}, [row]), "no-accounts": server_config({"dns": DEFAULT_DNS}, [])}
     cases.update({protocol: client_config(protocol, row, "vpn.example.com", DEFAULT_DNS) for protocol in PROTOCOLS})
     cases["xhttp-server"] = server_config({"dns": DEFAULT_DNS, "xhttp_enabled": True}, [row])
     cases["xhttp-client"] = client_config("vless-xhttp", row, "vpn.example.com", DEFAULT_DNS)
     cases["non-tls-client"] = client_config("vless-non-tls", row, "vpn.example.com", DEFAULT_DNS)
+    cases["non-tls-server"] = server_config({"dns": DEFAULT_DNS, "vless_non_tls_enabled": True}, [row])
     for name, config in cases.items():
         path = tmp_path / f"{name}.json"; path.write_text(json.dumps(config))
         result = subprocess.run([CORE, "run", "-test", "-config", str(path)], capture_output=True, text=True, timeout=20)
@@ -239,6 +248,7 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, m
     xhttp = "xhttp" in source
     plain = source.startswith('plain_')
     if plain:
+        encryption_identity(tmp_path, monkeypatch)
         import xray_manager
         monkeypatch.setattr(xray_manager, 'settings', lambda: {'enabled': True, 'vless_non_tls_enabled': True})
     secret = enable_origin(tmp_path, monkeypatch, provider) if cdn else ""
@@ -252,15 +262,16 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, m
     nginx = os.environ.get("NGINX_TEST_BINARY")
     if not nginx:
         pytest.skip("TLS gateway integration requires NGINX_TEST_BINARY")
-    row = record(); server_cfg = server_config({"dns": DEFAULT_DNS, "xhttp_enabled": xhttp}, [row])
+    row = record(); server_cfg = server_config({"dns": DEFAULT_DNS, "xhttp_enabled": xhttp, "vless_non_tls_enabled": plain}, [row])
     api_socket = tmp_path / "stats.sock"
     server_cfg["api"]["listen"] = str(api_socket)
     server_cfg["log"]["loglevel"] = "debug"
     ports = {path: free_port() for _, path in PROTOCOLS.values()}
+    if plain: ports['/vless-non-tls'] = free_port()
     if xhttp: ports[XHTTP_PATH] = free_port()
     for inbound in server_cfg["inbounds"]:
         stream = inbound["streamSettings"]
-        inbound["port"] = ports[XHTTP_PATH if inbound["tag"] == "noway-xhttp" else "/" + inbound["protocol"]]
+        inbound["port"] = ports['/vless-non-tls' if inbound['tag'] == 'noway-vless-non-tls' else XHTTP_PATH if inbound["tag"] == "noway-xhttp" else "/" + inbound["protocol"]]
 
     class HTTPFixture(BaseHTTPRequestHandler):
         def log_message(self, *args): pass
@@ -296,6 +307,8 @@ def test_real_vless_vmess_trojan_over_verified_tls_websocket(tmp_path, source, m
         site = site.replace("X-Forwarded-For $remote_addr;", "X-Forwarded-For 198.51.100.42;")
         for protocol, (port, endpoint_path) in PROTOCOLS.items():
             site = site.replace(f"127.0.0.1:{port}", f"127.0.0.1:{ports[endpoint_path]}")
+        if plain:
+            site = site.replace('127.0.0.1:10005', f"127.0.0.1:{ports['/vless-non-tls']}")
         if xhttp:
             site = site.replace("127.0.0.1:10004", f"127.0.0.1:{ports[XHTTP_PATH]}")
         if cdn:
