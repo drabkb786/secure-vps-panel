@@ -258,7 +258,19 @@ class Server(socketserver.ThreadingUnixStreamServer):
     def __init__(self, address):
         self.ledger = Ledger()
         self.slots = threading.BoundedSemaphore(512)
+        self._last_checkpoint = 0.0
         super().__init__(address, Handler)
+
+    def service_actions(self):
+        # BaseServer calls this from its serving loop, including native/test
+        # instances. Live connections must be checkpointed before they close.
+        current = time.monotonic()
+        if current - self._last_checkpoint < 2:
+            return
+        with LOCK:
+            self.ledger.flush()
+            atomic_write_json(STATUS_FILE, {"ready": True, "time": time.time(), "pid": os.getpid()}, 0o644)
+        self._last_checkpoint = current
 
     def process_request(self, request, address):
         if not self.slots.acquire(blocking=False):
@@ -313,13 +325,6 @@ def main():
     SOCKET.unlink(missing_ok=True)
     with Server(str(SOCKET)) as server:
         os.chmod(SOCKET, 0o666)  # SO_PEERCRED/executable validation authorizes clients.
-        def checkpoint():
-            while True:
-                with LOCK:
-                    server.ledger.flush()
-                    atomic_write_json(STATUS_FILE, {"ready": True, "time": time.time(), "pid": os.getpid()}, 0o644)
-                time.sleep(2)
-        threading.Thread(target=checkpoint, daemon=True).start()
         server.serve_forever(poll_interval=.25)
 
 

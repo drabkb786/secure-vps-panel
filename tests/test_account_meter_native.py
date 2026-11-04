@@ -165,7 +165,11 @@ def test_real_dropbear_authenticated_payload_and_ip_policy(tmp_path, monkeypatch
             channel = limited.open_channel("direct-tcpip", echo.server_address, ("127.0.0.1", 12346), timeout=5)
             large = b"q" * (60 * 1024 * 1024)
             sender = threading.Thread(target=channel.sendall, args=(large,)); sender.start()
-            assert core_tools.read_exact(channel, len(large)) == large
+            remaining = len(large)
+            while remaining:
+                chunk = channel.recv(min(65536, remaining))
+                assert chunk and chunk == b"q" * len(chunk)
+                remaining -= len(chunk)
             sender.join(10); assert not sender.is_alive(); channel.close()
             deadline = time.monotonic() + 8
             while time.monotonic() < deadline:
