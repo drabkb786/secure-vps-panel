@@ -15,6 +15,7 @@ import pytest
 import ssh_meter
 import ssh_identity
 import dropbear_sessions
+import session_enforcer
 import traffic
 import xray_manager
 from account_policy import ssh_id
@@ -155,6 +156,43 @@ def test_real_dropbear_authenticated_payload_and_ip_policy(tmp_path, monkeypatch
         finally:
             if denied:
                 denied.close()
+        row["blocked_ips"] = []
+        atomic_write_json(directory / (name + ".json"), row)
+        # Keep a real SSH connection open after crossing the smallest supported
+        # quota, then exercise the production PID-safe enforcer and live reset.
+        limited = connect()
+        try:
+            channel = limited.open_channel("direct-tcpip", echo.server_address, ("127.0.0.1", 12346), timeout=5)
+            large = b"q" * (60 * 1024 * 1024)
+            sender = threading.Thread(target=channel.sendall, args=(large,)); sender.start()
+            assert core_tools.read_exact(channel, len(large)) == large
+            sender.join(10); assert not sender.is_alive(); channel.close()
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                totals = ssh_meter.state()["accounts"][ssh_id(row)]
+                if totals.get("download_bytes") == len(payload) + len(large): break
+                time.sleep(.1)
+            assert totals["upload_bytes"] == totals["download_bytes"] == len(payload) + len(large)
+            row.update(quota_gb=.1, quota_unit="GB", quota_enforced=True)
+            atomic_write_json(directory / (name + ".json"), row)
+            monkeypatch.setattr(session_enforcer, "USERS_DIR", directory)
+            monkeypatch.setattr(ssh_meter, "available", lambda: True)  # Test binary is already verified by the live collector.
+            session_enforcer.enforce_once()
+            deadline = time.monotonic() + 4
+            while limited.is_active() and time.monotonic() < deadline: time.sleep(.05)
+            assert not limited.is_active(), "Exhausted real SSH session was not terminated"
+        finally:
+            limited.close()
+        ssh_meter.reset(name)
+        assert ssh_meter.state()["accounts"][ssh_id(row)]["upload_bytes"] == 0
+        after_reset = connect()
+        try:
+            channel = after_reset.open_channel("direct-tcpip", echo.server_address, ("127.0.0.1", 12347), timeout=5)
+            channel.sendall(b"renewed-allowance")
+            assert core_tools.read_exact(channel, 17) == b"renewed-allowance"
+            channel.close()
+        finally:
+            after_reset.close()
     finally:
         if process:
             process.terminate(); process.wait(timeout=5)

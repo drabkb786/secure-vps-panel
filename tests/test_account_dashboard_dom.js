@@ -50,6 +50,7 @@ test('real account template expands and paginates IPs without flattening account
   assert.match(d.querySelectorAll('#account-management .account-summary')[1].textContent,/30\.000 GB/);
   d.querySelector('[aria-label="Expand IPs for xray noway"]').click(); await app.flush();
   assert.equal(d.querySelectorAll('.ip-table tbody tr').length,8);
+  assert.ok(!d.querySelector('.ip-table tbody tr').textContent.includes('Unlimited'));
   [...d.querySelectorAll('.show-more')][0].click(); await app.flush();
   assert.equal(d.querySelectorAll('.ip-table tbody tr').length,16);
   assert.equal(d.querySelectorAll('.show-more').length,0);

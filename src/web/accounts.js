@@ -3,9 +3,12 @@
 const expandedAccounts = new Map(), accountDetails = new Map(), accountLoads = new Map(), ipDrafts = new Map();
 const accountKey = (kind, name) => kind + ':' + name;
 
-function accountByteCell(row, field, available = true) {
-  if (!available) return element('td', 'mono muted', 'Awaiting meter');
+function accountByteCell(row, field, available = true, withQuota = field === 'used_bytes') {
+  const raw = row.exact_bytes?.[field] ?? row[field] ?? 0;
+  if (!available && BigInt(raw) === 0n) return element('td', 'mono muted', 'No recorded usage');
   const cell = byteCell(row, field);
+  if (field === 'used_bytes' && !withQuota) cell.firstChild.textContent = size(Number(raw), row.quota_unit || 'GB');
+  if (!available) cell.append(element('div', 'small meter-note', 'Last recorded'));
   return cell;
 }
 
@@ -27,7 +30,7 @@ function accountDetail(kind, name) {
   box.append(heading);
   if (!result) { box.append(element('p', 'muted', accountLoads.has(key) ? 'Loading authenticated IPs…' : 'IP details could not load. Use Refresh IPs.')); return box; }
   box.append(element('p', 'small muted', `${result.online_count} online · ${result.total} recorded · ${result.sampled_at ? 'Sampled ' + new Date(result.sampled_at).toLocaleTimeString() : 'Awaiting a meter sample'}`));
-  if (!result.usage_available) box.append(element('p', 'meter-note', 'Per-IP byte metering is not active on this backend yet. Activate the metered runtime to collect measured usage.'));
+  if (!result.usage_available) box.append(element('p', 'meter-note', 'Per-IP coverage is unavailable or incomplete. Last recorded counters are retained; activate/check the metered backend for current usage.'));
   const scroll = element('div', 'table-scroll'), table = element('table', 'ip-table'), head = element('thead'), header = element('tr');
   ['SOURCE IP', 'UPLOAD', 'DOWNLOAD', 'TOTAL', 'ACCESS', 'PROTOCOL', 'ACTION'].forEach(t => header.append(element('th', '', t)));
   head.append(header); table.append(head); const body = element('tbody');
@@ -35,7 +38,7 @@ function accountDetail(kind, name) {
   result.connections.forEach(ip => {
     const row = element('tr'), identity = element('td', 'mono');
     identity.append(element('strong', '', ip.ip === 'unknown' ? 'Unknown / unavailable source' : ip.ip), element('div', 'small muted', ip.online ? 'Connected now' : ip.last_seen ? 'Last seen ' + new Date(ip.last_seen).toLocaleString() : 'Offline / policy entry'));
-    row.append(identity, accountByteCell(ip, 'upload_bytes', ip.usage_available), accountByteCell(ip, 'download_bytes', ip.usage_available), accountByteCell({...ip, quota_gb: null}, 'used_bytes', ip.usage_available));
+    row.append(identity, accountByteCell(ip, 'upload_bytes', ip.usage_available), accountByteCell(ip, 'download_bytes', ip.usage_available), accountByteCell(ip, 'used_bytes', ip.usage_available, false));
     const access = element('td'); access.append(pill(ip.blocked ? 'Blocked' : 'Allowed', ip.blocked ? 'warn' : 'good'));
     const protocols = element('td'); protocols.append(tags(ip.protocols)); const action = element('td');
     if (ip.ip !== 'unknown') action.append(button(ip.blocked ? 'Allow' : 'Block', async () => {
@@ -76,7 +79,7 @@ function renderAccountManagement() {
   const selected = rows.filter(row => row.name.toLowerCase().includes(search) && (filter === 'all' || filter === row.kind));
   setText('account-count', String(rows.length));
   setText('account-active', String(rows.filter(row => row.active).length));
-  const sum = field => rows.filter(row => row.usage_available !== false).reduce((n, row) => n + BigInt(row.exact_bytes?.[field] || row[field] || 0), 0n);
+  const sum = field => rows.reduce((n, row) => n + BigInt(row.exact_bytes?.[field] || row[field] || 0), 0n);
   setText('account-upload', size(Number(sum('upload_bytes')))); setText('account-download', size(Number(sum('download_bytes'))));
   setText('accounts-meter-note', `${state.traffic?.ssh_available ? 'SSH payload meter active' : 'SSH meter awaiting activation'} · ${state.traffic?.ip_meter_available ? 'Xray per-IP meter active' : 'Xray account totals available; per-IP meter awaiting activation'} · sampled limits can overshoot.`);
   const body = $('account-management'); body.replaceChildren();

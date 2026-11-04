@@ -708,6 +708,8 @@ def dashboard_status(params: dict[str, Any]) -> dict[str, Any]:
         if processes.get(row["username"], set()) - covered.get(account_policy.ssh_id(row), set()):
             row["usage_available"] = False
             row["usage_note"] = "One or more live SSH sessions have not reported authenticated payload counters"
+            if account_policy.ssh_quota_bytes(row) is not None:
+                row["meter_unavailable"], row["active"] = True, False
     return {**service_status(params), **XRAY.status(params), **users, **sessions,
             "slowdns": SLOWDNS.status({}), "bunny": BUNNY.status(), "cloudfront": CLOUDFRONT.status(), "traffic": {"sampled_at": xray_state.get("sampled_at"), "scope": "Authenticated Xray and metered Dropbear channel payload bytes", "sample_interval_seconds": 5,
                 "ssh_available": ssh_meter.available(), "ssh_sampled_at": ssh_state.get("sampled_at"),
@@ -734,7 +736,7 @@ def account_connections(params):
         values = usage.pop("ip_usage")
         session = next((s for s in list_sessions({})["sessions"] if s["username"] == name), {})
         online = set(session.get("ips", []))
-        ready = usage["usage_available"]
+        ready = usage["usage_available"] and set(session.get("pids", [])) <= ssh_meter.coverage(ssh_meter.state()).get(account_policy.ssh_id(account), set())
         protocols = ["ssh"]
         sampled_at = usage["sampled_at"]
     elif kind == "xray":
