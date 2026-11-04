@@ -19,6 +19,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,11 +52,57 @@ def run(args, *, cwd=None, timeout=60, env=None):
     return result.stdout + result.stderr
 
 
+BUILD_PATH = '/usr/sbin:/usr/bin:/sbin:/bin'
+BUILD_INPUTS = (
+    'CC', 'CXX', 'CPP', 'LD', 'AR', 'AS', 'RANLIB', 'STRIP', 'NM', 'OBJCOPY',
+    'OBJDUMP', 'CROSS_COMPILE', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS',
+    'LDLIBS', 'CPATH', 'C_INCLUDE_PATH', 'CPLUS_INCLUDE_PATH', 'LIBRARY_PATH',
+    'LD_LIBRARY_PATH', 'LD_PRELOAD', 'CONFIG_SITE', 'CONFIG_OPTIONS',
+    'OPENSSL_LOCAL_CONFIG_DIR', 'OPENSSL_CONFIG', 'MAKE', 'MAKEFLAGS', 'MFLAGS',
+    'MAKELEVEL', 'PERL5LIB', 'PERL5OPT', 'PERL', 'PYTHONPATH', 'PYTHONHOME',
+    'VIRTUAL_ENV', 'PKG_CONFIG', 'PKG_CONFIG_PATH', 'PKG_CONFIG_LIBDIR',
+    'PKG_CONFIG_SYSROOT_DIR', 'GCC_EXEC_PREFIX', 'COMPILER_PATH',
+)
+
+
+def build_environment(overrides=None):
+    """Use Ubuntu/Debian's native toolchain, independent of login/build aliases."""
+    environment = {key: value for key, value in os.environ.items() if key not in BUILD_INPUTS}
+    environment.update(PATH=BUILD_PATH, LC_ALL='C.UTF-8', CC='/usr/bin/gcc',
+                       CXX='/usr/bin/g++', AR='/usr/bin/ar', RANLIB='/usr/bin/ranlib',
+                       CONFIG_SITE='/dev/null', PYTHONNOUSERSITE='1', PYTHON_JIT='0')
+    if overrides:
+        environment.update(overrides)
+    return environment
+
+
+def verify_toolchain():
+    """A package being installed does not prove its compiler can link and run."""
+    environment = build_environment()
+    try:
+        with tempfile.TemporaryDirectory(prefix='.compiler-check-', dir=ROOT) as directory:
+            for suffix, compiler in (('c', environment['CC']), ('cc', environment['CXX'])):
+                run([compiler, '--version'], env=environment)
+                source = Path(directory) / ('check.' + suffix)
+                program = Path(directory) / ('check-' + suffix)
+                source.write_text('#include <stdio.h>\nint main(void) { return puts("NOWAY native compiler ready") < 0; }\n')
+                run([compiler, str(source), '-o', str(program)], env=environment)
+                if 'NOWAY native compiler ready' not in run([program], env=environment):
+                    raise RuntimeError('Compiled toolchain check returned unexpected output')
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(
+            'Native C/C++ compiler check failed before downloads/activation: ' + str(exc) +
+            '. Repair the distribution toolchain with apt-get install --reinstall '
+            'build-essential gcc g++ make binutils libc6-dev, and check execution permissions on /opt.'
+        ) from exc
+    log('Native C/C++ compile, link and execution checks passed (/usr/bin/gcc, /usr/bin/g++)')
+
+
 def build_run(args, directory, log_file, timeout=1800, env=None):
     with log_file.open('a') as output:
         output.write('\n$ ' + shlex.join([str(a) for a in args]) + '\n')
         output.flush()
-        result = subprocess.run([str(a) for a in args], cwd=directory, env=env,
+        result = subprocess.run([str(a) for a in args], cwd=directory, env=build_environment(env),
                                 stdout=output, stderr=subprocess.STDOUT, timeout=timeout, check=False)
     if result.returncode:
         raise RuntimeError(f'{Path(args[0]).name} failed; inspect {log_file}')
@@ -453,11 +500,13 @@ def main():
             return
         log('Installing build prerequisites; package-owned Python/OpenSSL/sshd remain in place')
         run(['apt-get', 'update'], timeout=600)
-        run(['apt-get', 'install', '-y', '--no-install-recommends', 'build-essential', 'pkg-config',
+        run(['apt-get', 'install', '-y', '--no-install-recommends', 'build-essential', 'gcc', 'g++',
+             'make', 'binutils', 'libc6-dev', 'pkg-config',
              'perl', 'ca-certificates', 'curl', 'xz-utils', 'libpcre2-dev', 'zlib1g-dev',
              'libffi-dev', 'libsqlite3-dev', 'libbz2-dev', 'liblzma-dev', 'libreadline-dev',
              'uuid-dev', 'python3-systemd'], timeout=1200,
             env={**os.environ, 'DEBIAN_FRONTEND': 'noninteractive'})
+        verify_toolchain()
         release = build(manifest, args.jobs)
         if (ROOT / 'current').is_symlink() and (ROOT / 'current').resolve() == release:
             verify_versions(release, manifest)
