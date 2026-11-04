@@ -209,6 +209,27 @@ def test_ssh_export_uri_and_adapter_do_not_store_password(tmp_path, monkeypatch)
     assert "password" not in account
     clean = ssh_profiles.export({"username": "basit"}, lambda _: account)
     assert "password" not in clean["profile"]
+    raw = json.loads(data["files"]["basit-raw-http.json"])
+    raw_tls = json.loads(data["files"]["basit-raw-tls.json"])
+    assert raw["port"] == 80 and raw["tls"] is False and raw["requires_rfc6455"] is False
+    assert raw_tls["port"] == 443 and raw_tls["server_name"] == "vpn.example.com" and raw_tls["verify_certificate"] is True
+    assert "Sec-WebSocket-Key" not in raw["payload"]
+    assert "payload empty" in data["files"]["client-settings.txt"]
+    assert "password" not in json.loads(clean["files"]["basit-raw-http.json"])
+    assert "password" not in json.loads(clean["files"]["basit-raw-tls.json"])
+
+
+def test_cdn_ssh_client_settings_do_not_offer_an_unframed_profile(tmp_path, monkeypatch):
+    domain = tmp_path / "domain"; domain.write_text("vpn.example.com")
+    monkeypatch.setattr(ssh_profiles, "DOMAIN_FILE", domain)
+    monkeypatch.setattr(ssh_profiles.slowdns, "settings", lambda: {"enabled": False})
+    monkeypatch.setattr(ssh_profiles.cdn_manager, "delivery", lambda *_: ("d123456.cloudfront.net", "/cloudfront"))
+    account = {"enabled": True, "expiry": (date.today() + timedelta(days=1)).isoformat(), "max_sessions": 2}
+    data = ssh_profiles.export({"username": "basit", "route": "cloudfront"}, lambda _: account)
+    assert data["profile"]["path"] == "/cloudfront/ssh/ws"
+    assert not any("raw-http" in key or "raw-tls" in key for key in data["files"])
+    assert "Requires RFC6455 binary" in data["files"]["client-settings.txt"]
+    assert "SNI/Host: d123456.cloudfront.net" in data["files"]["client-settings.txt"]
 
 
 def test_slowdns_queries_parent_referral(dns_manager, monkeypatch):

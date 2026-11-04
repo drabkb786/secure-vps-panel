@@ -50,7 +50,7 @@ occurs before the SSH server banner.
 
 ## Fast update of an existing installation
 
-Run `bash scripts/update-ssh-compat.sh` as root from an updated checkout. It
+Run `bash scripts/update-ssh-compat.sh` as root from an updated Git checkout. It
 requires an already configured managed OpenSSH installation and origin domain.
 It backs up the affected application/SSH/Nginx files, validates the candidate,
 reloads the managed backend, restarts the bridge/daemon and checks a local 101
@@ -58,6 +58,9 @@ response followed by the actual OpenSSH banner through Nginx. A failure restores
 the saved files. Recovery copies remain under `/etc/abdulbasit/backups/`.
 This path does not install packages, build a runtime, change admin SSH or apply
 network tuning. It accepts the same explicit `--legacy-crypto` option.
+Modules are staged from one committed HEAD rather than manually edited source.
+Add `--sync-source` to back up and reset just the affected working-copy modules
+to that commit too. See [configuration consistency](CONFIG_AUDIT_4_3_1.md).
 
 ## Optional network tuning
 

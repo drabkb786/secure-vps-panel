@@ -42,6 +42,35 @@ def export(params, lookup):
     if route == "direct":
         files["legacy-raw-payload.txt"] = f"GET /ssh/raw HTTP/1.1[crlf]Host: {domain}[crlf]Connection: Upgrade[crlf]Upgrade: websocket[crlf][crlf]\n"
         notes.append("legacy-raw-payload.txt is for direct origin port 80 (or TLS 443) and raw-upgrade SSH clients only; it is not a CDN WSS profile.")
+        raw = {"schema": "noway-ssh-raw-v1", "username": user, "host": domain,
+               "port": 80, "tls": False, "transport": "http-upgrade-raw",
+               "path": "/ssh/raw", "http_host": domain, "proxy_type": "none",
+               "requires_rfc6455": False, "payload": files["legacy-raw-payload.txt"].strip()}
+        if password is not None:
+            raw["password"] = password
+        files[f"{user}-raw-http.json"] = json.dumps(raw, indent=2) + "\n"
+        raw_tls = {**raw, "port": 443, "tls": True, "server_name": domain, "verify_certificate": True}
+        files[f"{user}-raw-tls.json"] = json.dumps(raw_tls, indent=2) + "\n"
+        files["client-settings.txt"] = (
+            f"SSH username: {user}\nPassword: use this account's current password\n\n"
+            f"Direct SSH: {domain}:109 or :447; TLS none; payload empty; proxy none.\n"
+            f"Raw HTTP Upgrade: {domain}:80; TLS none; proxy none.\n"
+            f"Raw TLS Upgrade: {domain}:443; TLS on; verify certificate; SNI {domain}; proxy none.\n"
+            f"Payload for either raw mode:\n{raw['payload']}\n"
+            "Raw mode must omit Sec-WebSocket-Key and Sec-WebSocket-Version.\n\n"
+            f"Binary WSS: {host}:443; TLS on; SNI/Host {host}; path {path}.\n"
+            "Use actual RFC6455 binary framing for WSS; a raw payload is not a framed WSS client.\n"
+            "These JSON/TXT files document settings; they are not proprietary .nm/.ehi import files.\n"
+            "A local pre-request 200 message is not the remote server's HTTP response.\n"
+            "No client/mobile reachability or SSH authentication was tested by exporting these files.\n")
+    else:
+        files["client-settings.txt"] = (
+            f"SSH username: {user}\nPassword: use this account's current password\n"
+            f"Authorized {route} WSS endpoint: {host}:443\nTLS: on; verify certificate\n"
+            f"SNI/Host: {host}\nWebSocket path: {path}\nProxy type: none\n"
+            "Requires RFC6455 binary WebSocket framing, not raw HTTP payload mode.\n"
+            "Configure both private edge-origin headers using the provider setup export.\n"
+            "No client/mobile reachability or SSH authentication was tested by exporting these files.\n")
     tunnel = slowdns.settings()
     if tunnel["enabled"]:
         key = read_text(slowdns.PUBLIC_KEY)

@@ -8,17 +8,24 @@ app_dir=/usr/local/lib/abdulbasit
 ssh_config=/etc/abdulbasit-sshd/sshd_config
 nginx_config=/etc/nginx/conf.d/abdulbasit-vpn.conf
 generator_args=()
-if [[ $# -eq 1 && $1 == --legacy-crypto ]]; then
-  generator_args+=(--legacy-crypto)
-elif [[ $# -ne 0 ]]; then
-  echo 'Usage: update-ssh-compat.sh [--legacy-crypto]' >&2; exit 1
-fi
+sync_source=0
+for option in "$@"; do
+  case "$option" in
+    --legacy-crypto) generator_args+=(--legacy-crypto) ;;
+    --sync-source) sync_source=1 ;;
+    *) echo 'Usage: update-ssh-compat.sh [--legacy-crypto] [--sync-source]' >&2; exit 1 ;;
+  esac
+done
 [[ $(cat /etc/abdulbasit/ssh-backend) == openssh ]] || { echo 'Requires an existing managed OpenSSH installation' >&2; exit 1; }
 exec 9>/run/noway-ssh-update.lock
 flock -n 9 || { echo 'Another SSH compatibility update is running' >&2; exit 1; }
-modules=(ws_proxy paneld ssh_backend cdn_manager bunny_manager)
+modules=(ws_proxy paneld ssh_backend cdn_manager bunny_manager diagnostics ssh_profiles)
 files=("$ssh_config" "$nginx_config")
 for module in "${modules[@]}"; do files+=("$app_dir/$module.py"); done
+if [[ $sync_source == 1 ]]; then
+  [[ -d $project_dir/src && ! -L $project_dir/src ]] || { echo 'Unsafe source directory' >&2; exit 1; }
+  for module in "${modules[@]}"; do files+=("$project_dir/src/$module.py"); done
+fi
 for file in "${files[@]}"; do
   [[ -f $file && ! -L $file ]] || { echo "Missing or unsafe installed file: $file" >&2; exit 1; }
 done
@@ -26,10 +33,13 @@ PYTHONPATH="$app_dir" /usr/bin/python3 - <<'CHECK'
 from common import DOMAIN_FILE, read_text, validate_domain
 validate_domain(read_text(DOMAIN_FILE))
 CHECK
-for module in "${modules[@]}"; do /usr/bin/python3 -m py_compile "$project_dir/src/$module.py"; done
 backup_dir="/etc/abdulbasit/backups/ssh-compat-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 install -d -m 0700 "$backup_dir/files"
 for file in "${files[@]}"; do cp -a --parents -- "$file" "$backup_dir/files/"; done
+# A manually edited working copy must not silently become the installed release.
+# Stage one pinned HEAD; keep original working/installed copies in the backup.
+/usr/bin/python3 "$project_dir/scripts/source-snapshot.py" "$project_dir" "$backup_dir/source" "${modules[@]}" > "$backup_dir/source-release.json"
+cat "$backup_dir/source-release.json"
 rollback() {
   local result=$?
   local rollback_failed=0
@@ -48,7 +58,12 @@ RELOAD
   exit "$result"
 }
 trap rollback ERR
-for module in "${modules[@]}"; do install -o root -g root -m 0755 "$project_dir/src/$module.py" "$app_dir/$module.py"; done
+for module in "${modules[@]}"; do
+  if [[ $sync_source == 1 ]]; then
+    cp -- "$backup_dir/source/$module.py" "$project_dir/src/$module.py"
+  fi
+  install -o root -g root -m 0755 "$backup_dir/source/$module.py" "$app_dir/$module.py"
+done
 PYTHONPATH="$app_dir" /usr/bin/python3 -m ssh_backend "${generator_args[@]}" > "$backup_dir/sshd.candidate"
 /usr/sbin/sshd -t -f "$backup_dir/sshd.candidate"
 install -o root -g root -m 0644 "$backup_dir/sshd.candidate" "$ssh_config"

@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.3.1 — Committed updates and explicit client/transport checks
+
+- Stage one Git commit for fast SSH updates; optionally back up and synchronize
+  only the affected working-copy modules instead of installing manual edits.
+- Add bounded HTTP/TLS-to-SSH diagnostics that retain split/coalesced banners
+  and distinguish local transport readiness from real client authentication.
+- Export separate raw HTTP/TLS settings and readable client setup alongside
+  WSS profiles, preserving transient-password and authenticated CDN behavior.
+
 ## 4.3.0 — Direct SSH transport compatibility and reversible MSS tuning
 
 - Select raw or RFC6455 framing using a valid WebSocket key on direct SSH

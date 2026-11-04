@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import ipaddress
+from contextlib import ExitStack
 import shutil
 import socket
+import ssl
 import subprocess
+import time
 from pathlib import Path
 
 from common import DOMAIN_FILE, ValidationError, read_text, validate_domain
@@ -38,6 +41,56 @@ def dns_lookup(params: dict) -> dict:
             records[family + "_error"] = output
     return {"domain": domain, "records": records,
             "note": "Point A/AAAA records at this VPS. DNS provider records are managed at the provider; an incorrect AAAA record can break IPv6 clients."}
+
+
+def ssh_upgrade(domain: str, port: int, tls: bool = False, timeout: float = 3) -> tuple[bool, str]:
+    """Read a bounded local HTTP Upgrade and SSH identification, not a login.
+
+    Coalesced headers/banner and split TCP reads must produce the same result.
+    The connection address is fixed loopback; Host/SNI uses the configured domain.
+    """
+    try:
+        domain = validate_domain(domain)
+        deadline = time.monotonic() + timeout
+        with ExitStack() as stack:
+            peer = stack.enter_context(socket.create_connection(('127.0.0.1', port), timeout=timeout))
+            if tls:
+                peer.settimeout(max(.01, deadline - time.monotonic()))
+                peer = stack.enter_context(ssl.create_default_context().wrap_socket(peer, server_hostname=domain))
+            peer.sendall((f'GET /ssh/raw HTTP/1.1\r\nHost: {domain}\r\n'
+                          'Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n').encode())
+            received = bytearray()
+            while len(received) < 16384:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError('Waiting for HTTP Upgrade and SSH identification')
+                peer.settimeout(remaining)
+                chunk = peer.recv(min(4096, 16384 - len(received)))
+                if not chunk:
+                    raise ConnectionError('EOF before a complete HTTP Upgrade and SSH banner')
+                received.extend(chunk)
+                if b'\r\n\r\n' not in received:
+                    continue
+                head, body = bytes(received).split(b'\r\n\r\n', 1)
+                lines = head.split(b'\r\n')
+                status = lines[0].decode('ascii', errors='replace')
+                fields = dict(line.lower().split(b':', 1) for line in lines[1:] if b':' in line)
+                parts = status.split()
+                if len(parts) < 2 or parts[0] not in ('HTTP/1.0', 'HTTP/1.1') or parts[1] != '101':
+                    raise ValueError('Expected HTTP 101, received ' + status[:160])
+                if (fields.get(b'upgrade', b'').strip() != b'websocket'
+                        or b'upgrade' not in {value.strip() for value in fields.get(b'connection', b'').split(b',')}):
+                    raise ValueError('HTTP 101 is missing valid Upgrade/Connection headers')
+                if b'\n' in body:
+                    banner = body.split(b'\n', 1)[0].rstrip(b'\r')
+                    if not banner.startswith(b'SSH-2.0-') or len(banner) > 255:
+                        raise ValueError('No valid SSH identification after HTTP 101')
+                    return True, 'HTTP 101; ' + banner.decode('ascii', errors='replace')
+                if len(body) > 255:
+                    raise ValueError('SSH identification exceeds the limit')
+        raise ValueError('HTTP/SSH response exceeds the limit')
+    except (OSError, ValueError) as exc:
+        return False, type(exc).__name__ + ': ' + str(exc)[:180]
 
 
 def report(_: dict) -> dict:
@@ -91,6 +144,11 @@ def report(_: dict) -> dict:
     domain = read_text(DOMAIN_FILE)
     if domain:
         try:
+            for name, port, tls in (('Local bridge HTTP -> SSH', 2082, False),
+                                    ('Local Nginx HTTP -> SSH', 80, False),
+                                    ('Local Nginx TLS -> SSH', 443, True)):
+                ok, detail = ssh_upgrade(domain, port, tls)
+                add(name, ok, detail, 'Check the configured origin Host/SNI, Nginx route, bridge and SSH backend. This is a loopback probe, not a mobile-network or login test.')
             dns = dns_lookup({"domain": domain})
             add("Domain DNS", bool(dns["records"]["A"] or dns["records"]["AAAA"]), str(dns["records"]), "Create the domain A/AAAA record in your DNS provider.")
             cert = Path("/etc/letsencrypt/live") / validate_domain(domain) / "fullchain.pem"
@@ -114,4 +172,4 @@ def report(_: dict) -> dict:
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             add("SlowDNS delegation", False, type(exc).__name__, "Check NS/A records at the DNS provider and allow the UDP listener externally.")
     return {"checks": checks, "passed": sum(x["ok"] for x in checks), "total": len(checks),
-            "external_test_required": "Provider firewall and real client connections must be checked on the deployed VPS."}
+            "external_test_required": "Local HTTP/TLS checks verify Upgrade and the SSH banner only. Authentication, provider firewall, real client/mobile-network access and sustained transfer require an external test."}
