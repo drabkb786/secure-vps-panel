@@ -11,7 +11,9 @@ is activity information, not a completion percentage. The full output remains
 in the release's `build.log`; failures also show its tail in the terminal.
 Keep the SSH session open until completion. Ctrl+C cancels the build and its
 compiler/linker descendants, retains logs and prints a concise cancellation
-message. A later retry preserves incomplete work and starts a fresh build.
+message (exit 130). SIGHUP/terminal disconnect and SIGTERM use the same cleanup
+path, with conventional exit codes 129/143. A later retry preserves incomplete
+work and starts a fresh build.
 
 | Component | Selected version | Deployment |
 |---|---|---|

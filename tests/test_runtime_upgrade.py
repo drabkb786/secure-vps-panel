@@ -273,3 +273,16 @@ def test_cli_ctrl_c_has_clear_message_and_conventional_exit_code():
     assert result.returncode == 130
     assert 'cancelled (Ctrl+C)' in result.stderr
     assert 'Traceback' not in result.stderr
+
+
+@pytest.mark.parametrize('name,code', [('SIGHUP', 129), ('SIGTERM', 143)])
+def test_cli_disconnect_and_termination_use_the_cancellation_cleanup(name, code):
+    import subprocess
+    import sys
+    driver = ('import argparse,os,signal,runpy; '
+              f'argparse.ArgumentParser.parse_args=lambda *args,**kwargs: os.kill(os.getpid(),signal.{name}); '
+              f'runpy.run_path({str(ROOT / "scripts/upgrade-runtime.py")!r},run_name="__main__")')
+    result = subprocess.run([sys.executable, '-c', driver], capture_output=True, text=True, timeout=5)
+    assert result.returncode == code
+    assert f'cancelled ({name})' in result.stderr
+    assert 'Traceback' not in result.stderr

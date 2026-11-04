@@ -100,6 +100,16 @@ def verify_toolchain():
     log('Native C/C++ compile, link and execution checks passed (/usr/bin/gcc, /usr/bin/g++)')
 
 
+class RuntimeInterrupted(KeyboardInterrupt):
+    def __init__(self, signum):
+        self.signum = signum
+
+
+def interrupt_runtime(signum, _frame):
+    # Turn terminal disconnects/service stops into the same cleanup path as Ctrl+C.
+    raise RuntimeInterrupted(signum)
+
+
 BUILD_PROGRESS_SECONDS = 10
 
 
@@ -571,12 +581,16 @@ def main():
 
 
 if __name__ == '__main__':
+    for cancellation_signal in (signal.SIGHUP, signal.SIGTERM):
+        signal.signal(cancellation_signal, interrupt_runtime)
     try:
         main()
-    except KeyboardInterrupt:
-        print('\nRuntime command cancelled (Ctrl+C). Build logs and recovery snapshots are retained. '
+    except KeyboardInterrupt as exc:
+        signum = getattr(exc, 'signum', signal.SIGINT)
+        reason = 'Ctrl+C' if signum == signal.SIGINT else signal.Signals(signum).name
+        print(f'\nRuntime command cancelled ({reason}). Build logs and recovery snapshots are retained. '
               'Check service health before retrying.', file=sys.stderr)
-        raise SystemExit(130)
+        raise SystemExit(128 + signum)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         print(f'Runtime upgrade failed: {exc}', file=sys.stderr)
         raise SystemExit(1)
