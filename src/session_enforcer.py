@@ -36,7 +36,7 @@ def terminate(pids: list[int], expected_uid: int) -> None:
 def enforce_once() -> None:
     by_uid = dropbear_pids_by_uid()
     # One kernel socket snapshot per cycle, separate from authenticated identity.
-    ips = ssh_identity.session_ips(by_uid)
+    ips = None  # Most SSH/SlowDNS accounts have no IP cap; skip unused FD scans.
     today = date.today()
     for path in sorted(USERS_DIR.glob("*.json")):
         data = read_json(path, {})
@@ -72,6 +72,8 @@ def enforce_once() -> None:
             ip_limit = validate_max_ips(data.get("max_ips", 0))
         except ValueError:
             ip_limit = 1
+        if ip_limit and ips is None:
+            ips = ssh_identity.session_ips(by_uid)
         admitted = set()
         for pid in pids[:limit]:
             if not ip_limit:

@@ -533,7 +533,7 @@ class Manager:
         running = self.health_probe()
         warnings = [] if running else ["The link is configured, but Xray is not currently ready. Enable/restart Xray and run diagnostics before connecting."]
         if prefix:
-            warnings.append("CloudFront delivery: run endpoint checks and a real client transfer; AWS deployment and speed are not verified by this export.")
+            warnings.append(("Bunny" if route == "bunny" else "CloudFront") + " delivery: run endpoint checks and a real client transfer; CDN deployment and speed are not verified by this export.")
         return {"name": name, "route": route, "links": links, "files": files,
                 "readiness": {"core_ready": running, "public_reachability": "not_checked", "warnings": warnings}}
 

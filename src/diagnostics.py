@@ -49,7 +49,7 @@ def report(_: dict) -> dict:
     import ssh_backend
     backend = ssh_backend.name()
     ok, detail = command(["/usr/sbin/sshd", "-V"] if backend == "openssh" else [shutil.which("dropbear") or "/usr/sbin/dropbear", "-V"])
-    add(f"{backend} binary", ok, detail, "Install/update the distribution's maintained dropbear package.")
+    add(f"{backend} binary", ok, detail, f"Install/update the distribution's maintained {'openssh-server' if backend == 'openssh' else 'dropbear'} package.")
     for port in (109, 447):
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=2) as peer:
@@ -58,13 +58,13 @@ def report(_: dict) -> dict:
             ok = banner.startswith("SSH-2.0-OpenSSH_" if backend == "openssh" else "SSH-2.0-dropbear_")
         except OSError as exc:
             ok, banner = False, type(exc).__name__
-        add(f"{backend} SSH greeting :{port}", ok, banner, "Check Dropbear status, listener conflicts and /etc/default/dropbear.")
+        add(f"{backend} SSH greeting :{port}", ok, banner, "Check abdulbasit-sshd and /etc/abdulbasit/sshd_config." if backend == "openssh" else "Check Dropbear status, listener conflicts and /etc/default/dropbear.")
     import ssh_sessions as dropbear_sessions
     sessions = dropbear_sessions.snapshot()
     add("SSH session attribution", sessions["journal_ok"] and not sessions["unattributed_root_processes"],
         f"{sum(len(p) for p in sessions['sessions'].values())} authenticated managed sessions; "
         f"{sessions['unattributed_root_processes']} unattributed root connections (may be pre-authentication)",
-        "Older Dropbear builds need readable systemd authentication journals; missing/rotated records can leave sessions uncounted.")
+        "Check managed account metadata and trusted SSH cgroup ancestry." if backend == "openssh" else "Older Dropbear builds need readable systemd authentication journals; missing/rotated records can leave sessions uncounted.")
     ports = {"SSH upgrade proxy": 2082, "Web dashboard": 9090}
     if settings()["enabled"]:
         ports.update({p.upper(): value[0] for p, value in PROTOCOLS.items()})

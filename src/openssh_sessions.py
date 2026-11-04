@@ -36,10 +36,13 @@ class Process:
 def metadata(pid):
     try:
         root = PROC / str(pid)
-        executable = (root / "exe").resolve(strict=True)
+        # /proc/PID/exe still references the verified inode after apt replaces
+        # sshd. Resolving its deleted pathname would lose every existing login.
+        link = os.readlink(root / "exe")
+        executable = Path(link.removesuffix(" (deleted)"))
         if executable not in {p.resolve() for p in EXECUTABLES}:
             return None
-        st = executable.stat()
+        st = (root / "exe").stat()
         if st.st_uid != 0 or st.st_mode & 0o022:
             return None
         fields = (root / "stat").read_text().rsplit(")", 1)[1].split()

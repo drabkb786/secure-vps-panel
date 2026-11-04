@@ -99,6 +99,8 @@ def gateway_ip(port, sockets):
 
 
 def session_ips(sessions):
+    if not any(sessions.values()):
+        return {}
     sockets = tcp_sockets()
     listeners = tcp_rows("0A")
     from openssh_sessions import listener_ports

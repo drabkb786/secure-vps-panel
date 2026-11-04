@@ -775,15 +775,19 @@ def handle_connection(conn: socket.socket) -> None:
             # Run them outside the writer lock so a 15-second ping or journal
             # read does not delay quota enforcement or user creation.
             independent = command in {"packet_test", "dns_lookup", "live_logs", "memory_report", "service_status",
+                                      "web_auth", "web_revision",
                                       "diagnostics", "slowdns_check", "slowdns_status", "live_connections",
                                       "dashboard_status", "list_users", "list_sessions", "xray_status",
                                       "bunny_status", "cloudfront_status", "config_view"}
-            with OP_LOCK:
-                authorize_command(uid, command, params)
-                if not independent:
-                    result = HANDLERS[command](params)
             if independent:
+                # Atomic credential files can be read without holding a writer
+                # lock. A running Certbot/restart must not stall status queries.
+                authorize_command(uid, command, params)
                 result = HANDLERS[command](params)
+            else:
+                with OP_LOCK:
+                    authorize_command(uid, command, params)
+                    result = HANDLERS[command](params)
             response = {"ok": True, **result}
         except (ValidationError, RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             LOG.warning("Command failed: %s", exc)
