@@ -72,6 +72,7 @@ NGINX_CONFIG = Path("/etc/nginx/conf.d/abdulbasit-vpn.conf")
 ACME_ROOT = Path("/var/www/letsencrypt")
 SERVICE_MAP = {
     "nginx": "nginx",
+    "haproxy": "abdulbasit-haproxy",
     "dropbear": "dropbear",
     "abdulbasit-sshd": "abdulbasit-sshd",
     "abdulbasit-ws": "abdulbasit-ws",
@@ -169,7 +170,7 @@ def create_user(params: dict[str, Any]) -> dict[str, Any]:
 
     expiry = calculate_expiry(days)
     import ssh_backend
-    groups = ["--groups", ssh_backend.GROUP] if ssh_backend.name() == "openssh" else []
+    groups = ["--groups", ssh_backend.GROUP] if ssh_backend.group_required() else []
     run([
         binary("useradd"), "--no-create-home", "--shell", "/usr/local/lib/abdulbasit/tunnel-shell",
         "--expiredate", expiry, "--user-group", *groups, username,
@@ -343,11 +344,13 @@ def domain_conflicts(domain: str) -> list[str]:
     return sorted(set(conflicts))
 
 
-def nginx_text(domain: str, tls: bool) -> str:
+def nginx_text(domain: str, tls: bool, *, multiplexed: bool | None = None) -> str:
     """Keep legacy SSH upgrades; route browsers and real Xray WebSockets separately."""
     cdn = cdn_manager.settings()
     bunny = bunny_manager.settings()
     network = xray_manager.settings()
+    import ssh_backend
+    multiplexed = ssh_backend.haproxy_enabled() if multiplexed is None else multiplexed
     def locations(secure: bool) -> str:
         blocks = """
     location ^~ /.well-known/acme-challenge/ {
@@ -464,9 +467,13 @@ def nginx_text(domain: str, tls: bool) -> str:
         return blocks + cdn_manager.nginx_locations(cdn, secure) + bunny_manager.nginx_locations(bunny, secure)
 
     def server(secure: bool) -> str:
-        port = 443 if secure else 80
+        port = (8081 if secure else 8080) if multiplexed else (443 if secure else 80)
         suffix = " ssl http2" if secure else ""
-        ipv6 = f"    listen [::]:{port}{suffix};\n" if ipv6_enabled() else ""
+        if multiplexed: suffix += " proxy_protocol"
+        ipv6 = f"    listen [::]:{port}{suffix};\n" if not multiplexed and ipv6_enabled() else ""
+        address = f"127.0.0.1:{port}" if multiplexed else str(port)
+        verified_proxy = (f'    set_real_ip_from 127.0.0.1;\n    real_ip_header proxy_protocol;\n'
+                          f'    if ($proxy_protocol_tlv_unique_id != "{ssh_backend.haproxy_secret()}") {{ return 403; }}\n') if multiplexed else ""
         certificates = f"""
     ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
@@ -476,8 +483,9 @@ def nginx_text(domain: str, tls: bool) -> str:
 """ if secure else ""
         return f"""
 server {{
-    listen {port}{suffix};
+    listen {address}{suffix};
 {ipv6}    server_name {domain};
+{verified_proxy}
     server_tokens off;
     proxy_headers_hash_bucket_size 128;
     if ($noway_cf_forbidden) {{ return 403; }}
@@ -565,6 +573,11 @@ def issue_cert(params: dict[str, Any]) -> dict[str, Any]:
 
 def restart_service(params: dict[str, Any]) -> dict[str, Any]:
     service = validate_service(str(params.get("service", "")))
+    if service == "haproxy":
+        import ssh_backend
+        if not ssh_backend.haproxy_enabled():
+            raise ValidationError("Migrate the public gateway to HAProxy first")
+        run(["/usr/sbin/haproxy", "-c", "-f", "/etc/abdulbasit-haproxy/haproxy.cfg"])
     if service == "abdulbasit-paneld":
         raise ValidationError("The panel daemon cannot restart itself through the API")
     if service == "abdulbasit-xray" and not xray_manager.settings()["enabled"]:
@@ -582,7 +595,8 @@ def restart_service(params: dict[str, Any]) -> dict[str, Any]:
 def service_status(_: dict[str, Any]) -> dict[str, Any]:
     import ssh_backend
     selected = {label: unit for label, unit in SERVICE_MAP.items()
-                if label not in {"dropbear", "abdulbasit-sshd"} or label == ssh_backend.unit()}
+                if (label not in {"dropbear", "abdulbasit-sshd"} or label == ssh_backend.unit())
+                and (label != "haproxy" or ssh_backend.haproxy_enabled())}
     result = subprocess.run([binary("systemctl"), "show", "--property=Id,ActiveState", *selected.values()],
                             capture_output=True, text=True, check=False, timeout=5)
     states = {}

@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.5.0 — Explicit HAProxy / Dropbear 2026 migration
+
+- Add a backed-up migration to official checksum-pinned Dropbear 2026.94 on
+  managed ports 109/447 and a separate HAProxy service on public 80/443.
+- Move Nginx to loopback 8080/8081, keeping TLS termination, dashboard, Xray,
+  SSH raw/WS routes and authenticated CDN guards. Carry client addresses using
+  PROXYv2 plus a root-private identity; reject forged local proxy metadata.
+- Keep administrative SSH, existing account passwords, expiry, host keys and
+  DNS tunnel settings. Validate candidate files before switching, recover on
+  failure and support explicit rollback. Refuse unrelated port owners/sites.
+- Reuse the small Dropbear build on repeat runs; never build the private SDK
+  during migration. Support fast application updates with either SSH backend
+  and preserve the selected pinned backend on subsequent full installations.
+- Add disposable-systemd acceptance for real password authentication, byte
+  forwarding over direct/raw/WS/TLS, accurate IP/session enforcement, failed
+  activation recovery, repeat migration and explicit rollback.
+
 ## 4.4.1 — Modern Xray-compatible non-TLS VLESS
 
 - Real-core validation found that the pinned Xray refuses unencrypted VLESS

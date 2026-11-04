@@ -101,7 +101,7 @@ def report(_: dict) -> dict:
     add("Nginx configuration", ok, detail, "Resolve the reported config conflict before reloading Nginx.")
     import ssh_backend
     backend = ssh_backend.name()
-    ok, detail = command(["/usr/sbin/sshd", "-V"] if backend == "openssh" else [shutil.which("dropbear") or "/usr/sbin/dropbear", "-V"])
+    ok, detail = command(["/usr/sbin/sshd", "-V"] if backend == "openssh" else [ssh_backend.dropbear_binary(), "-V"])
     add(f"{backend} binary", ok, detail, f"Install/update the distribution's maintained {'openssh-server' if backend == 'openssh' else 'dropbear'} package.")
     for port in (109, 447):
         try:
@@ -111,7 +111,7 @@ def report(_: dict) -> dict:
             ok = banner.startswith("SSH-2.0-OpenSSH_" if backend == "openssh" else "SSH-2.0-dropbear_")
         except OSError as exc:
             ok, banner = False, type(exc).__name__
-        add(f"{backend} SSH greeting :{port}", ok, banner, "Check abdulbasit-sshd and /etc/abdulbasit/sshd_config." if backend == "openssh" else "Check Dropbear status, listener conflicts and /etc/default/dropbear.")
+        add(f"{backend} SSH greeting :{port}", ok, banner, "Check abdulbasit-sshd and /etc/abdulbasit-sshd/sshd_config." if backend == "openssh" else "Check Dropbear status, its systemd unit and listener conflicts.")
     import ssh_sessions as dropbear_sessions
     sessions = dropbear_sessions.snapshot()
     add("SSH session attribution", sessions["journal_ok"] and not sessions["unattributed_root_processes"],
@@ -119,6 +119,12 @@ def report(_: dict) -> dict:
         f"{sessions['unattributed_root_processes']} unattributed root connections (may be pre-authentication)",
         "Check managed account metadata and trusted SSH cgroup ancestry." if backend == "openssh" else "Older Dropbear builds need readable systemd authentication journals; missing/rotated records can leave sessions uncounted.")
     ports = {"SSH upgrade proxy": 2082, "Web dashboard": 9090}
+    if ssh_backend.haproxy_enabled():
+        ok, detail = command(["/usr/sbin/haproxy", "-c", "-f", "/etc/abdulbasit-haproxy/haproxy.cfg"])
+        add("HAProxy configuration", ok, detail, "Inspect abdulbasit-haproxy and its managed configuration")
+        ok, detail = command(["systemctl", "is-active", ssh_backend.HAPROXY_UNIT])
+        add("HAProxy public gateway", ok, detail, "Inspect journalctl -u abdulbasit-haproxy")
+        ports.update({"Private Nginx HTTP": 8080, "Private Nginx TLS": 8081})
     if settings()["enabled"]:
         ports.update({p.upper(): value[0] for p, value in PROTOCOLS.items()})
         if settings().get("vless_non_tls_enabled"):

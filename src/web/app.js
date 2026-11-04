@@ -106,7 +106,7 @@ function render() {
   setText('node-host', system.hostname); setText('node-domain', s.domain === 'Not set' ? 'Domain not configured' : s.domain);
   setText('node-uptime', `UP ${Math.floor(system.uptime_seconds / 86400)}d ${Math.floor(system.uptime_seconds / 3600) % 24}h`);
   const services = Object.entries(s.services), running = services.filter(([, status]) => status === 'active').length;
-  const healthy = s.services['abdulbasit-paneld'] === 'active' && s.services['nginx'] === 'active';
+  const healthy = s.services['abdulbasit-paneld'] === 'active' && s.services['nginx'] === 'active' && (!('haproxy' in s.services) || s.services.haproxy === 'active');
   $('node-status').replaceWith(Object.assign(pill(healthy ? 'Node online' : 'Needs attention', healthy ? 'good' : 'warn'), {id: 'node-status'}));
   setText('stat-load', system.load[0].toFixed(2)); setText('stat-cpus', `${system.cpu_count || '?'} CPU threads · 1-min load`);
   const memUsed = system.memory_total - system.memory_available, memPercent = percent(memUsed, system.memory_total), diskPercent = percent(system.disk_used, system.disk_total);
@@ -117,7 +117,7 @@ function render() {
   setText('stat-access', `${s.users.length} SSH accounts · ${s.sessions.reduce((sum, x) => sum + x.count, 0)} sessions`);
   setText('service-total', `${running}/${services.length} running`);
   const serviceList = $('service-list'); serviceList.replaceChildren();
-  const labels = {nginx: 'Nginx gateway', dropbear: 'Dropbear fallback', 'abdulbasit-sshd': 'OpenSSH tunnels', 'abdulbasit-ws': 'SSH upgrade proxy', 'abdulbasit-session-enforcer': 'Session enforcer', 'abdulbasit-bot': 'Telegram bot', 'abdulbasit-paneld': 'Panel daemon', 'abdulbasit-web': 'Web dashboard', 'abdulbasit-xray': 'Xray core', 'abdulbasit-dnstt': 'SlowDNS tunnel'};
+  const labels = {haproxy: 'HAProxy · public 80/443', nginx: 'Nginx gateway', dropbear: 'Dropbear SSH', 'abdulbasit-sshd': 'OpenSSH tunnels', 'abdulbasit-ws': 'SSH upgrade proxy', 'abdulbasit-session-enforcer': 'Session enforcer', 'abdulbasit-bot': 'Telegram bot', 'abdulbasit-paneld': 'Panel daemon', 'abdulbasit-web': 'Web dashboard', 'abdulbasit-xray': 'Xray core', 'abdulbasit-dnstt': 'SlowDNS tunnel'};
   services.forEach(([service, status]) => {
     const row = element('div', 'service-row'); row.append(element('span', `service-dot ${status === 'active' ? 'good' : ''}`), element('strong', '', labels[service] || service), element('span', 'service-label', status));
     if (!['abdulbasit-paneld', 'abdulbasit-web', 'abdulbasit-bot'].includes(service)) {

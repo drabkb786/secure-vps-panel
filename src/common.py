@@ -151,7 +151,7 @@ def validate_bot_token(value: str) -> str:
 
 
 def validate_service(value: str) -> str:
-    allowed = {"nginx", "dropbear", "abdulbasit-sshd", "abdulbasit-ws", "abdulbasit-session-enforcer", "abdulbasit-bot", "abdulbasit-paneld", "abdulbasit-web", "abdulbasit-xray", "abdulbasit-dnstt"}
+    allowed = {"nginx", "haproxy", "dropbear", "abdulbasit-sshd", "abdulbasit-ws", "abdulbasit-session-enforcer", "abdulbasit-bot", "abdulbasit-paneld", "abdulbasit-web", "abdulbasit-xray", "abdulbasit-dnstt"}
     if value not in allowed:
         raise ValidationError("Service is not in the allowed service list")
     return value

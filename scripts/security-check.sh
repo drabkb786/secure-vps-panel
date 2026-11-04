@@ -14,6 +14,11 @@ if [[ $(cat /etc/abdulbasit/ssh-backend 2>/dev/null || true) == openssh ]]; then
 else
   check 'Managed Dropbear is active' systemctl is-active --quiet dropbear
 fi
+if [[ $(cat /etc/abdulbasit/gateway-backend 2>/dev/null || true) == haproxy ]]; then
+  check 'HAProxy is active' systemctl is-active --quiet abdulbasit-haproxy
+  check 'HAProxy configuration is valid' /usr/sbin/haproxy -c -q -f /etc/abdulbasit-haproxy/haproxy.cfg
+  check 'Internal Nginx listeners are loopback-only' bash -c "ss -Hltn | grep -Eq '127\\.0\\.0\\.1:8080' && ss -Hltn | grep -Eq '127\\.0\\.0\\.1:8081' && ! ss -Hltn | grep -Eq '(0\\.0\\.0\\.0|\\*|\\[::\\]):808[01]'"
+fi
 check 'Panel daemon is active' systemctl is-active --quiet abdulbasit-paneld
 check 'WebSocket proxy is active' systemctl is-active --quiet abdulbasit-ws
 check 'Session enforcer is active' systemctl is-active --quiet abdulbasit-session-enforcer

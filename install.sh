@@ -15,6 +15,13 @@ WITH_XRAY=0
 WITH_DNSTT=0
 UPGRADE_RUNTIME=0
 SSH_BACKEND=openssh
+PINNED_DROPBEAR=0
+if [[ -f "$CONFIG_DIR/ssh-backend" && ! -L "$CONFIG_DIR/ssh-backend" ]]; then
+  case "$(cat "$CONFIG_DIR/ssh-backend")" in
+    dropbear) SSH_BACKEND=dropbear ;;
+    dropbear-2026) SSH_BACKEND=dropbear; PINNED_DROPBEAR=1 ;;
+  esac
+fi
 XRAY_VERSION=""
 DEFAULT_SUPER_ADMIN_ID="6408975845"
 
@@ -306,7 +313,11 @@ else
   warn "Dropbear Fail2ban filter was not found; direct-port brute-force jail was not enabled"
 fi
 
-printf '%s\n' dropbear > "$CONFIG_DIR/ssh-backend"
+if [[ $PINNED_DROPBEAR == 1 ]]; then
+  printf '%s\n' dropbear-2026 > "$CONFIG_DIR/ssh-backend"
+else
+  printf '%s\n' dropbear > "$CONFIG_DIR/ssh-backend"
+fi
 chmod 0644 "$CONFIG_DIR/ssh-backend"
 rm -f /etc/fail2ban/jail.d/abdulbasit-sshd.local
 fi

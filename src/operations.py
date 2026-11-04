@@ -14,8 +14,8 @@ from common import BASE_DIR, DOMAIN_FILE, ValidationError, atomic_write, read_te
 import ssh_backend
 
 BANNER_FILE = BASE_DIR / "ssh-banner.txt"
-UNITS = ("nginx", ssh_backend.unit(), "abdulbasit-ws", "abdulbasit-session-enforcer", "abdulbasit-xray", "abdulbasit-dnstt")
-LOG_UNITS = (*UNITS, "abdulbasit-paneld", "abdulbasit-web", "abdulbasit-bot")
+UNITS = ("nginx", *((ssh_backend.HAPROXY_UNIT,) if ssh_backend.haproxy_enabled() else ()), ssh_backend.unit(), "abdulbasit-ws", "abdulbasit-session-enforcer", "abdulbasit-xray", "abdulbasit-dnstt")
+LOG_UNITS = (*UNITS, ssh_backend.HAPROXY_UNIT, "abdulbasit-paneld", "abdulbasit-web", "abdulbasit-bot")
 
 
 def redact(text):
@@ -53,7 +53,9 @@ class Manager:
 
     def logs(self, params):
         service = params.get("service", "abdulbasit-xray")
-        if service not in LOG_UNITS:
+        if service == "haproxy" and ssh_backend.haproxy_enabled():
+            service = ssh_backend.HAPROXY_UNIT
+        if service not in LOG_UNITS or (service == ssh_backend.HAPROXY_UNIT and not ssh_backend.haproxy_enabled()):
             raise ValidationError("Choose a managed service")
         level = params.get("level", "error")
         if level not in ("error", "all"):

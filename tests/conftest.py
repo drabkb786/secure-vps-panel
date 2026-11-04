@@ -8,6 +8,7 @@ import xray_manager as xray
 import traffic
 import gateway_identity
 import ssh_identity
+import ssh_backend
 from reality_transport import vless_encryption
 from types import SimpleNamespace
 
@@ -18,6 +19,9 @@ def private_gateway(tmp_path, monkeypatch):
     path.write_text("X-Noway-Gateway-" + "a" * 64)
     monkeypatch.setattr(gateway_identity, "CONFIG_FILE", path)
     monkeypatch.setattr(ssh_identity, "PEER_DIR", tmp_path / "ws-peers")
+    monkeypatch.setattr(ssh_backend, 'GATEWAY_FILE', tmp_path / 'gateway-backend')
+    secret = tmp_path / 'haproxy-verify'; secret.write_text('c' * 64)
+    monkeypatch.setattr(ssh_backend, 'HAPROXY_SECRET_FILE', secret)
 
 
 @pytest.fixture
