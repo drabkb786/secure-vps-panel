@@ -5,6 +5,15 @@ adds a pinned private stack, built and checked before activating it. It is an
 explicit maintenance operation: restarting Nginx and the panel disconnects active
 tunnels briefly. A source build can take 10–25 minutes on a small VPS; it needs
 build tools, free disk space and access to the official download hosts/PyPI.
+Each source-build command prints its log path, elapsed time and the latest log
+line every 10 seconds, even if that command has not produced fresh output. This
+is activity information, not a completion percentage. The full output remains
+in the release's `build.log`; failures also show its tail in the terminal.
+Keep the SSH session open until completion. Ctrl+C cancels the build and its
+compiler/linker descendants, retains logs and prints a concise cancellation
+message (exit 130). SIGHUP/terminal disconnect and SIGTERM use the same cleanup
+path, with conventional exit codes 129/143. A later retry preserves incomplete
+work and starts a fresh build.
 
 | Component | Selected version | Deployment |
 |---|---|---|
