@@ -159,8 +159,8 @@ def test_source_build_uses_native_compiler_despite_poisoned_login_environment(tm
     observed = []
     def execute(args, **kwargs):
         observed.append(kwargs['env'])
-        return SimpleNamespace(returncode=0)
-    monkeypatch.setattr(runtime.subprocess, 'run', execute)
+        return SimpleNamespace(returncode=0, wait=lambda timeout: 0)
+    monkeypatch.setattr(runtime.subprocess, 'Popen', execute)
     runtime.build_run(['./config'], tmp_path, tmp_path / 'build.log')
     environment = observed[0]
     assert environment['CC'] == '/usr/bin/gcc' and environment['CXX'] == '/usr/bin/g++'
@@ -205,3 +205,71 @@ def test_compiler_failure_reports_the_actual_problem_and_repair_command(tmp_path
     with pytest.raises(RuntimeError, match='gcc: cannot find crt1.o.*apt-get install --reinstall'):
         runtime.verify_toolchain()
     assert not list(tmp_path.glob('.compiler-check-*'))
+
+
+def test_build_reports_progress_while_command_is_still_running(tmp_path, monkeypatch):
+    import sys
+    marker = tmp_path / 'done'
+    observed = []
+    def observe(message):
+        observed.append((message, marker.exists()))
+    monkeypatch.setattr(runtime, 'log', observe)
+    monkeypatch.setattr(runtime, 'BUILD_PROGRESS_SECONDS', .03)
+    command = [sys.executable, '-c', 'import time; from pathlib import Path; print("compiling real fixture", flush=True); time.sleep(.2); Path(' + repr(str(marker)) + ').touch()']
+    runtime.build_run(command, tmp_path, tmp_path / 'build.log')
+    assert marker.exists()
+    assert any('Still running' in message and not done for message, done in observed)
+    assert any('compiling real fixture' in message for message, _ in observed)
+    assert observed[-1][0].startswith('Finished ')
+
+
+def test_failed_build_includes_actual_error_in_terminal(tmp_path, monkeypatch):
+    import sys
+    monkeypatch.setattr(runtime, 'BUILD_PROGRESS_SECONDS', .05)
+    with pytest.raises(RuntimeError, match='actual compiler failure'):
+        runtime.build_run([sys.executable, '-c', 'import sys; print("actual compiler failure", file=sys.stderr); sys.exit(2)'], tmp_path, tmp_path / 'build.log')
+
+
+def test_interrupt_stops_build_and_sigterm_ignoring_compiler_child(tmp_path, monkeypatch):
+    import sys
+    import time
+    ready, completed = tmp_path / 'child-ready', tmp_path / 'child-completed'
+    child = ('import signal,time; from pathlib import Path; '
+             'signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+             f'Path({str(ready)!r}).touch(); time.sleep(2); Path({str(completed)!r}).touch()')
+    parent = f'import subprocess,sys,time; subprocess.Popen([sys.executable,"-c",{child!r}]); time.sleep(30)'
+    def interrupt_when_ready(message):
+        if message.startswith('Still running') and ready.exists():
+            raise KeyboardInterrupt
+    monkeypatch.setattr(runtime, 'log', interrupt_when_ready)
+    monkeypatch.setattr(runtime, 'BUILD_PROGRESS_SECONDS', .03)
+    with pytest.raises(KeyboardInterrupt):
+        runtime.build_run([sys.executable, '-c', parent], tmp_path, tmp_path / 'build.log', timeout=5)
+    assert ready.exists(), 'The child must really have started and ignored SIGTERM'
+    time.sleep(2.2)
+    assert not completed.exists(), 'The compiler descendant must be killed even after its make-like parent exits'
+
+
+def test_build_timeout_cancels_child_before_it_can_finish(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    import time
+    marker = tmp_path / 'late-output'
+    code = f'import time; from pathlib import Path; time.sleep(.5); Path({str(marker)!r}).touch()'
+    monkeypatch.setattr(runtime, 'BUILD_PROGRESS_SECONDS', .03)
+    with pytest.raises(subprocess.TimeoutExpired):
+        runtime.build_run([sys.executable, '-c', code], tmp_path, tmp_path / 'build.log', timeout=.1)
+    time.sleep(.6)
+    assert not marker.exists()
+
+
+def test_cli_ctrl_c_has_clear_message_and_conventional_exit_code():
+    import subprocess
+    import sys
+    driver = ('import argparse,runpy; '
+              'argparse.ArgumentParser.parse_args=lambda *args,**kwargs: (_ for _ in ()).throw(KeyboardInterrupt()); '
+              f'runpy.run_path({str(ROOT / "scripts/upgrade-runtime.py")!r},run_name="__main__")')
+    result = subprocess.run([sys.executable, '-c', driver], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 130
+    assert 'cancelled (Ctrl+C)' in result.stderr
+    assert 'Traceback' not in result.stderr

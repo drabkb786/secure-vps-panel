@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import contextlib
 import fcntl
 import hashlib
 import json
 import os
 import re
 import shlex
+import signal
 import shutil
 import stat
 import subprocess
@@ -98,14 +100,65 @@ def verify_toolchain():
     log('Native C/C++ compile, link and execution checks passed (/usr/bin/gcc, /usr/bin/g++)')
 
 
+BUILD_PROGRESS_SECONDS = 10
+
+
+def build_log_tail(path, limit=1800):
+    with path.open('rb') as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - limit))
+        return handle.read(limit).decode('utf-8', errors='replace')
+
+
+def stop_build(process):
+    """Cancel the build's session, including make's compiler/linker descendants."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except (subprocess.TimeoutExpired, KeyboardInterrupt):
+        pass
+    # A make leader can exit before a child that ignores SIGTERM. Reap/kill the
+    # entire original group even when the leader has already returned.
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    process.wait(timeout=5)
+
+
 def build_run(args, directory, log_file, timeout=1800, env=None):
+    command = [str(argument) for argument in args]
+    label = shlex.join(command[:2])
+    log(f'Running {label}; status every {BUILD_PROGRESS_SECONDS}s; full log: {log_file}')
+    started = time.monotonic()
+    deadline = started + timeout
     with log_file.open('a') as output:
-        output.write('\n$ ' + shlex.join([str(a) for a in args]) + '\n')
+        output.write('\n$ ' + shlex.join(command) + '\n')
         output.flush()
-        result = subprocess.run([str(a) for a in args], cwd=directory, env=build_environment(env),
-                                stdout=output, stderr=subprocess.STDOUT, timeout=timeout, check=False)
-    if result.returncode:
-        raise RuntimeError(f'{Path(args[0]).name} failed; inspect {log_file}')
+        process = subprocess.Popen(command, cwd=directory, env=build_environment(env),
+                                   stdout=output, stderr=subprocess.STDOUT,
+                                   start_new_session=True)
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    process.wait(timeout=min(BUILD_PROGRESS_SECONDS, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    elapsed = time.monotonic() - started
+                    if elapsed >= timeout:
+                        raise subprocess.TimeoutExpired(command, timeout) from None
+                    lines = build_log_tail(log_file, 512).splitlines()
+                    preview = ''.join(c if c.isprintable() else ' ' for c in lines[-1])[-220:] if lines else '(no output yet)'
+                    log(f'Still running {label}: {elapsed:.0f}s elapsed; latest log: {preview}')
+        except BaseException:
+            stop_build(process)
+            raise
+    if process.returncode:
+        raise RuntimeError(f'{Path(command[0]).name} failed; inspect {log_file}\n' + build_log_tail(log_file))
+    log(f'Finished {label} in {time.monotonic() - started:.1f}s')
 
 
 def read_manifest(path):
@@ -520,6 +573,10 @@ def main():
 if __name__ == '__main__':
     try:
         main()
+    except KeyboardInterrupt:
+        print('\nRuntime command cancelled (Ctrl+C). Build logs and recovery snapshots are retained. '
+              'Check service health before retrying.', file=sys.stderr)
+        raise SystemExit(130)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         print(f'Runtime upgrade failed: {exc}', file=sys.stderr)
         raise SystemExit(1)
