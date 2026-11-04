@@ -376,7 +376,7 @@ def test_incomplete_or_untrusted_releases_are_rejected(completed_build, problem)
     assert not checked
 
 
-@pytest.mark.parametrize('identifier', ['../8118e9df56f5', '/tmp/release', 'failed-build-8118e9df56f5', 'nothex'])
+@pytest.mark.parametrize('identifier', ['', '../8118e9df56f5', '/tmp/release', 'failed-build-8118e9df56f5', 'nothex'])
 def test_activate_built_rejects_non_release_names(identifier):
     with pytest.raises(ValueError, match='Invalid completed build ID'):
         runtime.completed_release(identifier, {})
@@ -404,3 +404,14 @@ def test_completed_release_rejects_links_into_writable_directories(completed_bui
     with pytest.raises(RuntimeError, match='link target'):
         runtime.completed_release(release.name, manifest)
     assert not checked
+
+
+def test_empty_activate_built_argument_cannot_fall_back_to_a_full_build(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, 'STATE', tmp_path)
+    monkeypatch.setattr(runtime, 'preflight', lambda: None)
+    monkeypatch.setattr(runtime.sys, 'argv', ['upgrade-runtime.py', '--activate-built', ''])
+    def forbidden(*args, **kwargs): pytest.fail('Invalid completed ID must not start apt or compilation')
+    monkeypatch.setattr(runtime, 'run', forbidden)
+    monkeypatch.setattr(runtime, 'build', forbidden)
+    with pytest.raises(ValueError, match='Invalid completed build ID'):
+        runtime.main()

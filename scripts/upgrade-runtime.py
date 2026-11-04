@@ -618,7 +618,7 @@ def main():
             restore(backup, state)
             log('Previous runtime and service commands restored; certificates/configuration retained')
             return
-        if args.activate_built:
+        if args.activate_built is not None:
             release = completed_release(args.activate_built, manifest)
         else:
             log('Installing build prerequisites; package-owned Python/OpenSSL/sshd remain in place')
