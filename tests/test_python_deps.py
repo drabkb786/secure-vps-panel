@@ -1,6 +1,6 @@
 import hashlib
 import importlib.util
-import io
+import os
 from pathlib import Path
 import zipfile
 
@@ -34,9 +34,17 @@ def test_atomic_dependency_activation_and_failed_download(tmp_path, monkeypatch)
     def download(args, **kwargs): Path(args[args.index('--output') + 1]).write_bytes(fixture.read_bytes())
     monkeypatch.setattr(deps.subprocess, 'run', download)
     destination = tmp_path / 'install'
-    deps.install(destination)
+    previous_umask = os.umask(0o077)
+    try:
+        deps.install(destination)
+    finally:
+        os.umask(previous_umask)
+    assert (destination / "deps").stat().st_mode & 0o777 == 0o755
     previous = (destination / 'vendor').resolve()
     assert (previous / 'package/__init__.py').is_file()
+    assert previous.stat().st_mode & 0o777 == 0o755
+    assert (previous / 'package').stat().st_mode & 0o777 == 0o755
+    assert (previous / 'package/__init__.py').stat().st_mode & 0o777 == 0o644
     deps.install(destination)
     assert (destination / 'vendor').resolve() == previous
     monkeypatch.setattr(deps, 'WHEELS', (('https://example.test/new.whl', '0' * 64),))

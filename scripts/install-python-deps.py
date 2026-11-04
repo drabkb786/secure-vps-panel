@@ -35,11 +35,13 @@ def install(destination):
     destination = destination.resolve()
     releases = destination / 'deps'
     releases.mkdir(mode=0o755, parents=True, exist_ok=True)
+    releases.chmod(0o755)  # The main installer intentionally inherits umask 077.
     digest = hashlib.sha256(repr(WHEELS).encode()).hexdigest()[:20]
     release = releases / digest
     if not (release / '.complete').is_file():
         with tempfile.TemporaryDirectory(prefix='.build-', dir=releases) as work:
             stage = Path(work) / 'packages'; stage.mkdir(mode=0o755)
+            stage.chmod(0o755)
             for url, expected in WHEELS:
                 wheel = Path(work) / url.rsplit('/', 1)[-1]
                 subprocess.run(['/usr/bin/curl', '--fail', '--location', '--proto', '=https', '--proto-redir', '=https', '--tlsv1.2',
@@ -53,6 +55,7 @@ def install(destination):
             if release.exists():
                 raise ValueError('Incomplete dependency release exists: ' + str(release))
             stage.rename(release)
+    release.chmod(0o755)
     temporary = destination / '.vendor-new'
     temporary.unlink(missing_ok=True)
     temporary.symlink_to(release.relative_to(destination))
