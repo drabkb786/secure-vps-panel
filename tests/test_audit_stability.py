@@ -135,3 +135,17 @@ def test_control_reply_allows_upload_frame_overhead():
             async def wait_closed(self): pass
         await ssh_ws_client.pump(None, Writer(), client, [Ping(payload=b'probe'), CloseConnection(code=1000)], source=io.BytesIO(), sink=io.BytesIO())
     asyncio.run(run())
+
+
+def test_native_transport_port_allocator_rejects_kernel_reuse(monkeypatch):
+    import test_xray_core
+    numbers = iter([48619, 48619, 48620])
+    class Socket:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def bind(self, address): pass
+        def getsockname(self): return '127.0.0.1', next(numbers)
+    monkeypatch.setattr(test_xray_core, '_ALLOCATED_PORTS', set())
+    monkeypatch.setattr(test_xray_core.socket, 'socket', Socket)
+    assert test_xray_core.free_port() == 48619
+    assert test_xray_core.free_port() == 48620

@@ -25,10 +25,21 @@ CORE = os.environ.get("XRAY_TEST_BINARY", "")
 pytestmark = pytest.mark.skipif(not CORE, reason="XRAY_TEST_BINARY is not set")
 
 
+# Kernel bind(0) may immediately return the same released ephemeral port.
+# Xray can share TCP listeners, so duplicate fixture ports may silently route an
+# XHTTP request into a WS inbound rather than failing at startup.
+_ALLOCATED_PORTS = set()
+
+
 def free_port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    for _ in range(100):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        if port not in _ALLOCATED_PORTS:
+            _ALLOCATED_PORTS.add(port)
+            return port
+    raise RuntimeError("Could not allocate a distinct native-test port")
 
 
 def record():
