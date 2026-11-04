@@ -108,7 +108,7 @@ jobs:
           # Hosted runners make /opt writable to their runner user. The runtime
           # deliberately refuses writable interpreter ancestors on a real VPS.
           sudo chmod 0755 /opt
-          sudo install -d -o root -g root -m 0755 /opt/noway /opt/noway/runtime
+          sudo install -d -o root -g root -m 0755 /opt/noway /opt/noway/runtime /opt/noway/runtime/releases
           sudo stat -c '%U:%G %a %n' /opt /opt/noway /opt/noway/runtime
           # Reproduce VPS compiler autodetection failures from inherited build variables.
           sudo env CC=/missing/login-compiler CXX=/missing/login-cxx CROSS_COMPILE=missing-cross- CFLAGS=-invalid-login-flag LDFLAGS=-invalid-login-flag /usr/bin/python3 scripts/upgrade-runtime.py --apply --jobs 2
@@ -134,5 +134,6 @@ jobs:
       - name: Build failure details
         if: failure()
         run: |
+          sudo stat -c '%U:%G %a %F %n' /opt/noway/runtime /opt/noway/runtime/releases
           sudo find /opt/noway/runtime -name build.log -exec tail -n 70 {} \;
           sudo journalctl -u nginx -u fail2ban -u abdulbasit-paneld -u abdulbasit-ws -u abdulbasit-web -n 65 --no-pager

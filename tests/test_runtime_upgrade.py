@@ -415,3 +415,11 @@ def test_empty_activate_built_argument_cannot_fall_back_to_a_full_build(tmp_path
     monkeypatch.setattr(runtime, 'build', forbidden)
     with pytest.raises(ValueError, match='Invalid completed build ID'):
         runtime.main()
+
+
+def test_source_build_refuses_an_unprotected_release_parent_before_downloads(completed_build, monkeypatch):
+    release, manifest, _ = completed_build
+    release.parent.chmod(0o777)
+    monkeypatch.setattr(runtime, 'download', lambda *a: pytest.fail('Do not build in a writable parent'))
+    with pytest.raises(RuntimeError, match='Unsafe runtime release directory'):
+        runtime.build(manifest, 2)

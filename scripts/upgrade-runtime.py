@@ -238,11 +238,15 @@ def script(path, command, environment=None):
 def build(manifest, jobs):
     recipe = Path(__file__).read_bytes()
     fingerprint = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode() + recipe).hexdigest()[:12]
-    existing = ROOT / 'releases' / fingerprint
+    releases = ROOT / 'releases'
+    releases.mkdir(mode=0o755, exist_ok=True)
+    info = releases.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise RuntimeError(f'Unsafe runtime release directory: {releases} (uid={info.st_uid}, mode={stat.S_IMODE(info.st_mode):04o})')
+    existing = releases / fingerprint
     if (existing / 'READY').is_file():
         log('Verified runtime build already exists; checking versions again')
-        verify_versions(existing, manifest)
-        return existing
+        return completed_release(fingerprint, manifest)
     # Absolute rpaths and venv shebangs refer to this immutable release directory.
     # Never rename a built runtime, and never reuse a partial build.
     if existing.exists():
@@ -388,7 +392,7 @@ def completed_release(identifier, manifest):
     for directory in (releases, release):
         info = directory.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
-            raise RuntimeError(f'Unsafe completed build directory: {directory}')
+            raise RuntimeError(f'Unsafe completed build directory: {directory} (uid={info.st_uid}, mode={stat.S_IMODE(info.st_mode):04o})')
     for name in ('READY', 'manifest.json'):
         if (release / name).is_symlink() or not (release / name).is_file():
             raise RuntimeError(f'Build {identifier} is incomplete: missing regular {name}')
