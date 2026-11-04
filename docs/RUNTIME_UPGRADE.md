@@ -81,6 +81,29 @@ until the candidate finishes verification. If the native compiler probe still
 fails, its error includes the distribution toolchain repair command. A failed
 compile/link/run probe must be resolved before continuing.
 
+## Retry a completed build without compiling it again
+
+If the log reached configuration validation after all build steps completed, the
+release already has a `READY` receipt. Retry its activation with the 12-hex build
+ID shown in the original log, after pulling the latest source:
+
+```sh
+cd /root/secure-vps-panel &&
+git pull --ff-only origin main &&
+/usr/bin/python3 scripts/upgrade-runtime.py --activate-built BUILD_ID_FROM_LOG
+```
+
+This explicit recovery action verifies the root-owned release tree, completion
+receipt, exact selected manifest, actual binary versions/linkage and configuration
+before activation. It does not download sources or run compilers. Incomplete,
+writable, foreign-owned or mismatched builds are refused. Use `--apply` when you
+intend to build a changed recipe instead of activating an existing candidate.
+
+Certbot renewal files are read with ConfigObj, the parser Certbot itself uses.
+Root-level settings, quoted values, comments, interpolation, list values and nested
+`[[webroot_map]]` sections are preserved; configuration and certificate files are
+not rewritten. Missing external renewal plugins still block activation.
+
 ## Integrity, configuration and recovery
 
 `RUNTIME_VERSIONS.json` records official URLs, exact versions and independently

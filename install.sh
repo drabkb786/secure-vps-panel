@@ -73,7 +73,7 @@ fi
 log "Installing required packages without performing an unattended full system upgrade"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates nginx openssh-server dropbear certbot python3 python3-wsproto procps passwd iproute2 iputils-ping fail2ban curl dnsutils openssl
+apt-get install -y --no-install-recommends ca-certificates nginx openssh-server dropbear certbot python3 python3-configobj python3-wsproto procps passwd iproute2 iputils-ping fail2ban curl dnsutils openssl
 python3 - <<'PY' || die "Python 3.10 or newer is required (use Ubuntu 22.04+/Debian 12+ or install a supported Python)"
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
