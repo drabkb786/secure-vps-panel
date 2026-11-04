@@ -32,6 +32,8 @@ def validate(data: dict, dns_validator) -> tuple[dict, list[dict]]:
     if not isinstance(config.get("udp_enabled", True), bool):
         raise ValidationError("Backup UDP flag is invalid")
     network = {"enabled": config["enabled"], "xhttp_enabled": config.get("xhttp_enabled", False), "udp_enabled": config.get("udp_enabled", True), "dns": dns_validator(config.get("dns", {}))}
+    if not isinstance(config.get("reality_enabled", False), bool):
+        raise ValidationError("Backup REALITY flag is invalid")
     if config.get("reality_enabled"):
         from reality_transport import keys, port
         keys()  # REALITY identity is local; never silently replace a server key.

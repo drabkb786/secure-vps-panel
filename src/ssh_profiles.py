@@ -53,6 +53,6 @@ def export(params, lookup):
     adapter = Path(__file__).with_name("ssh_ws_client.py")
     if adapter.is_file():
         files["ssh-ws-client.py"] = adapter.read_text()
-    files["README.txt"] = "\n".join(notes) + "\nInstall adapter dependency: python -m pip install 'wsproto==1.2.0'\nPassword is prompted by SSH unless explicitly embedded in this private export.\n"
+    files["README.txt"] = "\n".join(notes) + "\nInstall adapter dependency: python -m pip install 'wsproto==1.3.2' 'h11==0.16.0'\nPassword is prompted by SSH unless explicitly embedded in this private export.\n"
     return {"name": user, "links": links, "files": files, "profile": profile,
             "readiness": {"public_reachability": "not_checked", "warnings": notes}}

@@ -39,11 +39,11 @@ def process(pid: int) -> Process | None:
     """Use kernel metadata and the actual executable, not comm/argv substrings."""
     try:
         root = PROC / str(pid)
-        executable = (root / "exe").resolve(strict=True)
+        executable = Path(os.readlink(root / "exe").removesuffix(" (deleted)"))
         allowed = {p.resolve() for p in EXECUTABLES}
         if executable not in allowed:
             return None
-        st = executable.stat()
+        st = (root / "exe").stat()
         if st.st_uid != 0 or st.st_mode & 0o022:
             return None
         fields = (root / "stat").read_text().rsplit(")", 1)[1].split()

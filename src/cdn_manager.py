@@ -17,6 +17,7 @@ import time
 import gateway_identity
 from datetime import datetime, timezone
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 from common import BASE_DIR, DOMAIN_FILE, ValidationError, atomic_write, atomic_write_json, read_json, read_text, validate_domain
 
@@ -221,6 +222,17 @@ def probe(host: str, path: str, websocket: bool, provider="cloudfront") -> dict:
         return {"ok": False, "error": "DNS, TLS or connection check failed", "elapsed_ms": round((time.monotonic() - started) * 1000)}
 
 
+def probe_paths(endpoint, paths, provider="cloudfront"):
+    """Bound parallel read-only probes; persist the combined report once."""
+    routes = [(name, path) for name, path in paths.items() if name != "xhttp"]
+    def check(route):
+        name, path = route
+        result = probe(endpoint, path, name != "health") if provider == "cloudfront" else probe(endpoint, path, name != "health", provider=provider)
+        return name, result
+    with ThreadPoolExecutor(max_workers=5, thread_name_prefix="cdn-probe") as pool:
+        return dict(pool.map(check, routes))
+
+
 class Manager:
     def __init__(self, install_nginx):
         self.install_nginx = install_nginx
@@ -271,7 +283,7 @@ class Manager:
     def check(self, _=None):
         cfg = settings()
         if not cfg["enabled"] or not cfg["endpoint"]: raise ValidationError("Attach a distribution hostname first")
-        checks = {name: probe(cfg["endpoint"], path, name != "health") for name, path in PATHS.items() if name != "xhttp"}
+        checks = probe_paths(cfg["endpoint"], PATHS)
         report = {"checked_at": datetime.now(timezone.utc).isoformat(), "endpoint": cfg["endpoint"], "ok": all(c["ok"] for c in checks.values()), "checks": checks,
                   "scope": "TLS, CloudFront response headers, origin health and WebSocket upgrades; account authentication and speed not tested"}
         cfg["last_check"] = report

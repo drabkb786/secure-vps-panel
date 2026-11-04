@@ -111,6 +111,7 @@ install -d -m 0755 -o root -g root "$INSTALL_DIR" /var/www/letsencrypt
 install -d -m 0700 -o root -g root /var/lib/letsencrypt /var/log/letsencrypt
 install -d -m 0750 -o root -g abdulbasit-xray /etc/abdulbasit-xray
 install -d -m 0755 -o root -g root "$INSTALL_DIR/web"
+python3 "$PROJECT_DIR/scripts/install-python-deps.py" --destination "$INSTALL_DIR"
 install -m 0755 -o root -g root "$PROJECT_DIR/scripts/panel-python" "$INSTALL_DIR/python"
 if [[ -f "$INSTALL_DIR/paneld.py" ]]; then
   cp -a "$INSTALL_DIR" "$BACKUP_DIR/app.$(date -u +%Y%m%dT%H%M%SZ)"

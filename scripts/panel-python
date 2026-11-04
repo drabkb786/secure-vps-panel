@@ -1,6 +1,9 @@
 #!/bin/sh
 # Panel-only interpreter selector. Never changes Ubuntu's python3 symlink.
 export PYTHON_JIT=0 PYTHONNOUSERSITE=1
+if [ -d /usr/local/lib/abdulbasit/vendor ]; then
+    export PYTHONPATH="/usr/local/lib/abdulbasit/vendor${PYTHONPATH:+:$PYTHONPATH}"
+fi
 if [ -x /opt/noway/runtime/current/bin/python3 ]; then
     exec /opt/noway/runtime/current/bin/python3 "$@"
 fi

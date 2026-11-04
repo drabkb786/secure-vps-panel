@@ -138,7 +138,7 @@ def build(manifest, jobs):
     # Never rename a built runtime, and never reuse a partial build.
     if existing.exists():
         # Preserve failed work for inspection, and let a normal retry start clean.
-        failed = STATE / ('failed-build-' + fingerprint + '-' + str(time.time_ns()))
+        failed = existing.with_name('failed-build-' + fingerprint + '-' + str(time.time_ns()))
         existing.rename(failed)
         log(f'Previous incomplete build retained at {failed}')
     existing.mkdir(parents=True, mode=0o755)
@@ -172,7 +172,7 @@ def build(manifest, jobs):
     log('Installing Certbot/ACME from verified official sources and the panel WebSocket dependency')
     build_run([private_python, '-m', 'pip', 'install', '--disable-pip-version-check',
                '--index-url', 'https://pypi.org/simple', '--upgrade',
-               archives['acme'], archives['certbot'], 'wsproto==1.2.0'], existing, log_file)
+               archives['acme'], archives['certbot'], 'wsproto==1.3.2', 'h11==0.16.0'], existing, log_file)
     write_file(existing / 'python-packages.txt', run([private_python, '-m', 'pip', 'freeze']))
     nginx_source = extract(archives['nginx'], sources / 'nginx')
     log('Building Nginx stable against the private OpenSSL LTS library')
@@ -236,6 +236,7 @@ def verify_versions(release, manifest):
                   'import ssl,sqlite3,hashlib,wsproto,acme,certbot; '
                   'from importlib.metadata import version; '
                   'assert version("acme")=="' + expected['acme'] + '"; '
+                  'assert version("wsproto")=="1.3.2" and version("h11")=="0.16.0"; '
                   'assert hasattr(hashlib,"scrypt"); print(ssl.OPENSSL_VERSION)'])
     if expected['openssl'] not in output or expected['openssl'] not in run([release / 'bin/nginx', '-V']):
         raise RuntimeError('Nginx and Python must actually link to the selected OpenSSL LTS')

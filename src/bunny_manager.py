@@ -97,8 +97,7 @@ class Manager:
         cfg = settings()
         if not cfg["enabled"]:
             raise ValidationError("Enable Bunny delivery first")
-        checks = {name: cdn_manager.probe(cfg["endpoint"], path, name != "health", provider="bunny")
-                  for name, path in PATHS.items() if name != "xhttp"}
+        checks = cdn_manager.probe_paths(cfg["endpoint"], PATHS, provider="bunny")
         report = {"checks": checks, "ok": all(x["ok"] for x in checks.values()),
                   "scope": "TLS, Bunny edge, origin health and WS handshake only; SSH login, XHTTP and sustained transfer require real clients"}
         cfg["last_check"] = report
