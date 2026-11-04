@@ -336,8 +336,8 @@ for unit in "$PROJECT_DIR"/systemd/*.service "$PROJECT_DIR"/systemd/*.timer; do
   install -m 0644 -o root -g root "$unit" "/etc/systemd/system/$(basename "$unit")"
 done
 systemctl daemon-reload
-systemctl enable abdulbasit-paneld abdulbasit-ws abdulbasit-session-enforcer abdulbasit-web abdulbasit-xray
-systemctl restart abdulbasit-paneld abdulbasit-ws abdulbasit-session-enforcer abdulbasit-web
+systemctl enable abdulbasit-paneld abdulbasit-ws abdulbasit-session-enforcer abdulbasit-web abdulbasit-xray abdulbasit-ssh-meter
+systemctl restart abdulbasit-ssh-meter abdulbasit-paneld abdulbasit-ws abdulbasit-session-enforcer abdulbasit-web
 for attempt in {1..30}; do
   [[ -S /run/abdulbasit/paneld.sock ]] && break
   sleep 0.2

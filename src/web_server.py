@@ -28,6 +28,7 @@ MAX_BODY = 16 * 1024
 SESSION_TTL = 8 * 3600
 IDLE_TTL = 30 * 60
 COMMANDS = {"cloudfront_configure", "cloudfront_check",
+    "account_connections", "account_ip_set", "ssh_reset_usage",
     "create_user", "delete_user", "renew_user", "set_sessions", "set_quota",
     "ssh_export", "bunny_status", "bunny_configure", "bunny_check", "set_domain", "issue_cert", "restart_service", "dns_lookup", "dns_set",
     "xray_configure", "xray_create", "xray_update", "subscription_rotate", "subscription_revoke",
@@ -204,6 +205,7 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(302, b"", headers={"Location": "/panel/"})
             return
         assets = {"/panel/": ("index.html", "text/html; charset=utf-8"), "/panel/app.js": ("app.js", "text/javascript; charset=utf-8"), "/panel/qr.js": ("qr.js", "text/javascript; charset=utf-8"), "/panel/style.css": ("style.css", "text/css; charset=utf-8")}
+        assets.update({"/panel/accounts.js": ("accounts.js", "text/javascript; charset=utf-8"), "/panel/accounts.css": ("accounts.css", "text/css; charset=utf-8")})
         if url.path in assets:
             name, mime = assets[url.path]
             self.reply(200, (ASSETS / name).read_bytes(), mime)
@@ -338,6 +340,20 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/panel/api/logout":
             STORE.delete(self.token())
             self.json(200, {"ok": True}, {"Set-Cookie": f"{COOKIE}=; Path=/panel/; Max-Age=0; HttpOnly; SameSite=Strict"})
+        elif path == "/panel/api/ssh-export":
+            # Transient passwords are POST-only: never put credentials in URLs.
+            params = {"username": str(data.get("name", "")), "route": data.get("route", "direct"), "_web_revision": session["revision"]}
+            if data.get("password"):
+                params["password"] = data["password"]
+            result = request("ssh_export", **params)
+            if data.get("format") == "zip":
+                stream = io.BytesIO()
+                with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+                    for name, content in result["files"].items():
+                        archive.writestr(name, content)
+                self.reply(200, stream.getvalue(), "application/zip", {"Content-Disposition": f'attachment; filename="NOWAY-{result["name"]}.zip"'})
+            else:
+                self.json(200, result)
         elif path == "/panel/api/command":
             command, params = data.get("command"), data.get("params", {})
             if command not in COMMANDS or not isinstance(params, dict):

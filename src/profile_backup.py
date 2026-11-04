@@ -6,6 +6,7 @@ import uuid
 from datetime import date, datetime, timezone
 
 from common import ValidationError, validate_domain, validate_password, validate_username, validate_max_ips, quota_bytes
+from account_policy import blocked_ips
 
 SCHEMA = "noway-xray-backup-v1"
 MAX_BYTES = 256 * 1024
@@ -46,7 +47,7 @@ def validate(data: dict, dns_validator) -> tuple[dict, list[dict]]:
     if not isinstance(rows, list) or len(rows) > 200:
         raise ValidationError("A backup can contain at most 200 profiles")
     clean, names, identities, passwords, digests = [], set(), set(), set(), set()
-    allowed = {"name", "uuid", "trojan_password", "protocols", "enabled", "expiry", "created_at", "subscription_hash", "subscription_issued_at", "quota_gb", "quota_unit", "max_ips", "used_bytes", "upload_bytes", "download_bytes", "trial", "expires_at"}
+    allowed = {"name", "uuid", "trojan_password", "protocols", "enabled", "expiry", "created_at", "subscription_hash", "subscription_issued_at", "quota_gb", "quota_unit", "max_ips", "used_bytes", "upload_bytes", "download_bytes", "trial", "expires_at", "blocked_ips"}
     for row in rows:
         if not isinstance(row, dict) or set(row) - allowed:
             raise ValidationError("Backup account has unsupported fields")
@@ -75,6 +76,8 @@ def validate(data: dict, dns_validator) -> tuple[dict, list[dict]]:
             raise ValidationError("Invalid quota unit")
         quota_bytes(item)
         item["max_ips"] = validate_max_ips(row.get("max_ips", 0))
+        if "blocked_ips" in row:
+            item["blocked_ips"] = blocked_ips(row)
         for field in ("used_bytes", "upload_bytes", "download_bytes"):
             value = row.get(field, 0)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > 2 ** 63 - 1:

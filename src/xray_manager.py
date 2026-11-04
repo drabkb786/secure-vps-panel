@@ -27,6 +27,7 @@ from client_formats import clash_config, singbox_config
 import cdn_manager
 import profile_backup
 import traffic
+import account_policy
 import gateway_identity
 import xray_runtime
 import reality_transport
@@ -83,7 +84,7 @@ def quota_exhausted(account: dict) -> bool:
 
 
 def public_account(account: dict) -> dict:
-    fields = {"name", "protocols", "enabled", "expiry", "created_at", "expires_at", "trial", "quota_gb", "used_bytes", "upload_bytes", "download_bytes", "max_ips", "online_ips", "ip_blocked_until", "ip_monitoring_failed", "meter_unavailable"}
+    fields = {"name", "protocols", "enabled", "expiry", "created_at", "expires_at", "trial", "quota_gb", "used_bytes", "upload_bytes", "download_bytes", "max_ips", "online_ips", "ip_blocked_until", "ip_monitoring_failed", "meter_unavailable", "blocked_ips"}
     return {k: v for k, v in account.items() if k in fields} | {
         "active": active(account), "quota_exhausted": quota_exhausted(account), "subscription_enabled": bool(account.get("subscription_hash")),
         "quota_unit": account.get("quota_unit", "GiB"), "quota_bytes": quota_bytes(account),
@@ -168,6 +169,9 @@ def server_config(config: dict, rows: list[dict]) -> dict:
         clients = [{"id": row["uuid"], "email": f"{row['uuid']}-reality@noway.local", "flow": "xtls-rprx-vision"}
                    for row in rows if active(row) and "vless" in row["protocols"]]
         inbounds.append(reality_transport.inbound(config, clients, read_text(DOMAIN_FILE)))
+    ip_rules = [{"type": "field", "user": sorted(traffic.emails(row)),
+                 "source": account_policy.blocked_ips(row), "outboundTag": "block"}
+                for row in rows if account_policy.blocked_ips(row)]
     return {
         "log": {"loglevel": "warning"},
         "api": {"tag": "noway-stats", "listen": str(traffic.API_SOCKET), "services": ["StatsService", "HandlerService"]},
@@ -180,7 +184,7 @@ def server_config(config: dict, rows: list[dict]) -> dict:
             {"tag": "block", "protocol": "blackhole", "settings": {}},
         ],
         # Block private/link-local targets, including metadata services, after DNS resolution.
-        "routing": {"domainStrategy": "IPOnDemand", "rules": ([] if config.get("udp_enabled", True) else [{"type": "field", "network": "udp", "outboundTag": "block"}]) + [{
+        "routing": {"domainStrategy": "IPOnDemand", "rules": ip_rules + ([] if config.get("udp_enabled", True) else [{"type": "field", "network": "udp", "outboundTag": "block"}]) + [{
             "type": "field", "ip": ["0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4", "::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"], "outboundTag": "block",
         }]},
     }
@@ -548,6 +552,8 @@ class Manager:
                     row.pop("ip_blocked_until", None); row.pop("ip_monitoring_failed", None)
             if row["quota_gb"] is None:
                 row.pop("meter_unavailable", None)
+        elif action == "ip_policy":
+            account_policy.change_ip(row, params.get("ip"), params.get("blocked"))
         elif action == "reset_usage":
             if self.collect_usage().get("available") is not True:
                 raise ValidationError("Start Xray statistics before resetting usage so the baseline can be preserved")

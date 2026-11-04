@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.6.0 — Account management, per-IP access and measured payload
+
+- Add the sketch's account rows with upload, download, total/quota, IP cap,
+  access status and expandable/paginated per-IP traffic and Block/Allow controls.
+- Add canonical account-scoped IP policies for SSH and every Xray protocol,
+  keeping unrelated accounts behind the same NAT address usable.
+- Add explicitly labelled modified builds of pinned Dropbear 2026.94 and Xray
+  v26.10.31. Count authenticated SSH channel payload and Xray dispatch payload
+  per account/source; keep absolute-counter baselines across reconnect/reset.
+- Add a SO_PEERCRED/executable/socket-verified SSH collector and metered SSH
+  GB/GiB quotas. Preserve unenforced legacy SSH quota notes as informational.
+- Add POST-only optional-password SSH exports, visible server/client settings,
+  complete Host payloads, direct SSH links, private ZIP and existing QR/configs.
+- Keep byte counters as integers and return exact decimal strings. New runtimes
+  require explicit activation; pre-activation per-IP usage cannot be invented.
+  Limits are sampled, can overshoot, and exclude provider transport overhead.
+- Keep expensive IP queries lazy and paginated. Native meter builds and actual
+  byte/authentication/IP-block acceptance run in a dedicated Linux CI job.
+
 ## 4.5.0 — Explicit HAProxy / Dropbear 2026 migration
 
 - Add a backed-up migration to official checksum-pinned Dropbear 2026.94 on
