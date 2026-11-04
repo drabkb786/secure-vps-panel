@@ -7,7 +7,6 @@ finish and pass compatibility checks before touching the current runtime.
 from __future__ import annotations
 
 import argparse
-import configparser
 import contextlib
 import fcntl
 import hashlib
@@ -353,15 +352,72 @@ def verify_versions(release, manifest):
 
 
 def check_renewal_plugins(directory=Path('/etc/letsencrypt/renewal')):
-    # This installation intentionally contains Certbot's built-in authenticators.
-    # Refuse to strand pre-existing DNS/Nginx-plugin lineages during an upgrade.
-    for path in directory.glob('*.conf'):
-        config = configparser.ConfigParser(interpolation=None, strict=False)
-        config.read(path)
+    # Certbot uses ConfigObj: root-level keys and nested [[webroot_map]] sections
+    # are valid. A generic INI parser incorrectly rejects normal renewal files.
+    paths = sorted(directory.glob('*.conf'))
+    if not paths:
+        return
+    try:
+        from configobj import ConfigObj, ConfigObjError
+    except ImportError as exc:
+        raise RuntimeError('Install python3-configobj to read Certbot renewal files') from exc
+    for path in paths:
+        try:
+            config = ConfigObj(str(path), encoding='utf-8', file_error=True, raise_errors=True)
+            params = config.get('renewalparams')
+            values = {field: params.get(field, '') for field in ('authenticator', 'installer')} if isinstance(params, dict) else {}
+        except (ConfigObjError, OSError, UnicodeError) as exc:
+            raise RuntimeError(f'Cannot parse Certbot renewal file {path}: {exc}') from exc
+        if not isinstance(params, dict):
+            raise RuntimeError(f'Invalid Certbot renewal file {path}: missing [renewalparams] section')
         for field in ('authenticator', 'installer'):
-            plugin = config.get('renewalparams', field, fallback='').strip()
+            value = values[field]
+            if not isinstance(value, str):
+                raise RuntimeError(f'Invalid {field} value in Certbot renewal file {path}')
+            plugin = value.strip()
             if plugin and plugin not in ('None', 'manual', 'standalone', 'webroot'):
                 raise RuntimeError(f'Existing certificate needs the {plugin} Certbot plugin; install and validate that plugin in the private venv before activation')
+
+
+def completed_release(identifier, manifest):
+    """Explicitly reuse a finished, root-controlled build after activation failure."""
+    if not re.fullmatch(r'[0-9a-f]{12}', identifier):
+        raise ValueError('Invalid completed build ID; use the 12-hex release directory name')
+    releases = ROOT / 'releases'
+    release = releases / identifier
+    for directory in (releases, release):
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise RuntimeError(f'Unsafe completed build directory: {directory}')
+    for name in ('READY', 'manifest.json'):
+        if (release / name).is_symlink() or not (release / name).is_file():
+            raise RuntimeError(f'Build {identifier} is incomplete: missing regular {name}')
+    # Do not execute a build with writable/foreign-owned libraries or links into
+    # writable directories. Normal venv links into this release or /usr are valid.
+    for path in release.rglob('*'):
+        info = path.lstat()
+        if info.st_uid != 0:
+            raise RuntimeError(f'Unsafe completed build owner: {path}')
+        if stat.S_ISLNK(info.st_mode):
+            target = path.resolve(strict=True)
+            for part in (target, *target.parents):
+                details = part.stat()
+                if details.st_uid != 0 or details.st_mode & 0o022:
+                    raise RuntimeError(f'Unsafe completed build link target: {path}')
+                if part == ROOT:
+                    break
+        elif not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)) or info.st_mode & 0o022:
+            raise RuntimeError(f'Unsafe completed build permissions/type: {path}')
+    try:
+        receipt = (release / 'READY').read_text().strip()
+        recorded = json.loads((release / 'manifest.json').read_text())
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f'Cannot read completed build metadata: {identifier}') from exc
+    if receipt != identifier or recorded != manifest:
+        raise RuntimeError('Completed build receipt or selected versions do not match; no activation performed')
+    verify_versions(release, manifest)
+    log(f'Reusing verified completed build {identifier}; no downloads or compilation needed')
+    return release
 
 
 def config_checks(release):
@@ -542,6 +598,7 @@ def main():
     action.add_argument('--apply', action='store_true')
     action.add_argument('--status', action='store_true')
     action.add_argument('--rollback', metavar='BACKUP_ID')
+    action.add_argument('--activate-built', metavar='BUILD_ID', help='Verify and activate an already completed private build')
     parser.add_argument('--jobs', type=int, default=min(2, os.cpu_count() or 1))
     args = parser.parse_args()
     manifest = read_manifest(PROJECT / 'RUNTIME_VERSIONS.json')
@@ -561,16 +618,19 @@ def main():
             restore(backup, state)
             log('Previous runtime and service commands restored; certificates/configuration retained')
             return
-        log('Installing build prerequisites; package-owned Python/OpenSSL/sshd remain in place')
-        run(['apt-get', 'update'], timeout=600)
-        run(['apt-get', 'install', '-y', '--no-install-recommends', 'build-essential', 'gcc', 'g++',
-             'make', 'binutils', 'libc6-dev', 'pkg-config',
-             'perl', 'ca-certificates', 'curl', 'xz-utils', 'libpcre2-dev', 'zlib1g-dev',
-             'libffi-dev', 'libsqlite3-dev', 'libbz2-dev', 'liblzma-dev', 'libreadline-dev',
-             'uuid-dev', 'python3-systemd'], timeout=1200,
-            env={**os.environ, 'DEBIAN_FRONTEND': 'noninteractive'})
-        verify_toolchain()
-        release = build(manifest, args.jobs)
+        if args.activate_built:
+            release = completed_release(args.activate_built, manifest)
+        else:
+            log('Installing build prerequisites; package-owned Python/OpenSSL/sshd remain in place')
+            run(['apt-get', 'update'], timeout=600)
+            run(['apt-get', 'install', '-y', '--no-install-recommends', 'build-essential', 'gcc', 'g++',
+                 'make', 'binutils', 'libc6-dev', 'pkg-config',
+                 'perl', 'ca-certificates', 'curl', 'xz-utils', 'libpcre2-dev', 'zlib1g-dev',
+                 'libffi-dev', 'libsqlite3-dev', 'libbz2-dev', 'liblzma-dev', 'libreadline-dev',
+                 'uuid-dev', 'python3-systemd', 'python3-configobj'], timeout=1200,
+                env={**os.environ, 'DEBIAN_FRONTEND': 'noninteractive'})
+            verify_toolchain()
+            release = build(manifest, args.jobs)
         if (ROOT / 'current').is_symlink() and (ROOT / 'current').resolve() == release:
             verify_versions(release, manifest)
             config_checks(release)

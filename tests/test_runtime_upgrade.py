@@ -286,3 +286,121 @@ def test_cli_disconnect_and_termination_use_the_cancellation_cleanup(name, code)
     assert result.returncode == code
     assert f'cancelled ({name})' in result.stderr
     assert 'Traceback' not in result.stderr
+
+
+@pytest.mark.parametrize('plugin', ['webroot', 'standalone', 'manual', '"webroot" # inline comment'])
+def test_certbot_root_settings_and_nested_webroot_map_are_read_without_rewriting(tmp_path, plugin):
+    path = tmp_path / 'vpn.example.com.conf'
+    original = ('# Certbot-generated renewal format\nversion = 2.9.0\n'
+                'archive_dir = /etc/letsencrypt/archive/vpn.example.com\n'
+                'cert = /etc/letsencrypt/live/vpn.example.com/cert.pem\n'
+                'privkey = /etc/letsencrypt/live/vpn.example.com/privkey.pem\n'
+                'chain = /etc/letsencrypt/live/vpn.example.com/chain.pem\n'
+                'fullchain = /etc/letsencrypt/live/vpn.example.com/fullchain.pem\n'
+                f'[renewalparams]\nauthenticator = {plugin}\ninstaller = None\n'
+                'webroot_path = /var/www/letsencrypt,\n'
+                '[[webroot_map]]\nvpn.example.com = /var/www/letsencrypt\n')
+    path.write_text(original)
+    before = path.stat()
+    runtime.check_renewal_plugins(tmp_path)
+    after = path.stat()
+    assert path.read_text() == original
+    assert (before.st_mtime_ns, before.st_mode) == (after.st_mtime_ns, after.st_mode)
+
+
+@pytest.mark.parametrize('plugin', ['"dns-cloudflare" # inline comment', 'nginx'])
+def test_headerless_configobj_file_still_blocks_missing_renewal_plugins(tmp_path, plugin):
+    (tmp_path / 'example.conf').write_text(f'version = 2.9.0\n[renewalparams]\nauthenticator = {plugin}\n[[webroot_map]]\nexample.com = /webroot\n')
+    with pytest.raises(RuntimeError, match='Existing certificate needs'):
+        runtime.check_renewal_plugins(tmp_path)
+
+
+@pytest.mark.parametrize('plugin', ['webroot', 'dns-cloudflare'])
+def test_configobj_plugin_interpolation_matches_certbot(tmp_path, plugin):
+    (tmp_path / 'example.conf').write_text(f'plugin = {plugin}\nversion = 2.9.0\n[renewalparams]\nauthenticator = %(plugin)s\n')
+    if plugin == 'webroot':
+        runtime.check_renewal_plugins(tmp_path)
+    else:
+        with pytest.raises(RuntimeError, match='dns-cloudflare'):
+            runtime.check_renewal_plugins(tmp_path)
+
+
+@pytest.mark.parametrize('content', ['version = 2.9.0\n[broken', 'version = 2.9.0\n',
+                                   'version = 2.9.0\n[renewalparams]\nauthenticator = webroot, nginx\n',
+                                   'version = 2.9.0\n[renewalparams]\nauthenticator = %(missing)s\n'])
+def test_invalid_renewal_files_fail_clearly_before_activation(tmp_path, content):
+    (tmp_path / 'example.conf').write_text(content)
+    with pytest.raises(RuntimeError, match='Certbot renewal file'):
+        runtime.check_renewal_plugins(tmp_path)
+
+
+@pytest.fixture
+def completed_build(tmp_path, monkeypatch):
+    if os.geteuid() != 0:
+        pytest.skip('Completed release validation requires root-owned build files')
+    root = tmp_path / 'runtime'; root.mkdir()
+    monkeypatch.setattr(runtime, 'ROOT', root)
+    manifest = runtime.read_manifest(ROOT / 'RUNTIME_VERSIONS.json')
+    release = root / 'releases/8118e9df56f5'; release.mkdir(parents=True)
+    (release / 'READY').write_text(release.name + '\n')
+    (release / 'manifest.json').write_text(json.dumps(manifest))
+    checked = []
+    monkeypatch.setattr(runtime, 'verify_versions', lambda *args: checked.append(args))
+    return release, manifest, checked
+
+
+def test_completed_release_is_version_checked_without_rebuilding(completed_build):
+    release, manifest, checked = completed_build
+    assert runtime.completed_release(release.name, manifest) == release
+    assert checked == [(release, manifest)]
+
+
+@pytest.mark.parametrize('problem', ['missing_ready', 'wrong_receipt', 'wrong_versions', 'writable', 'symlink', 'foreign_owner'])
+def test_incomplete_or_untrusted_releases_are_rejected(completed_build, problem):
+    release, manifest, checked = completed_build
+    if problem == 'missing_ready': (release / 'READY').unlink()
+    elif problem == 'wrong_receipt': (release / 'READY').write_text('a' * 12)
+    elif problem == 'wrong_versions': (release / 'manifest.json').write_text('{}')
+    elif problem == 'writable': (release / 'READY').chmod(0o666)
+    elif problem == 'foreign_owner':
+        try:
+            os.chown(release / 'READY', 65534, -1)
+        except OSError as exc:
+            if exc.errno in (1, 22) and os.environ.get('GITHUB_ACTIONS') != 'true':
+                pytest.skip('Container does not map a foreign UID')
+            raise
+    else:
+        moved = release.with_name('elsewhere'); release.rename(moved); release.symlink_to(moved, target_is_directory=True)
+    with pytest.raises(RuntimeError):
+        runtime.completed_release(release.name, manifest)
+    assert not checked
+
+
+@pytest.mark.parametrize('identifier', ['../8118e9df56f5', '/tmp/release', 'failed-build-8118e9df56f5', 'nothex'])
+def test_activate_built_rejects_non_release_names(identifier):
+    with pytest.raises(ValueError, match='Invalid completed build ID'):
+        runtime.completed_release(identifier, {})
+
+
+def test_activate_built_never_installs_downloads_or_compiles(completed_build, tmp_path, monkeypatch):
+    release, manifest, _ = completed_build
+    monkeypatch.setattr(runtime, 'STATE', tmp_path)
+    monkeypatch.setattr(runtime, 'preflight', lambda: None)
+    monkeypatch.setattr(runtime.sys, 'argv', ['upgrade-runtime.py', '--activate-built', release.name])
+    def forbidden(*args, **kwargs): pytest.fail('No compiler, download or apt commands for completed activation')
+    for name in ('build', 'run', 'download', 'verify_toolchain'):
+        monkeypatch.setattr(runtime, name, forbidden)
+    activated = []
+    monkeypatch.setattr(runtime, 'activate', activated.append)
+    monkeypatch.setattr(runtime, 'status', lambda _: None)
+    runtime.main()
+    assert activated == [release]
+
+
+def test_completed_release_rejects_links_into_writable_directories(completed_build):
+    release, manifest, checked = completed_build
+    destination = release.parent / 'writable'; destination.mkdir(); destination.chmod(0o777)
+    (release / 'unsafe-link').symlink_to(destination, target_is_directory=True)
+    with pytest.raises(RuntimeError, match='link target'):
+        runtime.completed_release(release.name, manifest)
+    assert not checked
