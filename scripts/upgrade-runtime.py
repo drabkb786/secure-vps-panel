@@ -319,7 +319,9 @@ def build(manifest, jobs):
     if len(packages) != 1:
         raise RuntimeError('Unexpected upstream Fail2ban package layout')
     for name in ('fail2ban-client', 'fail2ban-server', 'fail2ban-regex'):
-        script(bindir / name, ['/usr/bin/python3', f2b / 'usr/bin' / name],
+        # A sealed release must not gain bytecode directories with the caller's
+        # umask during later jail checks or rollback/reactivation.
+        script(bindir / name, ['/usr/bin/python3', '-B', f2b / 'usr/bin' / name],
                {'PYTHONPATH': packages[0].parent, 'PYTHONNOUSERSITE': '1'})
     write_file(existing / 'manifest.json', json.dumps(manifest, indent=2) + '\n')
     # Source trees are not needed to run the release. Keep logs, licenses and

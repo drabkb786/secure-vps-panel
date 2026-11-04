@@ -82,3 +82,25 @@ def test_actual_versions_preserved_configs_renewal_command_and_reversible_activa
         fixture.unlink(missing_ok=True)
         if timer_active:
             run('systemctl', 'start', 'certbot.timer')
+
+
+
+def test_fail2ban_commands_do_not_mutate_sealed_code_with_permissive_umask():
+    release = Path('/opt/noway/runtime/current').resolve()
+    package = release / 'fail2ban'
+    assert package.is_dir()
+
+    def inventory():
+        return {str(path.relative_to(package)):
+                (path.lstat().st_mode, path.lstat().st_mtime_ns,
+                 path.lstat().st_size)
+                for path in package.rglob('*')}
+
+    before = inventory()
+    for tool in ('fail2ban-client', 'fail2ban-server', 'fail2ban-regex'):
+        result = subprocess.run([str(release / 'bin' / tool), '--version'],
+                                capture_output=True, text=True, timeout=30,
+                                umask=0)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert '1.1.1' in result.stdout + result.stderr
+    assert inventory() == before, 'Running tools must not create writable bytecode in a completed release'
