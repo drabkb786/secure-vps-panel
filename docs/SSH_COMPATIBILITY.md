@@ -56,6 +56,11 @@ It backs up the affected application/SSH/Nginx files, validates the candidate,
 reloads the managed backend, restarts the bridge/daemon and checks a local 101
 response followed by the actual OpenSSH banner through Nginx. A failure restores
 the saved files. Recovery copies remain under `/etc/abdulbasit/backups/`.
+From 4.3.2, it first waits for the UNIX socket and a successful read-only
+`web_revision` reply, rather than relying on systemd's active state. The regular
+CLI also tolerates a missing/refused startup socket for up to three seconds.
+Only connection establishment is retried: a command sent to a connected daemon
+is never automatically replayed, even if its reply is missing or times out.
 This path does not install packages, build a runtime, change admin SSH or apply
 network tuning. It accepts the same explicit `--legacy-crypto` option.
 Modules are staged from one committed HEAD rather than manually edited source.

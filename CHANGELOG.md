@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.3.2 — Wait for the daemon before reporting update success
+
+- Confirm the daemon's UNIX socket with a bounded read-only RPC after restart;
+  systemd's active state alone does not mean a Type=simple service is ready.
+- Briefly retry missing/refused socket connections before sending a command.
+  Never replay a command after connection, send, timeout or reply failure.
+- Include the IPC client in the fast update and its recovery/source snapshot;
+  no package installation or runtime compilation is required.
+
 ## 4.3.1 — Committed updates and explicit client/transport checks
 
 - Stage one Git commit for fast SSH updates; optionally back up and synchronize

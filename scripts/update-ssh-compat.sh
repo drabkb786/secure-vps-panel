@@ -19,7 +19,7 @@ done
 [[ $(cat /etc/abdulbasit/ssh-backend) == openssh ]] || { echo 'Requires an existing managed OpenSSH installation' >&2; exit 1; }
 exec 9>/run/noway-ssh-update.lock
 flock -n 9 || { echo 'Another SSH compatibility update is running' >&2; exit 1; }
-modules=(ws_proxy paneld ssh_backend cdn_manager bunny_manager diagnostics ssh_profiles)
+modules=(ws_proxy paneld panel_client ssh_backend cdn_manager bunny_manager diagnostics ssh_profiles)
 files=("$ssh_config" "$nginx_config")
 for module in "${modules[@]}"; do files+=("$app_dir/$module.py"); done
 if [[ $sync_source == 1 ]]; then
@@ -75,6 +75,11 @@ paneld.install_nginx_config(validate_domain(read_text(DOMAIN_FILE)))
 NGINX
 systemctl restart abdulbasit-ws abdulbasit-paneld
 systemctl is-active --quiet abdulbasit-sshd abdulbasit-ws abdulbasit-paneld nginx
+PYTHONPATH="$app_dir" /usr/bin/python3 - <<'READY'
+from panel_client import wait_ready
+wait_ready()
+print('Panel daemon socket and read-only RPC verified')
+READY
 PYTHONPATH="$app_dir" /usr/bin/python3 - <<'PROBE'
 import socket, time
 from common import DOMAIN_FILE, read_text, validate_domain
