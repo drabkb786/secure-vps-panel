@@ -30,7 +30,6 @@ def test_tls_full_duplex_under_backpressure(tmp_path, remote_close):
                                 peer.sendall(ws.send(Ping(payload=b'probe')) + ws.send(BytesMessage(data=event.data)))
                                 if remote_close and received == 8*1024*1024:
                                     peer.sendall(ws.send(CloseConnection(code=1000)))
-                                    return
                             elif isinstance(event,Ping): peer.sendall(ws.send(event.response()))
                             elif isinstance(event,CloseConnection): return
             except (OSError,ValueError) as exc: errors.append(str(exc))
@@ -53,7 +52,6 @@ def test_tls_full_duplex_under_backpressure(tmp_path, remote_close):
                     data=os.read(proc.stdout.fileno(),65536)
                     if not data: break
                     result.extend(data)
-                if proc.poll() is not None: break
             valid=result==welcome+payload
             if remote_close and valid:
                 assert proc.wait(timeout=5) == 0, proc.stderr.read().decode(errors="replace")

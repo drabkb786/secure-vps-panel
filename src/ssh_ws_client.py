@@ -236,7 +236,7 @@ async def pump(reader, writer, ws, pending=(), source=None, sink=None):
             elif isinstance(event, Ping) and ws.state == ConnectionState.OPEN:
                 # Never wait for upload backpressure while draining downloads.
                 writer.write(ws.send(event.response()))
-                if writer.transport.get_write_buffer_size() > MAX_PENDING + IO_CHUNK:
+                if writer.transport.get_write_buffer_size() > 2 * MAX_PENDING:
                     raise OSError("WebSocket control traffic exceeded buffer limit")
             elif isinstance(event, TextMessage):
                 raise OSError('SSH requires binary WebSocket messages')

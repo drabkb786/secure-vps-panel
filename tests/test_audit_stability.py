@@ -116,3 +116,22 @@ def test_cdn_probes_run_concurrently_with_deterministic_report(monkeypatch):
     report = cdn_manager.probe_paths('cdn.example.com', cdn_manager.PATHS)
     assert list(report) == [name for name in cdn_manager.PATHS if name != 'xhttp']
     assert all(row['ok'] for row in report.values())
+
+
+def test_control_reply_allows_upload_frame_overhead():
+    from wsproto import ConnectionType, WSConnection
+    from wsproto.events import Request, AcceptConnection, Ping, CloseConnection
+    async def run():
+        client, server = WSConnection(ConnectionType.CLIENT), WSConnection(ConnectionType.SERVER)
+        server.receive_data(client.send(Request(host='cdn.example.com', target='/ssh/ws')))
+        list(server.events())
+        client.receive_data(server.send(AcceptConnection())); list(client.events())
+        class Writer:
+            # A final application frame can exceed the high watermark slightly.
+            transport = SimpleNamespace(get_write_buffer_size=lambda: ssh_ws_client.MAX_PENDING + ssh_ws_client.IO_CHUNK + 1024)
+            def write(self, data): pass
+            async def drain(self): pass
+            def close(self): pass
+            async def wait_closed(self): pass
+        await ssh_ws_client.pump(None, Writer(), client, [Ping(payload=b'probe'), CloseConnection(code=1000)], source=io.BytesIO(), sink=io.BytesIO())
+    asyncio.run(run())
