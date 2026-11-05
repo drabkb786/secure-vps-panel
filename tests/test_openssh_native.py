@@ -23,8 +23,23 @@ import pytest
 pytestmark = pytest.mark.skipif(os.environ.get("OPENSSH_NATIVE_SYSTEMD") != "1", reason="Requires disposable installed systemd runner")
 
 
+@pytest.fixture(scope="module")
+def installed_ssh_account():
+    # Reuse one real identity across the transport cases. Rapid deletion and
+    # recreation of the same UID races PAM/logind's asynchronous user teardown.
+    from panel_client import request
+    assert os.geteuid() == 0 and os.environ.get("GITHUB_ACTIONS") == "true"
+    subprocess.run(["systemctl", "stop", "abdulbasit-session-enforcer"], check=True, timeout=15)
+    name = f"nowayci{os.getpid()}"
+    request("create_user", username=name, password="bas", days=30, max_sessions=2, max_ips=0)
+    try:
+        yield name
+    finally:
+        request("delete_user", username=name)
+
+
 @pytest.mark.parametrize('plain_ws', [False, True])
-def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch, plain_ws):
+def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch, plain_ws, installed_ssh_account):
     assert os.geteuid() == 0 and os.environ.get("GITHUB_ACTIONS") == "true"
     import paramiko
     import paneld
@@ -37,12 +52,12 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch, plain
     from common import USERS_DIR
     from panel_client import request
     from test_dropbear_native import free_port, wait_port, tls_socket
-    name = f"nowayci{os.getpid()}"
-    request("create_user", username=name, password="bas", days=30, max_sessions=2, max_ips=0)
+    name = installed_ssh_account
     transports = []
     nginx = None
     ssh_client = None
     subprocess.run(["systemctl", "stop", "abdulbasit-session-enforcer"], check=True, timeout=15)
+    request("set_sessions", username=name, max_sessions=2, max_ips=0)
     class Echo(socketserver.BaseRequestHandler):
         def handle(self):
             try:
@@ -202,5 +217,4 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch, plain
         if nginx:
             nginx.terminate(); nginx.wait(timeout=5)
         echo.shutdown(); echo.server_close()
-        request("delete_user", username=name)
         subprocess.run(["systemctl", "start", "abdulbasit-session-enforcer"], check=True, timeout=15)
