@@ -1,4 +1,6 @@
-# NOWAY VPS Control Room v4.6.0
+# NOWAY VPS Control Room v4.6.1
+
+[SSH two-value sharing, `/cdn-cgi` aliases and automatic encrypted password retrieval](docs/SSH_SIMPLE_SHARE_4_6_1.md).
 
 > Browser dashboard, managed OpenSSH (Dropbear fallback), VLESS/VMess/Trojan, optional XHTTP/REALITY, live subscriptions, QR, client configs and private recovery for Ubuntu/Debian VPS servers.
 

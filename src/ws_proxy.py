@@ -38,7 +38,7 @@ TCP_NODELAY = True
 MAX_PENDING: Final = 256 * 1024
 MAX_MESSAGE: Final = 8 * 1024 * 1024
 WS_PATH: Final = "/ssh/ws"
-LEGACY_PATHS: Final = {"/", "/ssh/raw"}
+LEGACY_PATHS: Final = {"/", "/ssh/raw", "/cdn-cgi", "/cdn-cgi/"}
 GUID: Final = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 LOG = logging.getLogger("abdulbasit-ws")
@@ -106,7 +106,7 @@ def parse_request(raw_header: bytes) -> tuple[str, dict[str, str]]:
         raise ValueError("Transfer encoding is not accepted")
     target = urlsplit(parts[1])
     if target.scheme or target.netloc or target.fragment or target.path not in LEGACY_PATHS | {WS_PATH}:
-        raise ValueError("Use /ssh/ws for WebSocket or /ssh/raw for legacy Upgrade")
+        raise ValueError("Use /ssh/ws for WebSocket or /cdn-cgi for raw Upgrade")
     if "sec-websocket-key" in headers:
         if parts[0] != "GET" or parts[2] != "HTTP/1.1" or headers.get("sec-websocket-version") != "13":
             raise ValueError("WebSocket requires HTTP/1.1 GET and version 13")

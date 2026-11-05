@@ -189,29 +189,30 @@ function confirmAction(message) {
   setText('confirm-message', message); $('confirm-dialog').showModal();
   return new Promise(resolve => { confirmResolve = resolve; });
 }
-async function exportSSH(name, route = 'direct', password = '') {
-  const result = password ? await api('ssh-export', {name, route, password}) : await api(`export?kind=ssh&name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}`);
+async function exportSSH(name, route = 'direct', password = '', remember = false) {
+  const params = {name, route};
+  if (password) Object.assign(params, {password, remember_password: remember});
+  const result = await api('ssh-export', params);
   currentExport = {...result, kind: 'ssh', route};
-  $('ssh-share-options').hidden = false; $('ssh-share-password').value = password;
+  $('ssh-share-options').hidden = result.password_available; $('ssh-share-password').value = '';
   $('export-route').value = route;
   setText('export-title', `SSH · ${name}`);
-  setText('export-warning', result.readiness.warnings.join(' ')); $('export-warning').hidden = false;
+  $('export-dialog').querySelectorAll(':scope > p').forEach(p => p.hidden = true);
+  setText('export-warning', (result.share_warnings || []).join(' ')); $('export-warning').hidden = !result.share_warnings?.length;
   const container = $('export-links'); container.replaceChildren();
-  for (const [label, link] of Object.entries(result.links)) {
-    const item = element('div', 'export-item'), input = element('textarea'); input.value = link; input.readOnly = true;
-    item.append(element('strong', '', label.toUpperCase()), input, button('Copy', () => navigator.clipboard.writeText(link), 'btn small'), button('QR code', () => showQR(link), 'btn small')); container.append(item);
+  for (const [key, label] of [['credentials', 'server:port@username:password'], ['payload', 'Payload']]) {
+    const item = element('div', 'export-item'), input = element('textarea', 'ssh-share-settings');
+    input.value = result.share[key]; input.readOnly = true; input.setAttribute('aria-label', label);
+    item.append(element('strong', '', label), input, button('Copy', () => navigator.clipboard.writeText(input.value), 'btn small'));
+    container.append(item);
   }
-  for (const filename of ['client-settings.txt', 'legacy-raw-payload.txt']) {
-    if (!result.files[filename]) continue;
-    const item = element('div', 'export-item'), settings = element('textarea', 'ssh-share-settings'); settings.readOnly = true; settings.value = result.files[filename]; settings.setAttribute('aria-label', filename === 'legacy-raw-payload.txt' ? 'Complete SSH payload with Host' : 'SSH server, ports and client settings');
-    item.append(element('strong', '', filename === 'legacy-raw-payload.txt' ? 'COMPLETE RAW PAYLOAD' : 'SERVER & CLIENT SETTINGS'), settings, button('Copy settings', () => navigator.clipboard.writeText(settings.value), 'btn small')); container.append(item);
-  }
-  for (const [filename, content] of Object.entries(result.files)) container.append(button(`↓ ${filename}`, () => downloadText(content, filename), 'btn small'));
-  $('download-zip').href = API + `export?kind=ssh&name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}&format=zip`;
+  $('download-zip').hidden = true; $('copy-all-links').hidden = true;
   if (!$('export-dialog').open) $('export-dialog').showModal();
 }
 async function exportProfile(name, route = 'direct') {
   const result = await api(`export?name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}`);
+  $('export-dialog').querySelectorAll(':scope > p').forEach(p => p.hidden = false);
+  $('download-zip').hidden = false; $('copy-all-links').hidden = false;
   $('export-route').value = route;
   currentExport = result;
   $('ssh-share-options').hidden = true; $('ssh-share-password').value = '';
@@ -310,6 +311,7 @@ bindForm('create-form', async data => {
   const name = data.get('name'), days = trialMode ? 1 : Number(data.get('days'));
   const params = createMode === 'ssh' ? {username: name, days, password: data.get('password'), max_sessions: Number(data.get('sessions')), quota_gb: data.get('ssh_quota') || 'Unlimited', max_ips: Number(data.get('ips'))} : {name, days, trial: trialMode, quota_gb: data.get('xray_quota'), max_ips: Number(data.get('ips')), protocols: ['vless', 'vmess', 'trojan'].filter(p => data.has(p))};
   await command(createMode === 'ssh' ? 'create_user' : 'xray_create', params, 'Account created'); $('create-dialog').close();
+  if (createMode === 'ssh') await exportSSH(name);
   if (createMode === 'xray') { view('xray'); await exportProfile(name); }
 });
 bindForm('renew-form', async data => {
@@ -437,7 +439,7 @@ $('export-route').addEventListener('change', async () => {
   const previous = currentExport;
   if (!previous) return;
   $('export-route').disabled = true;
-  try { await (previous.kind === 'ssh' ? exportSSH : exportProfile)(previous.name, $('export-route').value, previous.profile?.password || ''); }
+  try { await (previous.kind === 'ssh' ? exportSSH : exportProfile)(previous.name, $('export-route').value); }
   catch (err) { $('export-route').value = previous.route || 'direct'; notify(err.message, true); }
   finally { $('export-route').disabled = false; }
 });

@@ -55,6 +55,10 @@ def test_real_gateway_migration_password_transports_ip_limits_and_recovery(monke
     admin = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/etc/ssh').rglob('*') if p.is_file()}
     name = f'nowaymux{os.getpid()}'
     request('create_user', username=name, password='bas', days=30, max_sessions=2, max_ips=0)
+    shared = request('ssh_export', username=name)
+    assert shared['share']['credentials'] == f'vpn.example.com:80@{name}:bas'
+    assert shared['share']['payload'].startswith('GET /cdn-cgi HTTP/1.1[crlf]Host: vpn.example.com')
+    assert shared['password_available'] is True
     password_before = next(row for row in Path('/etc/shadow').read_text().splitlines() if row.startswith(name + ':'))
     source = json.loads(subprocess.check_output(['ip', '-j', '-4', 'addr', 'show', 'scope', 'global']))
     host = next(info['local'] for link in source for info in link.get('addr_info', []) if info.get('family') == 'inet')

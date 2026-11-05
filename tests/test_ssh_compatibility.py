@@ -31,13 +31,21 @@ def test_compatibility_does_not_accept_ambiguous_or_nonstandard_ws_handshakes(ra
 def test_direct_routes_have_fixed_targets_and_panel_is_separate(tls, monkeypatch):
     monkeypatch.setattr(paneld, 'ipv6_enabled', lambda: False)
     site = paneld.nginx_text('vpn.example.com', tls)
-    for path in ('/ssh/ws', '/ssh/raw'):
+    for path in ('/ssh/ws', '/ssh/raw', '/cdn-cgi', '/cdn-cgi/'):
         block = site.split('location = ' + path + ' {', 1)[1].split('}', 1)[0]
         assert 'proxy_pass http://127.0.0.1:2082;' in block
         assert 'proxy_socket_keepalive on;' in block and 'proxy_buffering off;' in block
     panel = site.split('location /panel/ {', 1)[1].split('}', 1)[0]
     assert 'proxy_pass http://127.0.0.1:9090;' in panel
     assert 'default_server' not in site and 'server_name vpn.example.com;' in site
+
+
+@pytest.mark.parametrize('path', ['/cdn-cgi', '/cdn-cgi/'])
+def test_cgi_alias_retains_the_normal_single_request_upgrade_parser(path):
+    request = f'GET {path} HTTP/1.1\r\nHost: vpn.example.com\r\nConnection: Upgrade\r\nUpgrade: websocket'.encode()
+    assert ws_proxy.parse_request(request)[0] == path
+    with pytest.raises(ValueError):
+        ws_proxy.parse_request(request + b'\r\n\r\nACL / HTTP/1.1\r\nHost: another.example')
 
 
 def test_managed_channels_remain_tunnel_only_and_legacy_crypto_is_explicit():

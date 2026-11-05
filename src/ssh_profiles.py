@@ -1,4 +1,4 @@
-"""Portable SSH profiles. Passwords are optional, transient and never persisted."""
+"""SSH sharing with root-private saved passwords and two simple copy values."""
 import json
 import re
 from datetime import date
@@ -6,11 +6,15 @@ from urllib.parse import quote
 from common import DOMAIN_FILE, ValidationError, read_text, validate_domain, validate_ssh_password, validate_username
 import cdn_manager
 import slowdns
+import ssh_secrets
 
 
 def export(params, lookup):
     user = validate_username(str(params.get("username", "")))
     account = lookup(user)
+    if account.get("username", user) != user:
+        raise ValidationError("SSH account identity does not match")
+    account = {**account, "username": user}
     if not account.get("enabled", True) or date.fromisoformat(account["expiry"]) <= date.today():
         raise ValidationError("Renew/unlock this SSH account before exporting")
     domain = validate_domain(read_text(DOMAIN_FILE))
@@ -19,8 +23,29 @@ def export(params, lookup):
     password = params.get("password")
     if password is not None:
         password = validate_ssh_password(password)
+        if params.get("remember_password") is True:
+            ssh_secrets.save(account, password)
+    else:
+        password = ssh_secrets.load(account)
+    port = params.get("port", 80 if route == "direct" else 443)
+    if type(port) is not int or port not in ({80, 443} if route == "direct" else {443}):
+        raise ValidationError("Choose port 80 or 443 for direct; CDN routes use 443")
+    share_path = prefix + "/cdn-cgi"
+    payload = f"GET {share_path} HTTP/1.1[crlf]Host: {host}[crlf]Connection: Upgrade[crlf]Upgrade: websocket[crlf][crlf]"
+    share = {"credentials": f"{host}:{port}@{user}:{password or ''}", "payload": payload}
+    share_notes = []
+    if password is None:
+        share_notes.append("This account predates saved sharing passwords, or its OS password changed. Save its current password once; hashes cannot be reversed.")
+    if route != "direct":
+        share_notes.append("CDN SSH requires actual binary WebSocket mode. A raw payload alone does not provide framing. This alias also needs the updated origin/provider route configuration.")
+    elif port == 443:
+        share_notes.append(f"TLS mode: enable certificate verification and use SNI {host}.")
+    summary = {"name": user, "share": share, "password_available": password is not None,
+               "share_warnings": share_notes}
+    if params.get("simple") is True:
+        return summary
     credential = quote(user, safe="") + (":" + quote(password, safe="") if password is not None else "")
-    path = prefix + "/ssh/ws"
+    path = share_path
     profile = {"schema": "noway-ssh-v1", "username": user, "host": host, "port": 443,
                "transport": "websocket", "path": path, "tls": True, "server_name": host,
                "verify_certificate": True, "http_host": host, "requires_rfc6455": True,
@@ -49,18 +74,18 @@ def export(params, lookup):
         plain_ws = {**profile, "port": 80, "tls": False}
         for field in ("server_name", "verify_certificate"): plain_ws.pop(field, None)
         files[f"{user}-ws-non-tls.json"] = json.dumps(plain_ws, indent=2) + "\n"
-        links["ws"] = f"ws://{domain}/ssh/ws"
+        links["ws"] = f"ws://{domain}/cdn-cgi"
         files["links.txt"] = "\n".join(links.values()) + "\n"
         files["connect.txt"] += (f'\nWS non-TLS:\nssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o "ProxyCommand=python3 ssh-ws-client.py --host {domain} --no-tls" -p 109 -N -D 127.0.0.1:10888 {user}@{domain}\n'
                                  f'\nClient route probes (run on the client, not the VPS):\npython3 ssh-ws-client.py --host {domain} --no-tls --path /ssh/raw --probe --raw\n'
                                  f'python3 ssh-ws-client.py --host {domain} --path /ssh/raw --probe --raw\n'
                                  f'python3 ssh-ws-client.py --host {domain} --no-tls --probe\n'
                                  f'python3 ssh-ws-client.py --host {domain} --probe\n')
-        files["legacy-raw-payload.txt"] = f"GET /ssh/raw HTTP/1.1[crlf]Host: {domain}[crlf]Connection: Upgrade[crlf]Upgrade: websocket[crlf][crlf]\n"
+        files["legacy-raw-payload.txt"] = payload + "\n"
         notes.append("legacy-raw-payload.txt is for direct origin port 80 (or TLS 443) and raw-upgrade SSH clients only; it is not a CDN WSS profile.")
         raw = {"schema": "noway-ssh-raw-v1", "username": user, "host": domain,
                "port": 80, "tls": False, "transport": "http-upgrade-raw",
-               "path": "/ssh/raw", "http_host": domain, "proxy_type": "none",
+               "path": "/cdn-cgi", "http_host": domain, "proxy_type": "none",
                "requires_rfc6455": False, "payload": files["legacy-raw-payload.txt"].strip()}
         if password is not None:
             raw["password"] = password
@@ -115,5 +140,5 @@ def export(params, lookup):
     if password is not None and "client-settings.txt" in files:
         files["client-settings.txt"] = files["client-settings.txt"].replace("Password: use this account's current password", "Password: " + password)
     files["README.txt"] = "\n".join(notes) + "\nInstall adapter dependency: python -m pip install 'wsproto==1.3.2' 'h11==0.16.0'\nPassword is prompted by SSH unless explicitly embedded in this private export.\n"
-    return {"name": user, "links": links, "files": files, "profile": profile,
+    return {**summary, "links": links, "files": files, "profile": profile,
             "readiness": {"public_reachability": "not_checked", "warnings": notes}}

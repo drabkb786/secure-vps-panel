@@ -202,13 +202,24 @@ def create_user(params: dict[str, Any]) -> dict[str, Any]:
         "enabled": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    atomic_write_json(user_file(username), metadata, 0o600)
+    import ssh_secrets
+    try:
+        ssh_secrets.save(metadata, password)
+        atomic_write_json(user_file(username), metadata, 0o600)
+    except Exception:
+        user_file(username).unlink(missing_ok=True)
+        subprocess.run([binary("userdel"), "--force", username], capture_output=True, text=True, check=False)
+        try:
+            ssh_secrets.forget(metadata)
+        except (OSError, ValidationError):
+            pass
+        raise
     return {"user": metadata, "warning": "SSH quotas measure channel payload with the metered Dropbear backend. Enforcement checks every five seconds; unknown sources cannot use an IP-limited account."}
 
 
 def delete_user(params: dict[str, Any]) -> dict[str, Any]:
     username = validate_username(str(params.get("username", "")))
-    managed_user(username)
+    account = managed_user(username)
     import ssh_sessions as dropbear_sessions
     try:
         uid = pwd.getpwnam(username).pw_uid
@@ -221,6 +232,8 @@ def delete_user(params: dict[str, Any]) -> dict[str, Any]:
     if result.returncode not in (0, 6):
         raise RuntimeError(result.stderr.strip() or "Failed to delete user")
     user_file(username).unlink(missing_ok=True)
+    import ssh_secrets
+    ssh_secrets.forget(account)
     return {"username": username}
 
 
@@ -455,7 +468,7 @@ def nginx_text(domain: str, tls: bool, *, multiplexed: bool | None = None) -> st
 """
             else:
                 blocks += f"    location = {path} {{ return 403; }}\n"
-        for ssh_path in ("/ssh/ws", "/ssh/raw"):
+        for ssh_path in ("/ssh/ws", "/ssh/raw", "/cdn-cgi", "/cdn-cgi/"):
             blocks += f"""
     location = {ssh_path} {{
         proxy_pass http://127.0.0.1:2082;

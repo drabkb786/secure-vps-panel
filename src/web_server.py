@@ -341,10 +341,15 @@ class Handler(BaseHTTPRequestHandler):
             STORE.delete(self.token())
             self.json(200, {"ok": True}, {"Set-Cookie": f"{COOKIE}=; Path=/panel/; Max-Age=0; HttpOnly; SameSite=Strict"})
         elif path == "/panel/api/ssh-export":
-            # Transient passwords are POST-only: never put credentials in URLs.
+            # Password registration/exports are POST-only; never use URL credentials.
             params = {"username": str(data.get("name", "")), "route": data.get("route", "direct"), "_web_revision": session["revision"]}
+            params["simple"] = data.get("format") != "zip"
             if data.get("password"):
                 params["password"] = data["password"]
+            if "port" in data:
+                params["port"] = data["port"]
+            if data.get("remember_password") is True:
+                params["remember_password"] = True
             result = request("ssh_export", **params)
             if data.get("format") == "zip":
                 stream = io.BytesIO()

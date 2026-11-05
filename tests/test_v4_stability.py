@@ -226,7 +226,7 @@ def test_cdn_ssh_client_settings_do_not_offer_an_unframed_profile(tmp_path, monk
     monkeypatch.setattr(ssh_profiles.cdn_manager, "delivery", lambda *_: ("d123456.cloudfront.net", "/cloudfront"))
     account = {"enabled": True, "expiry": (date.today() + timedelta(days=1)).isoformat(), "max_sessions": 2}
     data = ssh_profiles.export({"username": "basit", "route": "cloudfront"}, lambda _: account)
-    assert data["profile"]["path"] == "/cloudfront/ssh/ws"
+    assert data["profile"]["path"] == "/cloudfront/cdn-cgi"
     assert not any("raw-http" in key or "raw-tls" in key for key in data["files"])
     assert "Requires RFC6455 binary" in data["files"]["client-settings.txt"]
     assert "SNI/Host: d123456.cloudfront.net" in data["files"]["client-settings.txt"]
