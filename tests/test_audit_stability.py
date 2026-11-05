@@ -108,7 +108,7 @@ def test_backup_rejects_nonboolean_reality_flag(flag):
 
 def test_cdn_probes_run_concurrently_with_deterministic_report(monkeypatch):
     import cdn_manager
-    barrier = threading.Barrier(5)
+    barrier = threading.Barrier(6)
     def probe(host, path, websocket):
         barrier.wait(timeout=3)
         return {'ok': True, 'path': path}

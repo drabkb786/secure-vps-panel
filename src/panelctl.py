@@ -141,6 +141,7 @@ def parser() -> argparse.ArgumentParser:
     ssh.add_argument("username")
     ssh.add_argument("--route", choices=["direct", "bunny", "cloudfront"], default="direct")
     ssh.add_argument("--with-password", action="store_true", help="Prompt for password; include only in this export")
+    ssh.add_argument("--save-password", action="store_true", help="Verify/save an existing SSH password once for future automatic sharing")
     ssh.add_argument("--zip", type=Path)
     for action in ("bunny-status", "bunny-check", "bunny-disable"):
         sub.add_parser(action)
@@ -158,15 +159,21 @@ def main() -> int:
         if args.action in {"reality-enable", "reality-disable"}:
             result = request("xray_configure", enabled=True, reality_enabled=args.action == "reality-enable", **({"reality_port": args.port} if args.action == "reality-enable" else {}))
         elif args.action == "ssh-export":
-            params = {"username": args.username, "route": args.route}
-            if args.with_password:
-                params["password"] = getpass.getpass("Current SSH password (export only): ")
+            params = {"username": args.username, "route": args.route, "simple": not bool(args.zip)}
+            if args.with_password or args.save_password:
+                params["password"] = getpass.getpass("Current SSH password (verify and save): " if args.save_password else "Current SSH password (export only): ")
+            if args.save_password:
+                params["remember_password"] = True
             result = request("ssh_export", **params)
             if args.zip:
                 fd = os.open(args.zip, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "wb") as stream, zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
                     for name, content in result["files"].items(): archive.writestr(name, content)
                 result = {"saved": str(args.zip), "private": True}
+            else:
+                if not result["password_available"]:
+                    raise RuntimeError("Current password is not saved; use ssh-export USER --save-password once")
+                result = result["share"]
         elif args.action in {"cloudfront-status", "cloudfront-check", "bunny-status", "bunny-check"}:
             result = request(args.action.replace("-", "_"))
         elif args.action in {"cloudfront-enable", "cloudfront-disable", "bunny-enable", "bunny-disable"}:

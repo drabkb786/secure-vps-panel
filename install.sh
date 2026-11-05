@@ -204,7 +204,7 @@ for path in USERS_DIR.glob('*.json'):
     if account.pw_shell == '/bin/false' and account.pw_uid != 0:
         subprocess.run(['/usr/sbin/usermod', '--shell', '/usr/local/lib/abdulbasit/tunnel-shell', name], check=True)
 PY
-for module in web_auth web_server xray_manager diagnostics client_formats cdn_manager profile_backup operations traffic account_policy ssh_meter slowdns maintenance terminal_ui gateway_identity ssh_identity ssh_backend ssh_sessions openssh_sessions xray_runtime bunny_manager ssh_profiles ssh_ws_client reality_transport; do
+for module in web_auth web_server xray_manager diagnostics client_formats cdn_manager profile_backup operations traffic account_policy ssh_meter ssh_secrets slowdns maintenance terminal_ui gateway_identity ssh_identity ssh_backend ssh_sessions openssh_sessions xray_runtime bunny_manager ssh_profiles ssh_ws_client reality_transport; do
   install -m 0755 -o root -g root "$PROJECT_DIR/src/$module.py" "$INSTALL_DIR/$module.py"
 done
 python3 "$INSTALL_DIR/gateway_identity.py"

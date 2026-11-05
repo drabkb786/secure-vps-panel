@@ -131,7 +131,8 @@ def test_endpoint_check_is_scoped_and_clear_on_update(cloudfront, monkeypatch):
         return {"ok": path != cdn.PATHS["trojan"]}
     monkeypatch.setattr(cdn, "probe", probe)
     result = cloudfront.check()
-    assert len(seen) == 5 and not result["ok"] and "speed not tested" in result["scope"]
+    assert len(seen) == 6 and not result["ok"] and "speed not tested" in result["scope"]
+    assert any(path == "/cloudfront/cdn-cgi" and websocket for _, path, websocket in seen)
     assert cloudfront.status()["last_check"] == result
     cloudfront.configure({"enabled": True, "endpoint": "d456example.cloudfront.net"})
     assert cloudfront.status()["last_check"] is None

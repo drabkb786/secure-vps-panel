@@ -45,3 +45,14 @@ def test_find_by_name_sends_links_without_editing_the_users_message(bot):
     bot.process_update({"message": {"message_id": 10, "chat": {"id": 123456789}, "text": "basit"}})
     assert bot.backend_calls[-1] == ("xray_export", {"name": "basit"})
     assert "trojan://fixture" in bot.output[-1][1]
+
+
+def test_ssh_share_sends_only_two_copy_values_and_escapes_password(bot, monkeypatch):
+    monkeypatch.setattr(bot, "panel", lambda *a, **kw: {"share": {
+        "credentials": "vpn.example.com:80@basit:fixture<secret>",
+        "payload": "GET /cdn-cgi HTTP/1.1[crlf]Host: vpn.example.com[crlf][crlf]"}, "share_warnings": []})
+    bot.show_ssh_links("123456789", "basit")
+    text = bot.output[-1][1]
+    assert text.count("<code>") == 2
+    assert "fixture&lt;secret&gt;" in text and "GET /cdn-cgi" in text
+    assert "ssh://" not in text and "WSS URL" not in text

@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.6.1 — Simple SSH sharing and origin aliases
+
+- Show only credentials in `server:port@username:password` form and a complete
+  single-request payload in SSH web/bot sharing; retain full CLI ZIP exports.
+- Add `/cdn-cgi` origin and guarded provider aliases while preserving old routes
+  and strict HTTP parsing. CDN framing and provider-deployment requirements are
+  explicitly labelled; a path change does not prove carrier zero-rating.
+- Encrypt newly created SSH sharing passwords in a root-private AES-256-GCM/
+  RSA-OAEP vault. Verify old passwords once with libcrypt; invalidate saved
+  secrets after external password changes and remove records on deletion.
+- Update both backend and bot through the application updater. Exercise native
+  HTTP/TLS/framed alias transfers, encrypted storage and actual dialog controls.
+
 ## 4.6.0 — Account management, per-IP access and measured payload
 
 - Add the sketch's account rows with upload, download, total/quota, IP cap,

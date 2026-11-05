@@ -112,15 +112,6 @@ setInterval(async () => {
 }, 5000);
 
 $('ssh-share-generate').addEventListener('click', () => busy($('ssh-share-generate'), async () => {
-  if (currentExport?.kind === 'ssh') await exportSSH(currentExport.name, currentExport.route, $('ssh-share-password').value);
+  if (currentExport?.kind === 'ssh') await exportSSH(currentExport.name, currentExport.route, $('ssh-share-password').value, true);
 }));
-$('download-zip').addEventListener('click', event => {
-  const exported = currentExport;
-  if (exported?.kind !== 'ssh' || !exported.profile.password) return;
-  event.preventDefault(); busy($('download-zip'), async () => {
-    const response = await fetch(API + 'ssh-export', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf}, body: JSON.stringify({name: exported.name, route: exported.route, password: exported.profile.password, format: 'zip'})});
-    if (!response.ok) throw new Error((await response.json()).error || 'Private export failed');
-    const url = URL.createObjectURL(await response.blob()), link = element('a'); link.href = url; link.download = `NOWAY-${exported.name}.zip`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
-  });
-});
 $('export-dialog').addEventListener('close', () => { $('ssh-share-password').value = ''; currentExport = null; $('export-links').replaceChildren(); });

@@ -27,6 +27,7 @@ HEADER = "X-Noway-Origin-Verify"
 PREFIX = "/cloudfront"
 PATHS = {p: PREFIX + "/" + p for p in ("vless", "vmess", "trojan")}
 PATHS.update(ssh=PREFIX + "/ssh/ws", health=PREFIX + "/health", xhttp=PREFIX + "/xhttp/")
+PATHS["ssh_cgi"] = PREFIX + "/cdn-cgi"
 PRICE_CLASSES = {"PriceClass_All", "PriceClass_200", "PriceClass_100"}
 
 
@@ -114,8 +115,8 @@ def nginx_locations(cfg: dict, secure: bool) -> str:
         if name == "health":
             text += '        default_type text/plain;\n        add_header X-Noway-CloudFront-Health 1 always;\n        return 200 "noway-cloudfront-origin-v1\\n";\n    }\n'
             continue
-        port = {"vless": 10001, "vmess": 10002, "trojan": 10003, "ssh": 2082, "xhttp": 10004}[name]
-        target = "/ssh/ws" if name == "ssh" else gateway_identity.backend_path(name)
+        port = {"vless": 10001, "vmess": 10002, "trojan": 10003, "ssh": 2082, "ssh_cgi": 2082, "xhttp": 10004}[name]
+        target = "/cdn-cgi" if name == "ssh_cgi" else "/ssh/ws" if name == "ssh" else gateway_identity.backend_path(name)
         upgrade = "" if name == "xhttp" else "$abdulbasit_connection_upgrade"
         text += f'''        client_max_body_size 32m;
         proxy_pass http://127.0.0.1:{port}{target};
@@ -230,7 +231,7 @@ def probe_paths(endpoint, paths, provider="cloudfront"):
         name, path = route
         result = probe(endpoint, path, name != "health") if provider == "cloudfront" else probe(endpoint, path, name != "health", provider=provider)
         return name, result
-    with ThreadPoolExecutor(max_workers=5, thread_name_prefix="cdn-probe") as pool:
+    with ThreadPoolExecutor(max_workers=6, thread_name_prefix="cdn-probe") as pool:
         return dict(pool.map(check, routes))
 
 

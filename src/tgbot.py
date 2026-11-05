@@ -294,14 +294,14 @@ class Bot:
 
     def show_ssh_links(self, chat_id, name, route="direct"):
         try:
-            result = self.panel("ssh_export", username=name, route=route)
+            result = self.panel("ssh_export", username=name, route=route, simple=True)
         except RuntimeError as exc:
             self.send(chat_id, "❌ " + html.escape(str(exc)))
             return
-        lines = [f"<b>SSH · {html.escape(name)} · {html.escape(route)}</b>"]
-        for label, link in result["links"].items():
-            lines.append(f"{label}: <code>{html.escape(link)}</code>")
-        lines.append("SSH URI: direct port 109. WSS URL: transport only; use a framing-capable client. Password is your existing SSH password. Full adapter/files: web Export or root CLI ssh-export.")
+        share = result["share"]
+        lines = [f"<b>server:port@username:password</b>\n<code>{html.escape(share['credentials'])}</code>",
+                 f"<b>Payload</b>\n<code>{html.escape(share['payload'])}</code>"]
+        lines.extend(html.escape(note) for note in result.get("share_warnings", []))
         self.send(chat_id, "\n".join(lines), {"inline_keyboard": [[{"text": r, "callback_data": f"ssh_export:{name}:{r}"} for r in ("direct", "bunny", "cloudfront")]]})
 
     def show_users(self, chat_id: str, message_id: int) -> None:
@@ -381,7 +381,7 @@ class Bot:
                 self.send(chat_id, "Enter maximum concurrent sessions (1-20):")
             elif step == "create_sessions":
                 self.set_state(chat_id, "create_quota", username=state["username"], password=state["password"], days=state["days"], max_sessions=value)
-                self.send(chat_id, "Send <code>Unlimited</code>. SSH byte metering is unavailable; finite GB quotas are rejected. Use an Xray profile for GB limits.")
+                self.send(chat_id, "Enter traffic quota in GB or <code>Unlimited</code>. Finite SSH quotas require the active metered Dropbear backend.")
             elif step == "create_quota":
                 result = self.panel(
                     "create_user",
@@ -398,9 +398,10 @@ class Bot:
                     f"Expiry: <code>{html.escape(user['expiry'])}</code>\n"
                     f"Concurrent sessions: <code>{user['max_sessions']}</code>\n"
                     "Ports: <code>22, 109, 447, 80, 443</code>\n\n"
-                    "The password is not repeated or stored by the panel.",
+                    "The sharing password is encrypted in the root-private server vault.",
                     self.users_keyboard(),
                 )
+                self.show_ssh_links(chat_id, user["username"])
             elif step == "delete_username":
                 self.set_state(chat_id)
                 self.send(chat_id, f"Delete managed user <code>{html.escape(value)}</code>?", {"inline_keyboard": [[
