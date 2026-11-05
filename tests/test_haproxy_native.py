@@ -34,7 +34,7 @@ def test_real_gateway_migration_password_transports_ip_limits_and_recovery(monke
     import ssh_sessions
     from common import DOMAIN_FILE, atomic_write
     from panel_client import request
-    from test_dropbear_native import WebSocketSocket
+    from test_dropbear_native import WebSocketSocket, tls_socket
     from test_haproxy_migration import ROOT, migration
     from websockets.sync.client import connect
 
@@ -130,7 +130,7 @@ def test_real_gateway_migration_password_transports_ip_limits_and_recovery(monke
         context = ssl.create_default_context(cafile=str(cert))
         for secure in (False, True):
             peer = socket.create_connection((host, 443 if secure else 80), timeout=5)
-            if secure: peer = context.wrap_socket(peer, server_hostname=domain)
+            if secure: peer = tls_socket(peer, context, domain)
             with peer:
                 peer.sendall(b'GET /panel HTTP/1.1\r\nHost: vpn.example.com\r\nConnection: close\r\n\r\n')
                 response = http.client.HTTPResponse(peer); response.begin(); response.read()
@@ -141,7 +141,7 @@ def test_real_gateway_migration_password_transports_ip_limits_and_recovery(monke
             channel.close(); transport.close()
         for secure in (False, True):
             peer = socket.create_connection((host, 443 if secure else 80), timeout=5)
-            if secure: peer = context.wrap_socket(peer, server_hostname=domain)
+            if secure: peer = tls_socket(peer, context, domain)
             peer.sendall(b'GET /ssh/raw HTTP/1.1\r\nHost: vpn.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nX-Forwarded-For: 198.51.100.99\r\n\r\n')
             header = b''
             while not header.endswith(b'\r\n\r\n'):

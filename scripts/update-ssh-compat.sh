@@ -25,8 +25,8 @@ esac
 [[ $backend == openssh || ${#generator_args[@]} == 0 ]] || { echo '--legacy-crypto applies only to managed OpenSSH' >&2; exit 1; }
 exec 9>/run/noway-ssh-update.lock
 flock -n 9 || { echo 'Another SSH compatibility update is running' >&2; exit 1; }
-modules=(common ws_proxy paneld panel_client panelctl ssh_backend cdn_manager bunny_manager diagnostics operations ssh_profiles ssh_ws_client xray_manager client_formats profile_backup reality_transport)
-assets=(index.html app.js)
+modules=(common ws_proxy paneld panel_client panelctl web_server ssh_backend ssh_identity ssh_sessions dropbear_sessions openssh_sessions session_enforcer traffic account_policy ssh_meter cdn_manager bunny_manager diagnostics operations ssh_profiles ssh_ws_client xray_manager client_formats profile_backup reality_transport)
+assets=(index.html app.js accounts.js accounts.css)
 files=("$nginx_config")
 if [[ $backend == openssh ]]; then files+=("$ssh_config"); fi
 for module in "${modules[@]}"; do files+=("$app_dir/$module.py"); done
@@ -79,6 +79,7 @@ subprocess.run([binary('nginx'), '-t'], check=True)
 subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
 RELOAD
   systemctl restart abdulbasit-ws abdulbasit-paneld || rollback_failed=1
+  systemctl try-restart abdulbasit-web abdulbasit-session-enforcer || rollback_failed=1
   if [[ $rollback_failed == 1 ]]; then echo "Automatic recovery was incomplete; inspect services and $backup_dir" >&2; fi
   exit "$result"
 }
@@ -107,6 +108,7 @@ from common import DOMAIN_FILE, read_text, validate_domain
 paneld.install_nginx_config(validate_domain(read_text(DOMAIN_FILE)))
 NGINX
 systemctl restart abdulbasit-ws abdulbasit-paneld
+systemctl try-restart abdulbasit-web abdulbasit-session-enforcer
 systemctl is-active --quiet "$ssh_unit" abdulbasit-ws abdulbasit-paneld nginx
 PYTHONPATH="$app_dir" /usr/bin/python3 - <<'READY'
 from panel_client import wait_ready

@@ -19,7 +19,7 @@ for name in sys.argv[1:]:
 TRUST
 then
   installed_version="$($app_dir/dropbear -V 2>&1)"
-  if [[ $installed_version == "Dropbear v$version"* ]]; then
+  if [[ $installed_version == "Dropbear v$version+noway-meter1"* ]]; then
     echo "Pinned Dropbear $version already installed; compilation skipped"
     exit 0
   fi
@@ -32,7 +32,7 @@ build_dir="$(mktemp -d /var/cache/abdulbasit/dropbear-build.XXXXXXXX)"
 build_log="$build_dir/build.log"
 echo "Building official Dropbear $version; log: $build_log"
 setsid env -u CFLAGS -u CPPFLAGS -u LDFLAGS CC=/usr/bin/gcc \
-  bash "$project_dir/scripts/fetch-test-dropbear.sh" "$build_dir" >"$build_log" 2>&1 &
+  bash "$project_dir/scripts/fetch-test-dropbear.sh" "$build_dir" --metered >"$build_log" 2>&1 &
 build_pid=$!
 trap 'kill -- -"$build_pid" 2>/dev/null || true; wait "$build_pid" 2>/dev/null || true; exit 130' INT TERM
 while kill -0 "$build_pid" 2>/dev/null; do
@@ -46,3 +46,9 @@ candidate="$build_dir/dropbear-$version"
 install -o root -g root -m 0755 "$candidate/dropbear" "$app_dir/dropbear"
 install -o root -g root -m 0755 "$candidate/dropbearkey" "$app_dir/dropbearkey"
 echo "Installed Dropbear $version in $app_dir; services have not been switched"
+/usr/bin/python3 - "$app_dir" <<'MARKER'
+import hashlib, json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+(root / 'dropbear-meter.json').write_text(json.dumps({'schema': 'noway-dropbear-meter-v1', 'sha256': hashlib.sha256((root / 'dropbear').read_bytes()).hexdigest()}) + '\n')
+(root / 'dropbear-meter.json').chmod(0o644)
+MARKER

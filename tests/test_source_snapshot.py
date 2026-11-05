@@ -54,6 +54,8 @@ def test_web_assets_are_staged_from_the_same_commit(checkout, tmp_path):
     web = checkout / 'src/web'; web.mkdir()
     (web / 'index.html').write_text('<main>committed</main>\n')
     (web / 'app.js').write_text('const committed = true;\n')
+    (web / 'accounts.js').write_text('const accountControls = true;\n')
+    (web / 'accounts.css').write_text('.account-detail { color: green; }\n')
     subprocess.run(['git', '-C', str(checkout), 'add', '.'], check=True)
     subprocess.run(['git', '-C', str(checkout), '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                     '-c', 'commit.gpgsign=false', 'commit', '-qm', 'web assets'], check=True)
@@ -61,7 +63,7 @@ def test_web_assets_are_staged_from_the_same_commit(checkout, tmp_path):
     result = source.snapshot(checkout, tmp_path / 'stage', ['paneld'], web_assets=True)
     assert (tmp_path / 'stage/web/app.js').read_text() == 'const committed = true;\n'
     assert result['local_edits'] == ['src/web/app.js']
-    assert set(result['sha256']) == {'paneld', 'web/index.html', 'web/app.js'}
+    assert set(result['sha256']) == {'paneld', 'web/index.html', 'web/app.js', 'web/accounts.js', 'web/accounts.css'}
 
 
 def test_missing_web_asset_leaves_no_partial_stage(checkout, tmp_path):

@@ -16,9 +16,13 @@ from datetime import date
 from common import USERS_DIR, read_json
 import ssh_sessions as dropbear_sessions
 import ssh_identity
+import ssh_meter
+from common import quota_bytes
+from account_policy import blocked_ips, ssh_id, ssh_quota_bytes
 
 LOG = logging.getLogger("abdulbasit-session-enforcer")
 INTERVAL = 5
+_METER_WAIT = {}
 
 
 def dropbear_pids_by_uid() -> dict[int, list[int]]:
@@ -35,6 +39,15 @@ def terminate(pids: list[int], expected_uid: int) -> None:
 
 def enforce_once() -> None:
     by_uid = dropbear_pids_by_uid()
+    meter_ready = ssh_meter.available()
+    try:
+        ledger = ssh_meter.state()
+    except RuntimeError:
+        ledger, meter_ready = {"accounts": {}, "sessions": {}}, False
+    measured = ssh_meter.coverage(ledger)
+    live_keys = {(uid, pid) for uid, pids in by_uid.items() for pid in pids}
+    for key in set(_METER_WAIT) - live_keys:
+        _METER_WAIT.pop(key, None)
     # One kernel socket snapshot per cycle, separate from authenticated identity.
     ips = None  # Most SSH/SlowDNS accounts have no IP cap; skip unused FD scans.
     today = date.today()
@@ -61,27 +74,40 @@ def enforce_once() -> None:
             terminate(pids, uid)
             continue
 
+        quota = ssh_quota_bytes(data)
+        usage = ledger["accounts"].get(ssh_id(data), {})
+        if quota is not None and (not meter_ready or usage.get("upload_bytes", 0) + usage.get("download_bytes", 0) >= quota):
+            terminate(pids, uid)
+            continue
+
         try:
             limit = int(data.get("max_sessions", 1))
         except (TypeError, ValueError):
             limit = 1
         limit = min(max(limit, 1), 20)
         excess = pids[limit:]
+        if quota is not None:
+            covered = measured.get(ssh_id(data), set())
+            for pid in pids:
+                key = uid, pid
+                if pid in covered:
+                    _METER_WAIT.pop(key, None)
+                elif time.monotonic() - _METER_WAIT.setdefault(key, time.monotonic()) >= 7:
+                    excess.append(pid)
         try:
             from common import validate_max_ips
             ip_limit = validate_max_ips(data.get("max_ips", 0))
         except ValueError:
             ip_limit = 1
-        if ip_limit and ips is None:
+        denied = set(blocked_ips(data))
+        if (ip_limit or denied) and ips is None:
             ips = ssh_identity.session_ips(by_uid)
         admitted = set()
         for pid in pids[:limit]:
-            if not ip_limit:
-                break
-            address = ips.get(pid)
-            if address is None or (address not in admitted and len(admitted) >= ip_limit):
+            address = ips.get(pid) if ips is not None else None
+            if address in denied or ip_limit and (address is None or address not in admitted and len(admitted) >= ip_limit):
                 excess.append(pid)
-            else:
+            elif address:
                 admitted.add(address)
         if excess:
             LOG.warning("Terminating %d excess sessions for %s (limit=%d)", len(excess), username, limit)

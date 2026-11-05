@@ -57,11 +57,12 @@ function showLogin() {
 function showApp(session) {
   csrf = session.csrf; setText('admin-name', session.username);
   $('login-screen').hidden = true; $('app').hidden = false;
+  view('accounts');
 }
 function view(name) {
   document.querySelectorAll('.view').forEach(n => { n.hidden = n.id !== `view-${name}`; });
   document.querySelectorAll('.nav').forEach(n => n.classList.toggle('active', n.dataset.view === name));
-  setText('breadcrumb', {overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', cloudfront: 'CloudFront', diagnostics: 'Diagnostics', recovery: 'Backup & recovery', traffic: 'Traffic & connections', transports: 'UDP & SlowDNS', system: 'System toolbox', maintenance: 'Telegram & maintenance'}[name]);
+  setText('breadcrumb', {accounts: 'Account management', overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', cloudfront: 'CloudFront', diagnostics: 'Diagnostics', recovery: 'Backup & recovery', traffic: 'Traffic & connections', transports: 'UDP & SlowDNS', system: 'System toolbox', maintenance: 'Telegram & maintenance'}[name]);
 }
 const size = (value, unit = 'GB') => {
   if (!Number.isFinite(value)) return '—';
@@ -73,7 +74,7 @@ const size = (value, unit = 'GB') => {
 const quotaLabel = (row) => row.quota_gb == null ? 'Unlimited' : `${row.quota_gb} ${row.quota_unit || 'GiB'}`;
 const profileStatus = (row) => row.enabled === false ? 'Locked' : row.meter_unavailable || row.ip_monitoring_failed ? 'Monitor unavailable' : row.quota_exhausted ? 'Quota reached' : row.ip_blocked_until && Date.parse(row.ip_blocked_until) > Date.now() ? 'IP limit · cooldown' : row.active ? 'Active' : 'Expired';
 function byteCell(row, field) {
-  const node = element('td', 'mono', size(row[field] || 0, row.quota_unit || 'GiB') + (field === 'used_bytes' ? ` / ${quotaLabel(row)}` : ''));
+  const node = element('td', 'mono', size(Number(row.exact_bytes?.[field] ?? row[field] ?? 0), row.quota_unit || 'GB') + (field === 'used_bytes' ? ` / ${quotaLabel(row)}` : ''));
   node.title = `${row.exact_bytes?.[field] ?? row[field] ?? 0} bytes`;
   node.append(element('div', 'small muted', node.title));
   return node;
@@ -103,6 +104,7 @@ function profileRows(id, rows, controls) {
 }
 function render() {
   const s = state, system = s.system;
+  if (typeof renderAccountManagement === 'function') renderAccountManagement();
   setText('node-host', system.hostname); setText('node-domain', s.domain === 'Not set' ? 'Domain not configured' : s.domain);
   setText('node-uptime', `UP ${Math.floor(system.uptime_seconds / 86400)}d ${Math.floor(system.uptime_seconds / 3600) % 24}h`);
   const services = Object.entries(s.services), running = services.filter(([, status]) => status === 'active').length;
@@ -133,11 +135,11 @@ function render() {
     row.append(element('span', 'protocol-symbol', ['V', 'M', 'T', 'X'][i] || 'X'), detail, pill(s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'Ready' : 'Offline', s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'good' : '')); protocols.append(row);
   }
   profileRows('overview-profiles', s.accounts.slice(0, 4), false); renderProfiles(); renderTraffic();
-  setText('ssh-note', 'SSH byte metering is unavailable. Finite GB quotas are rejected. IP/session checks target 5 seconds plus processing time. Unknown sources cannot use an IP-limited account.' + (s.ssh_attribution?.journal_available === false ? ' Authentication journal unavailable: older root Dropbear sessions may be unattributable.' : '') + (s.ssh_attribution?.unattributed_root_processes ? ` ${s.ssh_attribution.unattributed_root_processes} root process(es) unattributed; some may still be authenticating.` : ''));
+  setText('ssh-note', (s.traffic?.ssh_available ? 'SSH channel payload metering is active. Quotas/IP checks are sampled every 5 seconds.' : 'Activate the metered Dropbear backend for SSH payload usage and finite GB quotas.') + ' Unknown sources cannot use an IP-limited account.');
   const users = $('ssh-users'); users.replaceChildren();
   if (!s.users.length) emptyRow(users, 5, 'No SSH accounts yet. Create an account to grant access.');
   s.users.forEach(user => {
-    const tr = element('tr'); tr.append(element('td', 'mono', user.username), element('td', 'mono muted', user.expiry), element('td', '', `${(s.sessions.find(x => x.username === user.username) || {}).count || 0} / ${user.max_sessions}`), element('td', 'muted', `GB unavailable · IP cap: ${user.max_ips || 'Unlimited'}`));
+    const tr = element('tr'); tr.append(element('td', 'mono', user.username), element('td', 'mono muted', user.expiry), element('td', '', `${(s.sessions.find(x => x.username === user.username) || {}).count || 0} / ${user.max_sessions}`), element('td', 'muted', `${user.usage_available ? size(user.used_bytes || 0) + ' / ' + quotaLabel(user) : 'Awaiting SSH meter'} · IP cap: ${user.max_ips || 'Unlimited'}`));
     const td = element('td'), actions = element('div', 'row-actions'); actions.append(button('Export ↗', () => exportSSH(user.username)), button('Limits', () => openUsage('ssh', user)), button(user.enabled === false ? 'Unlock' : 'Lock', () => command('set_user_lock', {username: user.username, enabled: user.enabled === false}, 'SSH account updated')), button('Renew', () => openRenew('ssh', user.username)), button('Delete', async () => { if (await confirmAction(`Delete SSH account “${user.username}”? Its active sessions will be disconnected.`)) await command('delete_user', {username: user.username}, 'Account deleted'); }, 'delete')); td.append(actions); tr.append(td); users.append(tr);
   });
   setText('xray-summary', `${s.xray_installed ? 'Installed' : 'Core not installed · run install.sh --with-xray'} · ${s.network.enabled ? 'Enabled' : 'Disabled'} · TLS on port 443${s.network.vless_non_tls_enabled ? ' · VLESS non-TLS on port 80' : ''}`);
@@ -176,6 +178,7 @@ function openCreate(mode, trial = false) {
   trialMode = trial;
   createMode = mode; $('create-form').reset(); $('ssh-fields').hidden = mode !== 'ssh'; $('protocol-fields').hidden = mode === 'ssh';
   $('create-form').elements.password.required = mode === 'ssh';
+  $('create-form').elements.ssh_quota.disabled = !state.traffic?.ssh_available;
   $('xray-fields').hidden = mode === 'ssh'; $('trial-note').hidden = !trial;
   $('create-form').elements.days.disabled = trial;
   if (trial) { $('create-form').elements.days.value = 1; $('create-form').elements.xray_quota.value = '1'; }
@@ -186,9 +189,10 @@ function confirmAction(message) {
   setText('confirm-message', message); $('confirm-dialog').showModal();
   return new Promise(resolve => { confirmResolve = resolve; });
 }
-async function exportSSH(name, route = 'direct') {
-  const result = await api(`export?kind=ssh&name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}`);
+async function exportSSH(name, route = 'direct', password = '') {
+  const result = password ? await api('ssh-export', {name, route, password}) : await api(`export?kind=ssh&name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}`);
   currentExport = {...result, kind: 'ssh', route};
+  $('ssh-share-options').hidden = false; $('ssh-share-password').value = password;
   $('export-route').value = route;
   setText('export-title', `SSH · ${name}`);
   setText('export-warning', result.readiness.warnings.join(' ')); $('export-warning').hidden = false;
@@ -196,6 +200,11 @@ async function exportSSH(name, route = 'direct') {
   for (const [label, link] of Object.entries(result.links)) {
     const item = element('div', 'export-item'), input = element('textarea'); input.value = link; input.readOnly = true;
     item.append(element('strong', '', label.toUpperCase()), input, button('Copy', () => navigator.clipboard.writeText(link), 'btn small'), button('QR code', () => showQR(link), 'btn small')); container.append(item);
+  }
+  for (const filename of ['client-settings.txt', 'legacy-raw-payload.txt']) {
+    if (!result.files[filename]) continue;
+    const item = element('div', 'export-item'), settings = element('textarea', 'ssh-share-settings'); settings.readOnly = true; settings.value = result.files[filename]; settings.setAttribute('aria-label', filename === 'legacy-raw-payload.txt' ? 'Complete SSH payload with Host' : 'SSH server, ports and client settings');
+    item.append(element('strong', '', filename === 'legacy-raw-payload.txt' ? 'COMPLETE RAW PAYLOAD' : 'SERVER & CLIENT SETTINGS'), settings, button('Copy settings', () => navigator.clipboard.writeText(settings.value), 'btn small')); container.append(item);
   }
   for (const [filename, content] of Object.entries(result.files)) container.append(button(`↓ ${filename}`, () => downloadText(content, filename), 'btn small'));
   $('download-zip').href = API + `export?kind=ssh&name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}&format=zip`;
@@ -205,6 +214,7 @@ async function exportProfile(name, route = 'direct') {
   const result = await api(`export?name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}`);
   $('export-route').value = route;
   currentExport = result;
+  $('ssh-share-options').hidden = true; $('ssh-share-password').value = '';
   const warnings = result.readiness?.warnings || [];
   setText('export-warning', warnings.join(' ')); $('export-warning').hidden = !warnings.length;
   setText('export-title', name); const container = $('export-links'); container.replaceChildren();
@@ -298,7 +308,7 @@ bindForm('login-form', async data => {
 });
 bindForm('create-form', async data => {
   const name = data.get('name'), days = trialMode ? 1 : Number(data.get('days'));
-  const params = createMode === 'ssh' ? {username: name, days, password: data.get('password'), max_sessions: Number(data.get('sessions')), quota_gb: 'Unlimited', max_ips: Number(data.get('ips'))} : {name, days, trial: trialMode, quota_gb: data.get('xray_quota'), max_ips: Number(data.get('ips')), protocols: ['vless', 'vmess', 'trojan'].filter(p => data.has(p))};
+  const params = createMode === 'ssh' ? {username: name, days, password: data.get('password'), max_sessions: Number(data.get('sessions')), quota_gb: data.get('ssh_quota') || 'Unlimited', max_ips: Number(data.get('ips'))} : {name, days, trial: trialMode, quota_gb: data.get('xray_quota'), max_ips: Number(data.get('ips')), protocols: ['vless', 'vmess', 'trojan'].filter(p => data.has(p))};
   await command(createMode === 'ssh' ? 'create_user' : 'xray_create', params, 'Account created'); $('create-dialog').close();
   if (createMode === 'xray') { view('xray'); await exportProfile(name); }
 });
@@ -361,21 +371,27 @@ async function operation(name, params = {}) { return api('command', {command: na
 function openUsage(type, row) {
   usageTarget = {type, name: type === 'ssh' ? row.username : row.name};
   setText('usage-title', usageTarget.name + ' · limits');
-  setText('usage-scope', type === 'ssh' ? 'SSH GB metering is unavailable. IP/session checks run every 5 seconds. Unknown sources (including SlowDNS) are disconnected when an IP cap is set.' : '5-second target checks plus API/restart time; quotas can overshoot. Too many unique IPs suspend this profile for 30 seconds. Core changes reconnect active clients. 0 IPs = Unlimited.');
+  setText('usage-scope', type === 'ssh' ? (state.traffic?.ssh_available ? 'Measured SSH channel payload. GB/IP checks target 5 seconds and can overshoot.' : 'Activate metered Dropbear to enable SSH GB quotas.') + ' Unknown sources (including SlowDNS) cannot use an IP cap.' : '5-second target checks plus API/restart time; quotas can overshoot. Too many unique IPs suspend this profile for 30 seconds. Core changes reconnect active clients. 0 IPs = Unlimited.');
   $('usage-quota').value = row.quota_gb == null ? 'Unlimited' : row.quota_gb;
-  $('usage-quota').disabled = type === 'ssh'; $('usage-unit').disabled = type === 'ssh';
+  $('usage-quota').disabled = type === 'ssh' && !state.traffic?.ssh_available; $('usage-unit').disabled = $('usage-quota').disabled;
   $('usage-unit').value = row.quota_unit || 'GiB'; $('usage-ips').value = row.max_ips || 0;
   $('usage-sessions-label').hidden = type !== 'ssh'; $('usage-sessions').value = row.max_sessions || 2;
-  $('reset-usage').hidden = type === 'ssh'; $('usage-dialog').showModal();
+  $('reset-usage').hidden = type === 'ssh' && !state.traffic?.ssh_available;
+  $('reset-usage').textContent = 'Reset measured usage'; $('usage-dialog').showModal();
 }
 $('profile-search').addEventListener('input', renderProfiles); $('profile-filter').addEventListener('change', renderProfiles);
 bindForm('usage-form', async data => {
   const target = usageTarget;
-  if (target.type === 'ssh') { await command('set_sessions', {username: target.name, max_sessions: Number(data.get('sessions')), max_ips: Number(data.get('ips'))}, 'SSH limits updated'); }
+  if (target.type === 'ssh') {
+    const params = {username: target.name, max_sessions: Number(data.get('sessions')), max_ips: Number(data.get('ips'))};
+    if ($('usage-quota').disabled) await command('set_sessions', params, 'SSH IP/session limits updated; existing quota preserved');
+    else await command('set_quota', {...params, quota_gb: data.get('quota') || 'Unlimited', quota_unit: data.get('unit') || 'GB'}, 'SSH limits updated');
+  }
   else await command('xray_update', {name: target.name, action: 'limits', quota_gb: data.get('quota'), quota_unit: data.get('unit'), max_ips: Number(data.get('ips'))}, 'Limits updated');
   $('usage-dialog').close();
 });
 $('reset-usage').addEventListener('click', () => busy($('reset-usage'), async () => {
+  if (usageTarget?.type === 'ssh' && await confirmAction(`Reset measured SSH traffic for ${usageTarget.name}?`)) { await command('ssh_reset_usage', {username: usageTarget.name}, 'SSH usage reset'); $('usage-dialog').close(); return; }
   if (usageTarget?.type === 'xray' && await confirmAction(`Reset measured traffic for ${usageTarget.name}? Its quota allowance starts again.`)) { await command('xray_update', {name: usageTarget.name, action: 'reset_usage'}, 'Measured usage reset'); $('usage-dialog').close(); }
 }));
 $('sample-traffic').addEventListener('click', () => busy($('sample-traffic'), async () => {
@@ -421,7 +437,7 @@ $('export-route').addEventListener('change', async () => {
   const previous = currentExport;
   if (!previous) return;
   $('export-route').disabled = true;
-  try { await (previous.kind === 'ssh' ? exportSSH : exportProfile)(previous.name, $('export-route').value); }
+  try { await (previous.kind === 'ssh' ? exportSSH : exportProfile)(previous.name, $('export-route').value, previous.profile?.password || ''); }
   catch (err) { $('export-route').value = previous.route || 'direct'; notify(err.message, true); }
   finally { $('export-route').disabled = false; }
 });

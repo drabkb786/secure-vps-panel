@@ -12,6 +12,7 @@ import logging
 import os
 import pwd
 import re
+import secrets
 import shutil
 import signal
 import socket
@@ -19,7 +20,7 @@ import struct
 import subprocess
 import tempfile
 import threading
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -33,6 +34,8 @@ import bunny_manager
 import ssh_profiles
 import gateway_identity
 import ssh_identity
+import ssh_meter
+import account_policy
 from common import validate_max_ips
 
 from common import (
@@ -58,6 +61,7 @@ from common import (
     validate_password,
     validate_ssh_password,
     validate_quota,
+    quota_bytes,
     validate_service,
     validate_sessions,
     validate_telegram_id,
@@ -133,21 +137,26 @@ def managed_user(username: str) -> dict[str, Any]:
     return data
 
 
+_SHADOW_CACHE = (None, {})
+
+
 def get_shadow_expiry(username: str) -> str | None:
+    # One read per OS-account change, rather than one chage process per account
+    # on every dashboard refresh. Password hashes are never cached or returned.
+    global _SHADOW_CACHE
     try:
-        result = run([binary("chage"), "-l", username])
-    except (subprocess.CalledProcessError, RuntimeError):
+        path = Path("/etc/shadow")
+        info = path.stat(); signature = (info.st_ino, info.st_mtime_ns, info.st_size)
+        if _SHADOW_CACHE[0] != signature:
+            expiries = {}
+            for line in path.read_text().splitlines():
+                parts = line.split(":")
+                if len(parts) > 7 and parts[7].isdigit():
+                    expiries[parts[0]] = (date(1970, 1, 1) + timedelta(days=int(parts[7]))).isoformat()
+            _SHADOW_CACHE = signature, expiries
+        return _SHADOW_CACHE[1].get(username)
+    except (OSError, OverflowError, ValueError):
         return None
-    for line in result.stdout.splitlines():
-        if line.lower().startswith("account expires"):
-            value = line.split(":", 1)[1].strip()
-            if value.lower() == "never":
-                return None
-            try:
-                return datetime.strptime(value, "%b %d, %Y").date().isoformat()
-            except ValueError:
-                return None
-    return None
 
 
 def create_user(params: dict[str, Any]) -> dict[str, Any]:
@@ -157,8 +166,8 @@ def create_user(params: dict[str, Any]) -> dict[str, Any]:
     max_sessions = validate_sessions(params.get("max_sessions"))
     quota_gb = validate_quota(params.get("quota_gb", "Unlimited"))
     max_ips = validate_max_ips(params.get("max_ips", 0))
-    if quota_gb is not None:
-        raise ValidationError("SSH byte quotas are not supported by this SSH accounting backend. Use Unlimited, or a metered Xray profile; no unenforced quota will be saved.")
+    if quota_gb is not None and not ssh_meter.available():
+        raise ValidationError("Finite SSH quotas are not supported while the metered Dropbear backend is unavailable")
 
     if user_file(username).exists():
         raise ValidationError("This managed username already exists")
@@ -187,12 +196,14 @@ def create_user(params: dict[str, Any]) -> dict[str, Any]:
         "max_sessions": max_sessions,
         "max_ips": max_ips,
         "quota_gb": quota_gb,
-        "quota_enforced": False,
+        "quota_enforced": quota_gb is not None,
+        "quota_unit": "GB",
+        "account_id": secrets.token_hex(16),
         "enabled": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     atomic_write_json(user_file(username), metadata, 0o600)
-    return {"user": metadata, "warning": "SSH byte usage is unavailable. IP limits use unique verified sources; unknown/SlowDNS sources cannot use an IP-limited account. Enforcement checks every five seconds."}
+    return {"user": metadata, "warning": "SSH quotas measure channel payload with the metered Dropbear backend. Enforcement checks every five seconds; unknown sources cannot use an IP-limited account."}
 
 
 def delete_user(params: dict[str, Any]) -> dict[str, Any]:
@@ -266,18 +277,30 @@ def set_user_lock(params):
 def set_quota(params: dict[str, Any]) -> dict[str, Any]:
     username = validate_username(str(params.get("username", "")))
     quota = validate_quota(params.get("quota_gb", "Unlimited"))
-    if quota is not None:
-        raise ValidationError("SSH byte quotas are unavailable; refusing to save a limit that cannot be enforced. Use a metered Xray profile.")
+    if quota is not None and not ssh_meter.available():
+        raise ValidationError("Finite SSH quotas are not supported while the metered Dropbear backend is unavailable")
     data = managed_user(username)
     data["quota_gb"] = quota
-    data["quota_enforced"] = False
+    data["quota_unit"] = params.get("quota_unit", data.get("quota_unit", "GB"))
+    if data["quota_unit"] not in {"GB", "GiB"}:
+        raise ValidationError("Quota unit must be GB or GiB")
+    quota_bytes(data)
+    if "max_ips" in params:
+        data["max_ips"] = validate_max_ips(params["max_ips"])
+    if "max_sessions" in params:
+        data["max_sessions"] = validate_sessions(params["max_sessions"])
+    data["quota_enforced"] = quota is not None
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     atomic_write_json(user_file(username), data, 0o600)
-    return {"username": username, "quota_gb": quota, "quota_enforced": False}
+    from session_enforcer import enforce_once
+    enforce_once()
+    return {"username": username, "quota_gb": quota, "quota_enforced": quota is not None}
 
 
 def list_users(_: dict[str, Any]) -> dict[str, Any]:
     users: list[dict[str, Any]] = []
+    meter_state = ssh_meter.state()
+    meter_ready = ssh_meter.available()
     for path in sorted(USERS_DIR.glob("*.json")):
         data = read_json(path)
         if not isinstance(data, dict):
@@ -291,7 +314,15 @@ def list_users(_: dict[str, Any]) -> dict[str, Any]:
             exists = False
             uid = None
         item = dict(data)
-        item.update(quota_enforced=False, usage_available=False)
+        item.update(ssh_meter.account_usage(data, meter_state))
+        item.pop("ip_usage", None)
+        cap = account_policy.ssh_quota_bytes(data)
+        if data.get("quota_enforced") is not True:
+            item["quota_gb"] = None
+        exhausted = cap is not None and item["used_bytes"] >= cap
+        item.update(quota_bytes=cap, quota_exhausted=exhausted, quota_unit=data.get("quota_unit", "GB"),
+                    meter_unavailable=cap is not None and not meter_ready,
+                    active=exists and data.get("enabled", True) is True and data["expiry"] > date.today().isoformat() and not exhausted and (cap is None or meter_ready))
         item.update({"exists": exists, "uid": uid, "shadow_expiry": get_shadow_expiry(username) if exists else None})
         users.append(item)
     return {"users": users}
@@ -669,8 +700,20 @@ def dashboard_status(params: dict[str, Any]) -> dict[str, Any]:
     for line in Path("/proc/meminfo").read_text().splitlines():
         key, value = line.split(":", 1)
         mem[key] = int(value.strip().split()[0]) * 1024
-    return {**service_status(params), **XRAY.status(params), **list_users(params), **list_sessions(params),
-            "slowdns": SLOWDNS.status({}), "bunny": BUNNY.status(), "cloudfront": CLOUDFRONT.status(), "traffic": {"sampled_at": xray_manager.traffic.state().get("sampled_at"), "scope": "Xray payload bytes; SSH byte metering unavailable", "sample_interval_seconds": 5},
+    users, sessions = list_users(params), list_sessions(params)
+    ssh_state, xray_state = ssh_meter.state(), xray_manager.traffic.state()
+    covered = ssh_meter.coverage(ssh_state)
+    processes = {row["username"]: set(row["pids"]) for row in sessions["sessions"]}
+    for row in users["users"]:
+        if processes.get(row["username"], set()) - covered.get(account_policy.ssh_id(row), set()):
+            row["usage_available"] = False
+            row["usage_note"] = "One or more live SSH sessions have not reported authenticated payload counters"
+            if account_policy.ssh_quota_bytes(row) is not None:
+                row["meter_unavailable"], row["active"] = True, False
+    return {**service_status(params), **XRAY.status(params), **users, **sessions,
+            "slowdns": SLOWDNS.status({}), "bunny": BUNNY.status(), "cloudfront": CLOUDFRONT.status(), "traffic": {"sampled_at": xray_state.get("sampled_at"), "scope": "Authenticated Xray and metered Dropbear channel payload bytes", "sample_interval_seconds": 5,
+                "ssh_available": ssh_meter.available(), "ssh_sampled_at": ssh_state.get("sampled_at"),
+                "ip_meter_available": xray_state.get("ip_meter_available", False)},
             "system": {"hostname": socket.gethostname(), "load": list(os.getloadavg()),
                        "cpu_count": os.cpu_count(), "uptime_seconds": float(Path("/proc/uptime").read_text().split()[0]),
                        "disk_total": stat.total, "disk_used": stat.used,
@@ -680,7 +723,74 @@ def dashboard_status(params: dict[str, Any]) -> dict[str, Any]:
 CLOUDFRONT = cdn_manager.Manager(install_nginx_config)
 BUNNY = bunny_manager.Manager(install_nginx_config)
 
+
+def account_connections(params):
+    name = validate_username(str(params.get("name", "")))
+    kind = params.get("kind")
+    offset, limit = params.get("offset", 0), params.get("limit", 8)
+    if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 50:
+        raise ValidationError("Invalid connection page")
+    if kind == "ssh":
+        account = managed_user(name)
+        usage = ssh_meter.account_usage(account)
+        values = usage.pop("ip_usage")
+        session = next((s for s in list_sessions({})["sessions"] if s["username"] == name), {})
+        online = set(session.get("ips", []))
+        ready = usage["usage_available"] and set(session.get("pids", [])) <= ssh_meter.coverage(ssh_meter.state()).get(account_policy.ssh_id(account), set())
+        protocols = ["ssh"]
+        sampled_at = usage["sampled_at"]
+    elif kind == "xray":
+        account = next((row for row in xray_manager.accounts() if row["name"] == name), None)
+        if account is None:
+            raise ValidationError("Xray account does not exist")
+        ledger = xray_manager.traffic.state()
+        values = ledger.get("ip_totals", {}).get(account["uuid"], {})
+        online = set(XRAY.online({}).get("profiles", {}).get(name, []))
+        ready = ledger.get("ip_meter_available", False) and not ledger.get("ip_meter_overflow", False)
+        protocols = account["protocols"]
+        sampled_at = ledger.get("sampled_at")
+    else:
+        raise ValidationError("Choose ssh or xray")
+    blocked = set(account_policy.blocked_ips(account))
+    addresses = set(values) | online | blocked
+    rows = []
+    for address in sorted(addresses, key=lambda ip: (ip not in online, ip not in blocked, ip)):
+        value = values.get(address, {})
+        rows.append({"ip": address, **account_policy.exact(value), "online": address in online,
+                     "blocked": address in blocked, "usage_available": ready and address in values,
+                     "protocols": value.get("protocols", protocols), "last_seen": value.get("last_seen")})
+    return {"kind": kind, "name": name, "connections": rows[offset:offset + limit],
+            "total": len(rows), "offset": offset, "has_more": offset + limit < len(rows),
+            "online_count": len(online), "usage_available": ready, "sampled_at": sampled_at,
+            "note": "Payload counters are sampled; transport headers/provider billing are excluded. Unknown SSH/SlowDNS sources remain labelled unknown."}
+
+
+def account_ip_set(params):
+    name = validate_username(str(params.get("name", "")))
+    if params.get("kind") == "xray":
+        return XRAY.update({"name": name, "action": "ip_policy", "ip": params.get("ip"), "blocked": params.get("blocked")})
+    if params.get("kind") != "ssh":
+        raise ValidationError("Choose ssh or xray")
+    account = managed_user(name)
+    address = account_policy.change_ip(account, params.get("ip"), params.get("blocked"))
+    atomic_write_json(user_file(name), account)
+    from session_enforcer import enforce_once
+    enforce_once()
+    return {"name": name, "ip": address, "blocked": params["blocked"]}
+
+
+def ssh_reset_usage(params):
+    name = validate_username(str(params.get("username", "")))
+    managed_user(name)
+    if not ssh_meter.available():
+        raise ValidationError("Start the metered SSH backend before resetting its live baseline")
+    ssh_meter.reset(name)
+    return {"username": name, "reset": True}
+
 HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "account_connections": account_connections,
+    "account_ip_set": account_ip_set,
+    "ssh_reset_usage": ssh_reset_usage,
     "bunny_status": BUNNY.status,
     "bunny_configure": BUNNY.configure,
     "bunny_setup": BUNNY.setup,
@@ -744,6 +854,7 @@ WEB_COMMANDS = {"ssh_export", "bunny_status", "bunny_configure", "bunny_setup", 
                 "create_user", "delete_user", "renew_user", "set_sessions", "set_quota", "list_users",
                 "list_sessions", "service_status", "restart_service", "set_domain", "issue_cert"}
 WEB_COMMANDS.update({"set_user_lock", "traffic_sample", "live_connections", "packet_test", "live_logs", "doctor", "restart_managed", "config_view", "banner_get", "banner_set", "memory_report", "slowdns_status", "slowdns_configure", "slowdns_check"})
+WEB_COMMANDS.update({"account_connections", "account_ip_set", "ssh_reset_usage"})
 
 
 def authorize_command(uid: int, command: str, params: dict) -> None:
@@ -814,7 +925,7 @@ def handle_connection(conn: socket.socket) -> None:
             independent = command in {"packet_test", "dns_lookup", "live_logs", "memory_report", "service_status",
                                       "web_auth", "web_revision",
                                       "diagnostics", "slowdns_check", "slowdns_status", "live_connections",
-                                      "dashboard_status", "list_users", "list_sessions", "xray_status",
+                                      "dashboard_status", "list_users", "list_sessions", "xray_status", "account_connections",
                                       "bunny_status", "cloudfront_status", "config_view"}
             if independent:
                 # Atomic credential files can be read without holding a writer

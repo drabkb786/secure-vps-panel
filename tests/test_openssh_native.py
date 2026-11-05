@@ -36,7 +36,7 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch, plain
     monkeypatch.setattr(ssh_identity, "PEER_DIR", Path("/run/abdulbasit-ws/peers"))
     from common import USERS_DIR
     from panel_client import request
-    from test_dropbear_native import free_port, wait_port
+    from test_dropbear_native import free_port, wait_port, tls_socket
     name = f"nowayci{os.getpid()}"
     request("create_user", username=name, password="bas", days=30, max_sessions=2, max_ips=0)
     transports = []
@@ -113,7 +113,7 @@ def test_installed_openssh_login_wss_ip_limits_and_revocation(monkeypatch, plain
                 def __getattr__(self, name): return getattr(self.peer, name)
             for use_tls in (False, True):
                 peer = socket.create_connection(('127.0.0.1', tls_port if use_tls else http_port), timeout=5)
-                if use_tls: peer = context.wrap_socket(peer, server_hostname='vpn.example.com')
+                if use_tls: peer = tls_socket(peer, context, 'vpn.example.com')
                 peer.sendall(b'GET /ssh/raw HTTP/1.1\r\nHost: vpn.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n')
                 response = b''
                 while b'\r\n\r\n' not in response:

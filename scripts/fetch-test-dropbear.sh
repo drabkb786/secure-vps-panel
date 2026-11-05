@@ -11,6 +11,9 @@ curl --fail --location --proto '=https' --tlsv1.2 --retry 2 --max-time 90 \
   "https://matt.ucc.asn.au/dropbear/releases/dropbear-$version.tar.bz2" -o "$archive"
 printf '%s  %s\n' 'e098034a843699200c8c977a991fff73159735bf795d5f72ef672c41a6b1ae81' "$archive" | sha256sum --check --status
 tar -xjf "$archive" -C "$test_dir"
+if [[ ${2:-} == --metered ]]; then
+  python3 "$(dirname -- "${BASH_SOURCE[0]}")/patch-dropbear-meter.py" "$test_dir/dropbear-$version"
+fi
 cd "$test_dir/dropbear-$version"
 ./configure --disable-zlib
 make -j2 PROGRAMS='dropbear dropbearkey'

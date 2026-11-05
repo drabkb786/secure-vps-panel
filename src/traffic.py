@@ -13,6 +13,7 @@ STATE_FILE = BASE_DIR / "traffic.json"
 API_SOCKET = Path("/run/abdulbasit-xray/stats.sock")
 API_ADDRESS = "unix://" + str(API_SOCKET)
 COUNTER = re.compile(r"^user>>>(.+)>>>traffic>>>(uplink|downlink)$")
+IP_COUNTER = re.compile(r"^user>>>([^>]+)>>>ip>>>([^>]+)>>>traffic>>>(uplink|downlink)$")
 SAMPLE_SECONDS = 5
 
 
@@ -39,6 +40,21 @@ def state():
             raise RuntimeError("Traffic totals are corrupt")
         for key in ("upload_bytes", "download_bytes"):
             integer(values.get(key))
+    ip_totals = data.get("ip_totals", {})
+    if not isinstance(ip_totals, dict):
+        raise RuntimeError("IP traffic state is corrupt; saved totals retained")
+    for values in ip_totals.values():
+        if not isinstance(values, dict):
+            raise RuntimeError("IP traffic state is corrupt")
+        for address, entry in values.items():
+            try:
+                valid = canonical_ip(address) == address
+            except (ValueError, TypeError):
+                valid = False
+            if not valid or not isinstance(entry, dict):
+                raise RuntimeError("Invalid IP traffic ledger entry")
+            for key in ("upload_bytes", "download_bytes"):
+                integer(entry.get(key, 0))
     return data
 
 
@@ -70,6 +86,7 @@ def reset_profile(row):
     data = state()
     # Keep the current baselines: the next sample counts only new bytes.
     data.setdefault("totals", {})[row["uuid"]] = {"upload_bytes": 0, "download_bytes": 0}
+    data.setdefault("ip_totals", {})[row["uuid"]] = {}
     data.setdefault("resets", {})[row["name"]] = datetime.now(timezone.utc).isoformat()
     atomic_write_json(STATE_FILE, data)
 
@@ -89,6 +106,7 @@ def accumulate(rows, response, epoch):
     totals = {row["uuid"]: copy.deepcopy(data.get("totals", {}).get(row["uuid"], {
         "upload_bytes": integer(row.get("upload_bytes", 0)), "download_bytes": integer(row.get("download_bytes", 0))})) for row in rows}
     mapped = {email: row for row in rows for email in emails(row)}
+    ip_totals = copy.deepcopy(data.get("ip_totals", {}))
     seen = set()
     for item in response.get("stat", []):
         if not isinstance(item, dict) or not isinstance(item.get("name"), str):
@@ -97,6 +115,26 @@ def accumulate(rows, response, epoch):
         if key in seen:
             raise RuntimeError("Duplicate Xray counter; refusing an ambiguous sample")
         seen.add(key)
+        ip_match = IP_COUNTER.fullmatch(key)
+        if ip_match and ip_match[1] in mapped:
+            address = canonical_ip(ip_match[2])
+            value = integer(item.get("value", 0))
+            row = mapped[ip_match[1]]
+            old = integer(previous.get(key, 0))
+            if key in owners and owners[key] != row["uuid"]:
+                old = value
+            owners[key] = row["uuid"]
+            delta = value - old if value >= old else value
+            current[key] = value
+            entry = ip_totals.setdefault(row["uuid"], {}).setdefault(address, {})
+            field = "upload_bytes" if ip_match[3] == "uplink" else "download_bytes"
+            entry[field] = integer(entry.get(field, 0)) + delta
+            integer(entry[field])
+            protocol = ip_match[1].rsplit("-", 1)[-1].split("@", 1)[0]
+            entry["protocols"] = sorted(set(entry.get("protocols", [])) | {protocol})
+            if delta:
+                entry["last_seen"] = datetime.now(timezone.utc).isoformat()
+            continue
         match = COUNTER.fullmatch(key)
         if not match or match[1] not in mapped:
             continue
@@ -117,7 +155,11 @@ def accumulate(rows, response, epoch):
     for row in rows:
         row.update(totals[row["uuid"]])
         row["used_bytes"] = row["upload_bytes"] + row["download_bytes"]
-    data.update(epoch=epoch, counters=current, owners=owners, totals=totals, sampled_at=datetime.now(timezone.utc).isoformat())
+    marker = {item["name"]: item.get("value", 0) for item in response.get("stat", [])}
+    data.update(epoch=epoch, counters=current, owners=owners, totals=totals, ip_totals=ip_totals,
+                ip_meter_available=integer(marker.get("user>>>noway-meter>>>version", 0)) == 1,
+                ip_meter_overflow=integer(marker.get("user>>>noway-meter>>>overflow", 0)) > 0,
+                sampled_at=datetime.now(timezone.utc).isoformat())
     return data
 
 
