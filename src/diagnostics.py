@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from common import DOMAIN_FILE, ValidationError, read_text, validate_domain
+from common import SSH_UPGRADE_PATHS, DOMAIN_FILE, ValidationError, read_text, validate_domain
 from xray_manager import CONFIG_FILE, PROTOCOLS, XRAY_BINARY, settings
 
 
@@ -43,13 +43,16 @@ def dns_lookup(params: dict) -> dict:
             "note": "Point A/AAAA records at this VPS. DNS provider records are managed at the provider; an incorrect AAAA record can break IPv6 clients."}
 
 
-def ssh_upgrade(domain: str, port: int, tls: bool = False, timeout: float = 3) -> tuple[bool, str]:
+def ssh_upgrade(domain: str, port: int, tls: bool = False, timeout: float = 3, *,
+                path: str = '/ssh/raw') -> tuple[bool, str]:
     """Read a bounded local HTTP Upgrade and SSH identification, not a login.
 
     Coalesced headers/banner and split TCP reads must produce the same result.
     The connection address is fixed loopback; Host/SNI uses the configured domain.
     """
     try:
+        if path not in SSH_UPGRADE_PATHS:
+            raise ValueError("Unsupported SSH Upgrade path")
         domain = validate_domain(domain)
         deadline = time.monotonic() + timeout
         with ExitStack() as stack:
@@ -57,7 +60,7 @@ def ssh_upgrade(domain: str, port: int, tls: bool = False, timeout: float = 3) -
             if tls:
                 peer.settimeout(max(.01, deadline - time.monotonic()))
                 peer = stack.enter_context(ssl.create_default_context().wrap_socket(peer, server_hostname=domain))
-            peer.sendall((f'GET /ssh/raw HTTP/1.1\r\nHost: {domain}\r\n'
+            peer.sendall((f'GET {path} HTTP/1.1\r\nHost: {domain}\r\n'
                           'Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n').encode())
             received = bytearray()
             while len(received) < 16384:
@@ -91,6 +94,14 @@ def ssh_upgrade(domain: str, port: int, tls: bool = False, timeout: float = 3) -
         raise ValueError('HTTP/SSH response exceeds the limit')
     except (OSError, ValueError) as exc:
         return False, type(exc).__name__ + ': ' + str(exc)[:180]
+
+
+def listener_detail(port: int) -> str:
+    ok, rows = command([shutil.which("ss") or "/usr/bin/ss", "-H", "-ltnp",
+                        "sport", "=", f":{port}"], timeout=2)
+    if not ok:
+        return f"Could not inspect TCP listener :{port} ({rows})"
+    return rows or f"No local TCP listener on :{port}"
 
 
 def report(_: dict) -> dict:
@@ -152,11 +163,19 @@ def report(_: dict) -> dict:
     domain = read_text(DOMAIN_FILE)
     if domain:
         try:
-            for name, port, tls in (('Local bridge HTTP -> SSH', 2082, False),
-                                    ('Local Nginx HTTP -> SSH', 80, False),
-                                    ('Local Nginx TLS -> SSH', 443, True)):
-                ok, detail = ssh_upgrade(domain, port, tls)
-                add(name, ok, detail, 'Check the configured origin Host/SNI, Nginx route, bridge and SSH backend. This is a loopback probe, not a mobile-network or login test.')
+            for name, port, tls, paths in (
+                    ('Local bridge', 2082, False, ('/ssh/raw',)),
+                    ('Public HTTP listener', 80, False, SSH_UPGRADE_PATHS),
+                    ('Public TLS listener', 443, True, SSH_UPGRADE_PATHS)):
+                listener = None
+                for path in paths:
+                    ok, detail = ssh_upgrade(domain, port, tls, path=path)
+                    if not ok:
+                        if listener is None:
+                            listener = listener_detail(port)
+                        detail += ' | ' + listener
+                    add(f'{name} :{port} {path}', ok, detail,
+                        'Compare this loopback result with the client destination, HTTP Host and TLS/SNI. Check the gateway and SSH bridge logs.')
             dns = dns_lookup({"domain": domain})
             add("Domain DNS", bool(dns["records"]["A"] or dns["records"]["AAAA"]), str(dns["records"]), "Create the domain A/AAAA record in your DNS provider.")
             cert = Path("/etc/letsencrypt/live") / validate_domain(domain) / "fullchain.pem"

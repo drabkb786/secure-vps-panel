@@ -112,6 +112,6 @@ setInterval(async () => {
 }, 5000);
 
 $('ssh-share-generate').addEventListener('click', () => busy($('ssh-share-generate'), async () => {
-  if (currentExport?.kind === 'ssh') await exportSSH(currentExport.name, currentExport.route, $('ssh-share-password').value, true);
+  if (currentExport?.kind === 'ssh') await exportSSH(currentExport.name, currentExport.route, $('ssh-share-password').value, true, currentExport.port, currentExport.path);
 }));
 $('export-dialog').addEventListener('close', () => { $('ssh-share-password').value = ''; currentExport = null; $('export-links').replaceChildren(); });

@@ -116,34 +116,32 @@ wait_ready()
 print('Panel daemon socket and read-only RPC verified')
 READY
 PYTHONPATH="$app_dir" /usr/bin/python3 - <<'PROBE'
-import socket, time
-from common import DOMAIN_FILE, read_text, validate_domain
+import time
+from pathlib import Path
+from common import DOMAIN_FILE, SSH_UPGRADE_PATHS, read_text, validate_domain
+from diagnostics import listener_detail, ssh_upgrade
 import ssh_backend
+
 domain = validate_domain(read_text(DOMAIN_FILE))
-banner = b'SSH-2.0-OpenSSH_' if ssh_backend.name() == 'openssh' else b'SSH-2.0-dropbear_'
-request = (f'GET /ssh/raw HTTP/1.1\r\nHost: {domain}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n').encode()
-deadline = time.monotonic() + 12
-last = 'No HTTP/SSH reply'
-while time.monotonic() < deadline:
-    try:
-        with socket.create_connection(('127.0.0.1', 80), timeout=1) as peer:
-            peer.settimeout(1); peer.sendall(request); data = b''
-            while len(data) < 16384:
-                chunk = peer.recv(4096)
-                if not chunk: break
-                data += chunk
-                if b'\r\n\r\n' in data:
-                    header, body = data.split(b'\r\n\r\n', 1)
-                    if not header.startswith(b'HTTP/1.1 101 '):
-                        raise RuntimeError(header.split(b'\r\n', 1)[0].decode(errors='replace'))
-                    if body.startswith(banner):
-                        print('Local gateway -> raw bridge -> managed ' + ssh_backend.name() + ': 101 and SSH banner verified')
-                        raise SystemExit(0)
-            last = repr(data[:180])
-    except (OSError, RuntimeError) as exc:
-        last = str(exc)
-    time.sleep(.2)
-raise SystemExit('Local SSH transport probe failed: ' + last)
+backend = ssh_backend.name()
+banner = 'SSH-2.0-OpenSSH_' if backend == 'openssh' else 'SSH-2.0-dropbear_'
+cert_dir = Path('/etc/letsencrypt/live') / domain
+ports = [(80, False)]
+if all((cert_dir / name).is_file() for name in ('fullchain.pem', 'privkey.pem')):
+    ports.append((443, True))
+else:
+    print('TLS listener :443 skipped: this origin has no configured TLS certificate/key.')
+for port, tls in ports:
+    for path in SSH_UPGRADE_PATHS:
+        deadline = time.monotonic() + 12
+        while True:
+            ok, detail = ssh_upgrade(domain, port, tls, timeout=2, path=path)
+            if ok and detail.startswith('HTTP 101; ' + banner):
+                print(f'Local gateway :{port} {path} -> managed {backend}: {detail}')
+                break
+            if time.monotonic() >= deadline:
+                raise SystemExit(f'Local SSH transport probe failed :{port} {path}: {detail}\n{listener_detail(port)}')
+            time.sleep(.2)
 PROBE
 trap - ERR INT TERM
 echo "SSH compatibility update complete. Recovery copy: $backup_dir"

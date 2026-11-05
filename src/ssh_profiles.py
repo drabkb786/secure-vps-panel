@@ -3,7 +3,7 @@ import json
 import re
 from datetime import date
 from urllib.parse import quote
-from common import DOMAIN_FILE, ValidationError, read_text, validate_domain, validate_ssh_password, validate_username
+from common import SSH_UPGRADE_PATHS, DOMAIN_FILE, ValidationError, read_text, validate_domain, validate_ssh_password, validate_username
 import cdn_manager
 import slowdns
 import ssh_secrets
@@ -20,6 +20,13 @@ def export(params, lookup):
     domain = validate_domain(read_text(DOMAIN_FILE))
     route = params.get("route", "direct")
     host, prefix = cdn_manager.delivery(route, domain)
+    port = params.get("port", 80 if route == "direct" else 443)
+    if type(port) is not int or port not in ({80, 443} if route == "direct" else {443}):
+        raise ValidationError("Choose port 80 or 443 for direct; CDN routes use 443")
+    alias = params.get("path", "/cdn-cgi")
+    if alias not in (SSH_UPGRADE_PATHS if route == "direct" else ("/cdn-cgi",)):
+        raise ValidationError("Choose a supported direct SSH path; CDN exports use the provider alias")
+    share_path = prefix + alias
     password = params.get("password")
     if password is not None:
         password = validate_ssh_password(password)
@@ -27,10 +34,6 @@ def export(params, lookup):
             ssh_secrets.save(account, password)
     else:
         password = ssh_secrets.load(account)
-    port = params.get("port", 80 if route == "direct" else 443)
-    if type(port) is not int or port not in ({80, 443} if route == "direct" else {443}):
-        raise ValidationError("Choose port 80 or 443 for direct; CDN routes use 443")
-    share_path = prefix + "/cdn-cgi"
     payload = f"GET {share_path} HTTP/1.1[crlf]Host: {host}[crlf]Connection: Upgrade[crlf]Upgrade: websocket[crlf][crlf]"
     share = {"credentials": f"{host}:{port}@{user}:{password or ''}", "payload": payload}
     share_notes = []
@@ -74,7 +77,7 @@ def export(params, lookup):
         plain_ws = {**profile, "port": 80, "tls": False}
         for field in ("server_name", "verify_certificate"): plain_ws.pop(field, None)
         files[f"{user}-ws-non-tls.json"] = json.dumps(plain_ws, indent=2) + "\n"
-        links["ws"] = f"ws://{domain}/cdn-cgi"
+        links["ws"] = f"ws://{domain}{share_path}"
         files["links.txt"] = "\n".join(links.values()) + "\n"
         files["connect.txt"] += (f'\nWS non-TLS:\nssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o "ProxyCommand=python3 ssh-ws-client.py --host {domain} --no-tls" -p 109 -N -D 127.0.0.1:10888 {user}@{domain}\n'
                                  f'\nClient route probes (run on the client, not the VPS):\npython3 ssh-ws-client.py --host {domain} --no-tls --path /ssh/raw --probe --raw\n'
@@ -85,7 +88,7 @@ def export(params, lookup):
         notes.append("legacy-raw-payload.txt is for direct origin port 80 (or TLS 443) and raw-upgrade SSH clients only; it is not a CDN WSS profile.")
         raw = {"schema": "noway-ssh-raw-v1", "username": user, "host": domain,
                "port": 80, "tls": False, "transport": "http-upgrade-raw",
-               "path": "/cdn-cgi", "http_host": domain, "proxy_type": "none",
+               "path": share_path, "http_host": domain, "proxy_type": "none",
                "requires_rfc6455": False, "payload": files["legacy-raw-payload.txt"].strip()}
         if password is not None:
             raw["password"] = password
@@ -99,7 +102,7 @@ def export(params, lookup):
             f"Raw TLS Upgrade: {domain}:443; TLS on; verify certificate; SNI {domain}; proxy none.\n"
             f"Payload for either raw mode:\n{raw['payload']}\n"
             "Raw mode must omit Sec-WebSocket-Key and Sec-WebSocket-Version.\n\n"
-            f"Binary WS non-TLS: {domain}:80; TLS none; Host {domain}; path /ssh/ws.\n"
+            f"Binary WS non-TLS: {domain}:80; TLS none; Host {domain}; path {share_path}.\n"
             f"Binary WSS: {host}:443; TLS on; SNI/Host {host}; path {path}.\n"
             "Use actual RFC6455 binary framing for WSS; a raw payload is not a framed WSS client.\n"
             "These JSON/TXT files document settings; they are not proprietary .nm/.ehi import files.\n"

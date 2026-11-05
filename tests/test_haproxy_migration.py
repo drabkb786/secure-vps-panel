@@ -139,3 +139,10 @@ def test_installer_retains_pinned_backend_and_normal_updates_do_not_build_runtim
     entry = (ROOT / 'scripts/migrate-dropbear-haproxy.sh').read_text()
     assert 'upgrade-runtime.py' not in entry
     assert 'update-ssh-compat.sh' in entry
+
+def test_gateway_rejects_overlapping_public_and_private_listeners():
+    import pytest
+    import ssh_backend
+    for options in ({"public_ports": (80, 80)}, {"http_port": 443}, {"tls_port": 8080}, {"public_ports": ()}):
+        with pytest.raises(ValueError, match="listener ports"):
+            ssh_backend.haproxy_config("a" * 64, **options)

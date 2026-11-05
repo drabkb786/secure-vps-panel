@@ -141,7 +141,7 @@ def tls_socket(peer, context, hostname):
     return local
 
 
-@pytest.mark.parametrize("route", ["direct", "legacy", "cgi", "cgi-tls", "wss", "cloudfront", "cloudfront-cgi"])
+@pytest.mark.parametrize("route", ["direct", "root", "root-tls", "legacy", "legacy-tls", "cgi", "cgi-tls", "wss", "cloudfront", "cloudfront-cgi"])
 def test_real_dropbear_auth_forwarding_and_tunnel_only_policy(tmp_path, keydir, monkeypatch, route):
     from cloudfront_fixture import enable_origin, edge_server
     secret = enable_origin(tmp_path, monkeypatch) if route.startswith("cloudfront") else ""
@@ -192,12 +192,12 @@ def test_real_dropbear_auth_forwarding_and_tunnel_only_policy(tmp_path, keydir, 
             wait_port(tls_port, nginx)
             if route == "direct":
                 peer = socket.create_connection(("127.0.0.1", db_port), timeout=5)
-            elif route in {"legacy", "cgi", "cgi-tls"}:
+            elif route in {"root", "root-tls", "legacy", "legacy-tls", "cgi", "cgi-tls"}:
                 # Read one byte at a time so coalesced SSH greeting bytes remain.
-                peer = socket.create_connection(("127.0.0.1", tls_port if route == "cgi-tls" else http_port), timeout=5)
-                if route == "cgi-tls":
+                peer = socket.create_connection(("127.0.0.1", tls_port if route.endswith("-tls") else http_port), timeout=5)
+                if route.endswith("-tls"):
                     peer = tls_socket(peer, ssl.create_default_context(cafile=str(cert)), "vpn.example.com")
-                route_path = "/ssh/raw" if route == "legacy" else "/cdn-cgi"
+                route_path = {"root": "/", "legacy": "/ssh/raw", "cgi": "/cdn-cgi"}[route.removesuffix("-tls")]
                 peer.sendall(f"GET {route_path} HTTP/1.1\r\nHost: vpn.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n".encode())
                 response = b""
                 while not response.endswith(b"\r\n\r\n"):
