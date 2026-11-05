@@ -778,6 +778,38 @@ def account_connections(params):
             "note": "Payload counters are sampled; transport headers/provider billing are excluded. Unknown SSH/SlowDNS sources remain labelled unknown."}
 
 
+def download_snapshot(params):
+    """Read one account's download baseline, preserving identity and reset scope."""
+    name = validate_username(str(params.get("name", "")))
+    kind = params.get("kind")
+    if kind == "ssh":
+        account = managed_user(name)
+        ledger = ssh_meter.state()
+        identity = account_policy.ssh_id(account)
+        usage = ledger["accounts"].get(identity, {})
+        sessions = next((s for s in list_sessions({})["sessions"] if s["username"] == name), {})
+        covered = ssh_meter.coverage(ledger).get(identity, set())
+        if not ssh_meter.available() or set(sessions.get("pids", [])) - covered:
+            raise ValidationError("The account's SSH sessions need an active, complete payload meter")
+        reset_at = usage.get("reset_at")
+    elif kind == "xray":
+        result = XRAY.collect_usage({})
+        if not result.get("available"):
+            raise ValidationError("Xray statistics are unavailable; retry after the meter is ready")
+        account = next((row for row in xray_manager.accounts() if row["name"] == name), None)
+        if account is None:
+            raise ValidationError("Xray account does not exist")
+        identity = account["uuid"]
+        ledger = xray_manager.traffic.state()
+        usage = ledger.get("totals", {}).get(identity, {})
+        reset_at = ledger.get("resets", {}).get(name)
+    else:
+        raise ValidationError("Choose ssh or xray")
+    return {"kind": kind, "name": name, "identity": identity, "reset_at": reset_at,
+            "download_bytes": str(usage.get("download_bytes", 0)),
+            "sampled_at": ledger.get("sampled_at")}
+
+
 def account_ip_set(params):
     name = validate_username(str(params.get("name", "")))
     if params.get("kind") == "xray":
@@ -801,6 +833,7 @@ def ssh_reset_usage(params):
     return {"username": name, "reset": True}
 
 HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    "download_snapshot": download_snapshot,
     "account_connections": account_connections,
     "account_ip_set": account_ip_set,
     "ssh_reset_usage": ssh_reset_usage,
@@ -867,7 +900,7 @@ WEB_COMMANDS = {"ssh_export", "bunny_status", "bunny_configure", "bunny_setup", 
                 "create_user", "delete_user", "renew_user", "set_sessions", "set_quota", "list_users",
                 "list_sessions", "service_status", "restart_service", "set_domain", "issue_cert"}
 WEB_COMMANDS.update({"set_user_lock", "traffic_sample", "live_connections", "packet_test", "live_logs", "doctor", "restart_managed", "config_view", "banner_get", "banner_set", "memory_report", "slowdns_status", "slowdns_configure", "slowdns_check"})
-WEB_COMMANDS.update({"account_connections", "account_ip_set", "ssh_reset_usage"})
+WEB_COMMANDS.update({"account_connections", "account_ip_set", "ssh_reset_usage", "download_snapshot"})
 
 
 def authorize_command(uid: int, command: str, params: dict) -> None:

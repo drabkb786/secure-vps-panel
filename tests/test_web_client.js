@@ -18,6 +18,18 @@ test('decimal and binary quotas use distinct units and preserve exact byte text'
   assert.equal(node.title, '9007199254741115 bytes');
 });
 
+test('download sizes expose both bases without changing with the quota unit', () => {
+  const context = vm.createContext({element: (tag, cls, text) => ({text, append() {}})});
+  vm.runInContext(usageHelpers, context);
+  assert.equal(context.exactSize('157286400'), '157.286 MB');
+  assert.equal(context.exactSize('157286400', true), '150.000 MiB');
+  for (const quota_unit of ['GB', 'GiB']) {
+    const row = {quota_unit, download_bytes:773881246};
+    assert.equal(context.byteCell(row, 'download_bytes').text, '773.881 MB');
+  }
+  assert.equal(context.exactSize('9007199254741115'), '9007199.255 GB');
+});
+
 test('monitor failure and IP cooldown are never labelled as expiry', () => {
   const context = vm.createContext({}); vm.runInContext(usageHelpers, context);
   assert.equal(vm.runInContext('profileStatus({meter_unavailable:true})', context), 'Monitor unavailable');

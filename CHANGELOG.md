@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.6.3 — Download comparisons with exact baselines
+
+- Keep traffic display in decimal MB/GB independently of the quota unit and show the binary MiB/GiB equivalent alongside the original integer bytes.
+- Add an account download comparison with before/after samples, exact local file size, and a signed byte difference. Detect account replacement and usage resets instead of returning a misleading delta. Read local file metadata only.
+- Extend native acceptance to a 150 MiB SSH HTTP download and 150 MiB Xray transfer, with exact directional account/IP counter assertions.
+
 ## 4.6.2 — SSH gateway port and route checks
 
 - Select HTTP port 80 or TLS port 443 and an origin path in the SSH share dialog.

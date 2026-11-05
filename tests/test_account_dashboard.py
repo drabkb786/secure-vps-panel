@@ -46,6 +46,32 @@ def test_ssh_reconnect_restart_and_reset_keep_absolute_baselines(ssh_account):
         restored.update("connection-a", ssh_account, "192.0.2.1", 1, 1)
 
 
+def test_download_snapshot_uses_one_direction_and_detects_usage_resets(ssh_account, monkeypatch):
+    monkeypatch.setattr(ssh_meter, "available", lambda: True)
+    monkeypatch.setattr(paneld, "list_sessions", lambda _: {"sessions": []})
+    ledger = ssh_meter.Ledger()
+    ledger.update("live", ssh_account, "192.0.2.1", 1000000000, 594000000)
+    ledger.flush()
+    before = paneld.download_snapshot({"kind": "ssh", "name": "basit"})
+    ledger.update("live", ssh_account, "192.0.2.1", 1000000100, 594000000 + 157286400)
+    ledger.flush()
+    after = paneld.download_snapshot({"kind": "ssh", "name": "basit"})
+    assert int(after["download_bytes"]) - int(before["download_bytes"]) == 157286400
+    assert after["identity"] == before["identity"]
+    ledger.reset(ssh_account)
+    reset = paneld.download_snapshot({"kind": "ssh", "name": "basit"})
+    assert reset["reset_at"] != before["reset_at"]
+    assert reset["download_bytes"] == "0"
+
+
+def test_download_snapshot_requires_complete_ssh_coverage(ssh_account, monkeypatch):
+    monkeypatch.setattr(ssh_meter, "available", lambda: True)
+    monkeypatch.setattr(paneld, "list_sessions", lambda _: {"sessions": [{"username": "basit", "pids": [123]}]})
+    monkeypatch.setattr(ssh_meter, "coverage", lambda _: {})
+    with pytest.raises(ValidationError, match="complete payload meter"):
+        paneld.download_snapshot({"kind": "ssh", "name": "basit"})
+
+
 def test_ssh_same_ip_multiple_connections_and_account_scoped_ban(ssh_account):
     ledger = ssh_meter.Ledger()
     ssh_account["max_ips"] = 1
