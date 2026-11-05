@@ -189,11 +189,15 @@ function confirmAction(message) {
   setText('confirm-message', message); $('confirm-dialog').showModal();
   return new Promise(resolve => { confirmResolve = resolve; });
 }
-async function exportSSH(name, route = 'direct', password = '', remember = false) {
+async function exportSSH(name, route = 'direct', password = '', remember = false, port = 80, path = '/cdn-cgi') {
   const params = {name, route};
+  if (route === 'direct') Object.assign(params, {port, path});
   if (password) Object.assign(params, {password, remember_password: remember});
   const result = await api('ssh-export', params);
-  currentExport = {...result, kind: 'ssh', route};
+  currentExport = {...result, kind: 'ssh', route, port, path};
+  $('ssh-direct-settings').hidden = route !== 'direct';
+  $('ssh-direct-port').value = String(port);
+  $('ssh-direct-path').value = path;
   $('ssh-share-options').hidden = result.password_available; $('ssh-share-password').value = '';
   $('export-route').value = route;
   setText('export-title', `SSH · ${name}`);
@@ -215,6 +219,7 @@ async function exportProfile(name, route = 'direct') {
   $('download-zip').hidden = false; $('copy-all-links').hidden = false;
   $('export-route').value = route;
   currentExport = result;
+  $('ssh-direct-settings').hidden = true;
   $('ssh-share-options').hidden = true; $('ssh-share-password').value = '';
   const warnings = result.readiness?.warnings || [];
   setText('export-warning', warnings.join(' ')); $('export-warning').hidden = !warnings.length;
@@ -435,14 +440,30 @@ setInterval(() => { if (csrf && document.visibilityState === 'visible' && !docum
   catch (_) { showLogin(); }
 })();
 
-$('export-route').addEventListener('change', async () => {
+const exportSelectors = ['export-route', 'ssh-direct-port', 'ssh-direct-path'];
+async function updateExportSelection() {
   const previous = currentExport;
   if (!previous) return;
-  $('export-route').disabled = true;
-  try { await (previous.kind === 'ssh' ? exportSSH : exportProfile)(previous.name, $('export-route').value); }
-  catch (err) { $('export-route').value = previous.route || 'direct'; notify(err.message, true); }
-  finally { $('export-route').disabled = false; }
-});
+  const route = $('export-route').value;
+  for (const id of exportSelectors) $(id).disabled = true;
+  try {
+    if (previous.kind === 'ssh') {
+      await exportSSH(previous.name, route, '', false, Number($('ssh-direct-port').value), $('ssh-direct-path').value);
+    } else {
+      await exportProfile(previous.name, route);
+    }
+  } catch (err) {
+    $('export-route').value = previous.route || 'direct';
+    if (previous.kind === 'ssh') {
+      $('ssh-direct-port').value = String(previous.port);
+      $('ssh-direct-path').value = previous.path;
+    }
+    notify(err.message, true);
+  } finally {
+    for (const id of exportSelectors) $(id).disabled = false;
+  }
+}
+for (const id of exportSelectors) $(id).addEventListener('change', updateExportSelection);
 $('subscription-route').addEventListener('change', renderSubscription);
 bindForm('cloudfront-form', async data => { await command('cloudfront_configure', {enabled: true, endpoint: data.get('endpoint').trim(), price_class: data.get('price_class')}, 'CloudFront settings saved. Deploy the private AWS setup before checking the endpoint.'); });
 $('cf-disable').addEventListener('click', () => busy($('cf-disable'), async () => { if (await confirmAction('Disable CloudFront origin routes? Existing CDN tunnels may disconnect. AWS resources and billing must be managed in your AWS account.')) await command('cloudfront_configure', {enabled: false}, 'CloudFront routes disabled'); }));

@@ -14,14 +14,14 @@ BANNER = b'SSH-2.0-OpenSSH_test\r\n'
 
 
 @contextmanager
-def responding(chunks, tls_context=None):
+def responding(chunks, tls_context=None, path='/ssh/raw'):
     class Handler(socketserver.BaseRequestHandler):
         def handle(self):
             self.request.settimeout(2)
             try:
                 data = b''
                 while b'\r\n\r\n' not in data: data += self.request.recv(4096)
-                assert b'GET /ssh/raw HTTP/1.1' in data and b'Host: vpn.example.com' in data
+                assert f'GET {path} HTTP/1.1'.encode() in data and b'Host: vpn.example.com' in data
                 for chunk in chunks: self.request.sendall(chunk)
             except OSError:
                 pass
@@ -70,3 +70,14 @@ def test_tls_probe_verifies_the_configured_hostname_and_certificate(tmp_path, mo
         assert diagnostics.ssh_upgrade('vpn.example.com', port, tls=True)[0]
         ok, detail = diagnostics.ssh_upgrade('wrong.example.com', port, tls=True)
         assert not ok and 'SSLCertVerificationError' in detail
+
+@pytest.mark.parametrize('path', ['/', '/ssh/raw', '/cdn-cgi'])
+def test_probe_checks_the_requested_origin_path(path):
+    with responding([HEAD + BANNER], path=path) as port:
+        assert diagnostics.ssh_upgrade('vpn.example.com', port, path=path)[0]
+
+
+def test_conflict_status_preserved_in_probe_detail():
+    with responding([b'HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\n\r\n']) as port:
+        ok, detail = diagnostics.ssh_upgrade('vpn.example.com', port)
+        assert not ok and '409 Conflict' in detail

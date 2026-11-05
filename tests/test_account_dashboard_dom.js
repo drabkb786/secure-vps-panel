@@ -17,9 +17,9 @@ async function dashboard() {
   const profile = {...common, ...bytes(5*B, 25*B), name:'noway', protocols:['vless'], online_ips:['192.0.2.1']};
   const state = {users:[ssh], accounts:[profile], sessions:[{username:'basit',count:1,ips:['198.51.100.1']}], services:{nginx:'active','abdulbasit-paneld':'active'}, endpoints:[], domain:'vpn.example.com', xray_installed:true, network:{enabled:true,dns:{servers:['1.1.1.1'],query_strategy:'UseIPv4'}}, traffic:{ssh_available:true,ip_meter_available:true}, slowdns:{}, cloudfront:{}, system:{hostname:'example',uptime_seconds:1000,cpu_count:2,load:[.1],memory_total:B,memory_available:B,disk_total:B,disk_used:0}};
   const ips = Array.from({length:16}, (_,i)=>({ip:`192.0.2.${i+1}`,...bytes(i===0?5*B:0,i===0?25*B:0),online:i===0,blocked:false,usage_available:true,protocols:['vless']}));
-  function exported(password='demo-secret', route='direct') {
+  function exported(password='demo-secret', route='direct', port=80, path='/cdn-cgi') {
     const host = route==='direct'?'vpn.example.com':'cdn.example.com', prefix = route==='direct'?'':'/'+route;
-    return {name:'basit',share:{credentials:`${host}:${route==='direct'?80:443}@basit:${password}`,payload:`GET ${prefix}/cdn-cgi HTTP/1.1[crlf]Host: ${host}[crlf]Connection: Upgrade[crlf]Upgrade: websocket[crlf][crlf]`},password_available:!!password,share_warnings:[],links:{},files:{},profile:{password},readiness:{warnings:[]}};
+    return {name:'basit',share:{credentials:`${host}:${route==='direct'?port:443}@basit:${password}`,payload:`GET ${prefix}${path} HTTP/1.1[crlf]Host: ${host}[crlf]Connection: Upgrade[crlf]Upgrade: websocket[crlf][crlf]`},password_available:!!password,share_warnings:[],links:{},files:{},profile:{password},readiness:{warnings:[]}};
   }
   win.fetch = async (url, options={}) => {
     const data = options.body ? JSON.parse(options.body) : undefined;
@@ -30,7 +30,7 @@ async function dashboard() {
     else if (url.includes('export?kind=ssh')) value = exported();
     else if (url.endsWith('ssh-export')) {
       if (data.remember_password) state.legacyShare=false;
-      value = exported(data.password || (state.legacyShare?'':'demo-secret'), data.route);
+      value = exported(data.password || (state.legacyShare?'':'demo-secret'), data.route, data.port, data.path);
     }
     else if (url.endsWith('command')) {
       const p = data.params;
@@ -96,7 +96,14 @@ test('SSH auto-share uses POST and shows exactly credentials and complete payloa
   assert.equal(d.getElementById('ssh-share-options').hidden,true);
   assert.equal(d.getElementById('download-zip').hidden,true);
   assert.equal(d.getElementById('copy-all-links').hidden,true);
-  assert.ok(app.calls.some(c=>c.url.endsWith('ssh-export')));
+  const port = d.getElementById('ssh-direct-port'), path = d.getElementById('ssh-direct-path');
+  port.value = '443';
+  port.dispatchEvent(new app.win.Event('change')); await app.flush();
+  path.value = '/';
+  path.dispatchEvent(new app.win.Event('change')); await app.flush();
+  assert.equal(d.querySelector('[aria-label="server:port@username:password"]').value,'vpn.example.com:443@basit:demo-secret');
+  assert.match(d.querySelector('[aria-label="Payload"]').value,/^GET \/ HTTP/);
+  assert.equal(d.querySelectorAll('#export-links textarea').length,2);
   assert.ok(app.calls.every(c=>!c.url.includes('demo-secret')));
   d.getElementById('export-dialog').close();
   assert.equal(d.getElementById('export-links').childElementCount,0);

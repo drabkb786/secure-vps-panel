@@ -114,3 +114,17 @@ def test_simple_export_does_not_construct_unrequested_bundles(secret, tmp_path, 
     result = ssh_profiles.export({"username": "basit", "simple": True}, lambda _: account)
     assert set(result) == {"name", "share", "password_available", "share_warnings"}
     assert set(result["share"]) == {"credentials", "payload"}
+
+@pytest.mark.parametrize("path", ["/", "/ssh/raw", "/cdn-cgi"])
+@pytest.mark.parametrize("port", [80, 443])
+def test_direct_share_matches_selected_gateway(secret, tmp_path, monkeypatch, port, path):
+    account, password = secret
+    domain = tmp_path / "domain"
+    domain.write_text("vpn.example.com")
+    monkeypatch.setattr(ssh_profiles, "DOMAIN_FILE", domain)
+    params = {"username": "basit", "simple": True, "password": password, "path": path, "port": port}
+    result = ssh_profiles.export(params, lambda _: account)
+    assert result["share"]["credentials"] == f"vpn.example.com:{port}@basit:{password}"
+    assert result["share"]["payload"].startswith(f"GET {path} HTTP/1.1[crlf]")
+    with pytest.raises(ValidationError):
+        ssh_profiles.export({**params, "port": 2082}, lambda _: account)

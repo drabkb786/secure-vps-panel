@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.6.2 — SSH gateway port and route checks
+
+- Select HTTP port 80 or TLS port 443 and an origin path in the SSH share dialog.
+- Check all three direct aliases on each configured public listener during a compatibility update. Verify the actual managed SSH greeting after HTTP 101.
+- Doctor reports the failed port, path, HTTP status or TLS error, and local listening sockets. Reject overlapping HAProxy listener ports before generating a configuration.
+
 ## 4.6.1 — Simple SSH sharing and origin aliases
 
 - Show only credentials in `server:port@username:password` form and a complete

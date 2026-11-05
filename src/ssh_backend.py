@@ -41,6 +41,9 @@ def haproxy_config(secret, *, public_ports=(80, 443), http_port=8080, tls_port=8
         raise ValueError("Invalid private HAProxy identity")
     if any(type(p) is not int or not 1 <= p <= 65535 for p in (*public_ports, http_port, tls_port)):
         raise ValueError("Invalid gateway port")
+    ports = (*public_ports, http_port, tls_port)
+    if not public_ports or len(set(ports)) != len(ports):
+        raise ValueError("Gateway needs a public port and distinct public, HTTP and TLS listener ports")
     binds = "\n".join(f"    bind 0.0.0.0:{p}" + (f"\n    bind [::]:{p} v6only" if ipv6 else "") for p in public_ports)
     return f'''# Managed by NOWAY. TLS terminates at loopback Nginx.
 global

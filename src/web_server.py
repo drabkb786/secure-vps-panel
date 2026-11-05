@@ -346,8 +346,9 @@ class Handler(BaseHTTPRequestHandler):
             params["simple"] = data.get("format") != "zip"
             if data.get("password"):
                 params["password"] = data["password"]
-            if "port" in data:
-                params["port"] = data["port"]
+            for field in ("port", "path"):
+                if field in data:
+                    params[field] = data[field]
             if data.get("remember_password") is True:
                 params["remember_password"] = True
             result = request("ssh_export", **params)

@@ -92,7 +92,7 @@ def test_unmasked_frame_gets_protocol_close_not_http_error(echo_bridge):
         assert b"HTTP/1.1 400" not in response
 
 
-@pytest.mark.parametrize("path", ["/", "/ssh/raw", "/ssh/ws?client=standard"])
+@pytest.mark.parametrize("path", ["/", "/ssh/raw", "/cdn-cgi", "/ssh/ws?client=standard"])
 def test_key_selects_binary_websocket_on_direct_routes(echo_bridge, path):
     with connect(f"ws://127.0.0.1:{echo_bridge}{path}", compression=None, proxy=None) as ws:
         ws.send(b"SSH-2.0-framed-test\r\n")
@@ -100,7 +100,7 @@ def test_key_selects_binary_websocket_on_direct_routes(echo_bridge, path):
         assert ws.ping(b"alive").wait(2)
 
 
-@pytest.mark.parametrize("method,version,path", [("GET", "1.1", "/"), ("POST", "1.0", "/ssh/raw"),
+@pytest.mark.parametrize("method,version,path", [("GET", "1.1", "/"), ("GET", "1.1", "/cdn-cgi"), ("POST", "1.0", "/ssh/raw"),
     ("CONNECT", "1.1", "/ssh/raw?client=legacy"), ("HEAD", "1.0", "/ssh/raw"),
     ("OPTIONS", "1.1", "/ssh/raw"), ("GET", "1.1", "/ssh/ws")])
 def test_legacy_without_key_preserves_coalesced_ssh_bytes(echo_bridge, method, version, path):

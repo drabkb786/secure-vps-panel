@@ -228,3 +228,6 @@ def is_secure_regular_file(path: Path) -> bool:
     except FileNotFoundError:
         return False
     return stat.S_ISREG(st.st_mode) and not stat.S_ISLNK(st.st_mode)
+
+# Direct-origin SSH Upgrade aliases offered to clients.
+SSH_UPGRADE_PATHS = ("/", "/ssh/raw", "/cdn-cgi")

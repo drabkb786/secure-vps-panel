@@ -16,6 +16,7 @@ import socket
 import socketserver
 import threading
 import time
+from common import SSH_UPGRADE_PATHS
 from typing import Final
 from urllib.parse import urlsplit
 import gateway_identity
@@ -38,7 +39,7 @@ TCP_NODELAY = True
 MAX_PENDING: Final = 256 * 1024
 MAX_MESSAGE: Final = 8 * 1024 * 1024
 WS_PATH: Final = "/ssh/ws"
-LEGACY_PATHS: Final = {"/", "/ssh/raw", "/cdn-cgi", "/cdn-cgi/"}
+LEGACY_PATHS: Final = {*SSH_UPGRADE_PATHS, "/cdn-cgi/"}
 GUID: Final = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 LOG = logging.getLogger("abdulbasit-ws")
