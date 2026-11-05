@@ -73,10 +73,18 @@ const size = (value, unit = 'GB') => {
 };
 const quotaLabel = (row) => row.quota_gb == null ? 'Unlimited' : `${row.quota_gb} ${row.quota_unit || 'GiB'}`;
 const profileStatus = (row) => row.enabled === false ? 'Locked' : row.meter_unavailable || row.ip_monitoring_failed ? 'Monitor unavailable' : row.quota_exhausted ? 'Quota reached' : row.ip_blocked_until && Date.parse(row.ip_blocked_until) > Date.now() ? 'IP limit · cooldown' : row.active ? 'Active' : 'Expired';
+function exactSize(bytes, binary = false) {
+  const value = BigInt(bytes), base = binary ? 1024n : 1000n;
+  const divisor = value >= base ** 3n ? base ** 3n : base ** 2n;
+  const unit = divisor === base ** 3n ? (binary ? 'GiB' : 'GB') : (binary ? 'MiB' : 'MB');
+  const rounded = (value * 1000n + divisor / 2n) / divisor;
+  return `${rounded / 1000n}.${String(rounded % 1000n).padStart(3, '0')} ${unit}`;
+}
 function byteCell(row, field) {
-  const node = element('td', 'mono', size(Number(row.exact_bytes?.[field] ?? row[field] ?? 0), row.quota_unit || 'GB') + (field === 'used_bytes' ? ` / ${quotaLabel(row)}` : ''));
-  node.title = `${row.exact_bytes?.[field] ?? row[field] ?? 0} bytes`;
-  node.append(element('div', 'small muted', node.title));
+  const bytes = row.exact_bytes?.[field] ?? row[field] ?? 0;
+  const node = element('td', 'mono', exactSize(bytes) + (field === 'used_bytes' ? ` / ${quotaLabel(row)}` : ''));
+  node.title = `${bytes} bytes`;
+  node.append(element('div', 'small muted', `${exactSize(bytes, true)} · ${node.title}`));
   return node;
 }
 const percent = (used, total) => total > 0 ? Math.max(0, Math.min(100, used / total * 100)) : 0;

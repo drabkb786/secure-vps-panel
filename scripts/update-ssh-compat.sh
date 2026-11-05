@@ -79,7 +79,7 @@ subprocess.run([binary('nginx'), '-t'], check=True)
 subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
 RELOAD
   systemctl restart abdulbasit-ws abdulbasit-paneld || rollback_failed=1
-  systemctl try-restart abdulbasit-web abdulbasit-session-enforcer abdulbasit-bot || rollback_failed=1
+  systemctl try-restart abdulbasit-web abdulbasit-session-enforcer abdulbasit-bot abdulbasit-ssh-meter || rollback_failed=1
   if [[ $rollback_failed == 1 ]]; then echo "Automatic recovery was incomplete; inspect services and $backup_dir" >&2; fi
   exit "$result"
 }
@@ -108,7 +108,7 @@ from common import DOMAIN_FILE, read_text, validate_domain
 paneld.install_nginx_config(validate_domain(read_text(DOMAIN_FILE)))
 NGINX
 systemctl restart abdulbasit-ws abdulbasit-paneld
-systemctl try-restart abdulbasit-web abdulbasit-session-enforcer abdulbasit-bot
+systemctl try-restart abdulbasit-web abdulbasit-session-enforcer abdulbasit-bot abdulbasit-ssh-meter
 systemctl is-active --quiet "$ssh_unit" abdulbasit-ws abdulbasit-paneld nginx
 PYTHONPATH="$app_dir" /usr/bin/python3 - <<'READY'
 from panel_client import wait_ready

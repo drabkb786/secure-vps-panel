@@ -27,7 +27,7 @@ COOKIE = "noway_session"
 MAX_BODY = 16 * 1024
 SESSION_TTL = 8 * 3600
 IDLE_TTL = 30 * 60
-COMMANDS = {"cloudfront_configure", "cloudfront_check",
+COMMANDS = {"cloudfront_configure", "cloudfront_check", "download_snapshot",
     "account_connections", "account_ip_set", "ssh_reset_usage",
     "create_user", "delete_user", "renew_user", "set_sessions", "set_quota",
     "ssh_export", "bunny_status", "bunny_configure", "bunny_check", "set_domain", "issue_cert", "restart_service", "dns_lookup", "dns_set",

@@ -62,9 +62,12 @@ def test_real_xray_per_ip_bytes_and_account_scoped_block(tmp_path, monkeypatch):
         payload = bytes([size % 251]) * size
         header = b"\x00" + uuid.UUID(account["uuid"]).bytes + b"\x00\x01" + struct.pack("!H", echo.server_address[1]) + b"\x01\x7f\x00\x00\x01"
         with peer:
-            peer.sendall(header + payload)
+            sender = threading.Thread(target=peer.sendall, args=(header + payload,))
+            sender.start()
             assert core_tools.read_exact(peer, 2) == b"\x00\x00"
             assert core_tools.read_exact(peer, len(payload)) == payload
+            sender.join(10)
+            assert not sender.is_alive()
     try:
         core_tools.wait_port(inbound["port"], process)
         transfer(first, "127.0.0.2", 65536)
@@ -72,13 +75,15 @@ def test_real_xray_per_ip_bytes_and_account_scoped_block(tmp_path, monkeypatch):
         with pytest.raises((AssertionError, OSError)):
             transfer(first, "127.0.0.4", 100)
         transfer(other, "127.0.0.4", 8192)  # Same address, another account is allowed.
+        transfer(first, "127.0.0.2", 150 * 1024 * 1024)
         time.sleep(.1)
         response = subprocess.run([METER_CORE, "api", "statsquery", "--server=unix://" + str(api), "-pattern=user>>>"], capture_output=True, text=True, check=True, timeout=5)
         counters = {s["name"]: int(s.get("value", 0)) for s in json.loads(response.stdout)["stat"]}
         email = f"{first['uuid']}-vless@noway.local"
-        for address, size in (("127.0.0.2", 65536), ("127.0.0.3", 131072)):
+        for address, size in (("127.0.0.2", 65536 + 157286400), ("127.0.0.3", 131072)):
             for direction in ("uplink", "downlink"):
                 assert counters[f"user>>>{email}>>>ip>>>{address}>>>traffic>>>{direction}"] == size
+        assert counters[f"user>>>{email}>>>traffic>>>downlink"] == 65536 + 157286400 + 131072
         assert counters["user>>>noway-meter>>>version"] == 1
     finally:
         process.terminate(); process.wait(timeout=5); log.close(); echo.shutdown(); echo.server_close()
@@ -177,6 +182,49 @@ def test_real_dropbear_authenticated_payload_and_ip_policy(tmp_path, monkeypatch
                 if totals.get("download_bytes") == len(payload) + len(large): break
                 time.sleep(.1)
             assert totals["upload_bytes"] == totals["download_bytes"] == len(payload) + len(large)
+            # A real download must advance only its directional ledger by the
+            # exact HTTP response bytes, even from a nonzero starting counter.
+            body_size = 150 * 1024 * 1024
+            header = f"HTTP/1.1 200 OK\r\nContent-Length: {body_size}\r\nConnection: close\r\n\r\n".encode()
+            request = b"GET /150MiB HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            class Download(socketserver.BaseRequestHandler):
+                def handle(self):
+                    received = bytearray()
+                    while not received.endswith(b"\r\n\r\n"):
+                        chunk = self.request.recv(4096)
+                        if not chunk:
+                            return
+                        received.extend(chunk)
+                    assert bytes(received) == request
+                    self.request.sendall(header)
+                    chunk = b"d" * (256 * 1024)
+                    for _ in range(body_size // len(chunk)):
+                        self.request.sendall(chunk)
+            download = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Download)
+            download.daemon_threads = True
+            threading.Thread(target=download.serve_forever, daemon=True).start()
+            before_down = totals["download_bytes"]
+            try:
+                channel = limited.open_channel("direct-tcpip", download.server_address, ("127.0.0.1", 12348), timeout=5)
+                channel.sendall(request)
+                assert core_tools.read_exact(channel, len(header)) == header
+                remaining = body_size
+                while remaining:
+                    chunk = channel.recv(min(65536, remaining))
+                    assert chunk and chunk == b"d" * len(chunk)
+                    remaining -= len(chunk)
+                assert channel.recv(1) == b""
+                channel.close()
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline:
+                    totals = ssh_meter.state()["accounts"][ssh_id(row)]
+                    if totals["download_bytes"] == before_down + body_size + len(header):
+                        break
+                    time.sleep(.1)
+                assert totals["download_bytes"] - before_down == 157286400 + len(header)
+                assert totals["ips"][address]["download_bytes"] == totals["download_bytes"]
+            finally:
+                download.shutdown(); download.server_close()
             row.update(quota_gb=.1, quota_unit="GB", quota_enforced=True)
             atomic_write_json(directory / (name + ".json"), row)
             monkeypatch.setattr(session_enforcer, "USERS_DIR", directory)

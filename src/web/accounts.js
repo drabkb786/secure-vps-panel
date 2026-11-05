@@ -7,7 +7,7 @@ function accountByteCell(row, field, available = true, withQuota = field === 'us
   const raw = row.exact_bytes?.[field] ?? row[field] ?? 0;
   if (!available && BigInt(raw) === 0n) return element('td', 'mono muted', 'No recorded usage');
   const cell = byteCell(row, field);
-  if (field === 'used_bytes' && !withQuota) cell.firstChild.textContent = size(Number(raw), row.quota_unit || 'GB');
+  if (field === 'used_bytes' && !withQuota) cell.firstChild.textContent = exactSize(raw);
   if (!available) cell.append(element('div', 'small meter-note', 'Last recorded'));
   return cell;
 }
@@ -96,7 +96,7 @@ function renderAccountManagement() {
     tr.append(name, accountByteCell(row, 'upload_bytes', row.usage_available !== false), accountByteCell(row, 'download_bytes', row.usage_available !== false), accountByteCell(row, 'used_bytes', row.usage_available !== false), element('td', 'mono', `${(row.online_ips || []).length} / ${row.max_ips || '∞'}`));
     const status = element('td'); status.append(pill(profileStatus(row), row.active ? 'good' : 'warn')); tr.append(status);
     const actions = element('td'), group = element('div', 'row-actions');
-    group.append(button('Limits', () => openUsage(row.kind, row)), button('Links & settings', () => row.kind === 'ssh' ? exportSSH(row.name) : exportProfile(row.name)), button(row.enabled === false ? 'Unlock' : 'Lock', () => command(row.kind === 'ssh' ? 'set_user_lock' : 'xray_update', row.kind === 'ssh' ? {username: row.name, enabled: row.enabled === false} : {name: row.name, action: 'toggle', enabled: row.enabled === false}, 'Account access updated')), button('Renew', () => openRenew(row.kind, row.name)));
+    group.append(button('Limits', () => openUsage(row.kind, row)), button('Links & settings', () => row.kind === 'ssh' ? exportSSH(row.name) : exportProfile(row.name)), button(row.enabled === false ? 'Unlock' : 'Lock', () => command(row.kind === 'ssh' ? 'set_user_lock' : 'xray_update', row.kind === 'ssh' ? {username: row.name, enabled: row.enabled === false} : {name: row.name, action: 'toggle', enabled: row.enabled === false}, 'Account access updated')), button('Renew', () => openRenew(row.kind, row.name)), button('Download check', () => openDownloadCheck(row.kind, row.name)));
     actions.append(group); tr.append(actions);
     tr.addEventListener('click', event => { if (!event.target.closest('button, a, input, select')) toggle.click(); }); body.append(tr);
     if (expandedAccounts.has(key)) { const detail = element('tr', 'account-detail-row'), cell = element('td'); cell.colSpan = 7; cell.append(accountDetail(row.kind, row.name)); detail.append(cell); body.append(detail); }
@@ -115,3 +115,52 @@ $('ssh-share-generate').addEventListener('click', () => busy($('ssh-share-genera
   if (currentExport?.kind === 'ssh') await exportSSH(currentExport.name, currentExport.route, $('ssh-share-password').value, true, currentExport.port, currentExport.path);
 }));
 $('export-dialog').addEventListener('close', () => { $('ssh-share-password').value = ''; currentExport = null; $('export-links').replaceChildren(); });
+
+let downloadTarget = null, downloadBaseline = null;
+function openDownloadCheck(kind, name) {
+  downloadTarget = {kind, name}; downloadBaseline = null;
+  setText('download-check-title', `Download check · ${name}`);
+  $('download-check-file').value = '';
+  $('download-check-bytes').value = '157286400';
+  $('download-check-result').replaceChildren();
+  $('download-check-end').disabled = true;
+  $('download-check-start').disabled = false;
+  $('download-check-dialog').showModal();
+}
+function showDownloadSnapshot(label, sample) {
+  const bytes = sample.download_bytes;
+  $('download-check-result').append(element('p', 'mono', `${label}: ${bytes} bytes · ${exactSize(bytes)} · ${exactSize(bytes, true)}`),
+    element('p', 'small muted', `Sampled ${sample.sampled_at ? new Date(sample.sampled_at).toLocaleString() : 'before first traffic'}`));
+}
+$('download-check-start').addEventListener('click', () => busy($('download-check-start'), async () => {
+  const target = downloadTarget;
+  const sample = await operation('download_snapshot', target);
+  if (downloadTarget !== target) return;
+  downloadBaseline = sample;
+  $('download-check-result').replaceChildren(); showDownloadSnapshot('Before', sample);
+  $('download-check-end').disabled = false;
+}));
+$('download-check-file').addEventListener('change', () => {
+  const file = $('download-check-file').files[0];
+  if (file) $('download-check-bytes').value = String(file.size);
+});
+$('download-check-end').addEventListener('click', () => busy($('download-check-end'), async () => {
+  const text = $('download-check-bytes').value.trim();
+  if (!/^[0-9]{1,19}$/.test(text) || BigInt(text) === 0n) throw new Error('Enter the exact positive file size in bytes');
+  const target = downloadTarget, before = downloadBaseline;
+  if (!before) throw new Error('Save a new starting counter first');
+  const after = await operation('download_snapshot', target);
+  if (downloadTarget !== target || downloadBaseline !== before) return;
+  if (after.identity !== before.identity || after.reset_at !== before.reset_at || BigInt(after.download_bytes) < BigInt(before.download_bytes)) {
+    downloadBaseline = null; $('download-check-end').disabled = true;
+    throw new Error('Account was recreated or usage reset. Start a new measurement.');
+  }
+  const delta = BigInt(after.download_bytes) - BigInt(before.download_bytes);
+  const difference = delta - BigInt(text);
+  $('download-check-result').replaceChildren();
+  showDownloadSnapshot('Before', before); showDownloadSnapshot('After', after);
+  $('download-check-result').append(element('p', 'mono', `Download increase: ${delta} bytes · ${exactSize(delta)} · ${exactSize(delta, true)}`),
+    element('p', 'mono', `File: ${text} bytes`),
+    element('p', 'mono', `Difference: ${difference > 0n ? '+' : ''}${difference} bytes`));
+}));
+$('download-check-dialog').addEventListener('close', () => { downloadTarget = null; downloadBaseline = null; });

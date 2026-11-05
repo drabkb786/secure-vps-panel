@@ -153,7 +153,7 @@ class Ledger:
 
     def reset(self, account):
         # Preserve absolute session baselines, including live connections.
-        self.data["accounts"][ssh_id(account)] = {"username": account["username"], "upload_bytes": 0, "download_bytes": 0, "ips": {}}
+        self.data["accounts"][ssh_id(account)] = {"username": account["username"], "upload_bytes": 0, "download_bytes": 0, "ips": {}, "reset_at": now()}
         self.dirty = True
         self.flush()
 

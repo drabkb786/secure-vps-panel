@@ -1309,3 +1309,11 @@ The server owner is responsible for:
 **Maintainer:** Abdul Basit  
 **GitHub:** `drabkb786`  
 **Telegram Super Admin ID:** `6408975845`
+
+### Comparing a completed download
+
+Account traffic cells show decimal MB/GB, binary MiB/GiB and exact bytes. Quota units do not change traffic display units. A downloader may label 157,286,400 bytes as “150 MB”, which is 150 MiB and 157.2864 decimal MB.
+
+Use the account's **Download check** action. Pause downloads on that account for five seconds, save its starting counter, perform the download, and wait five seconds after traffic stops before comparing. Enter the actual byte size or select the completed local file to read its size without uploading its contents. The comparison uses only the download counter, keeps existing quota totals, and rejects usage resets or recreated accounts.
+
+These counters measure the account's tunnel payload. HTTP/TLS bytes inside that payload are included. A completed file's size and the account's total download increase are different measurements. Comparing them requires an exact starting byte count and the same account/measurement interval.

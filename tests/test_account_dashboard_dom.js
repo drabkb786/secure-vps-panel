@@ -37,6 +37,11 @@ async function dashboard() {
       if (data.command === 'account_connections') value = {connections:ips.slice(p.offset||0,(p.offset||0)+p.limit),total:ips.length,online_count:1,usage_available:true,offset:p.offset||0,has_more:(p.offset||0)+p.limit<ips.length};
       if (data.command === 'account_ip_set') ips.find(ip=>ip.ip===p.ip).blocked = p.blocked;
       if (data.command === 'set_quota') { ssh.quota_gb = Number(p.quota_gb); ssh.max_ips = p.max_ips; }
+      if (data.command === 'download_snapshot') {
+        const row = p.kind === 'ssh' ? ssh : profile;
+        value = {kind:p.kind,name:p.name,identity:p.kind+':'+p.name,reset_at:state.downloadReset || null,
+          download_bytes:row.exact_bytes.download_bytes,sampled_at:'2026-11-05T17:00:00Z'};
+      }
     }
     return {ok:true,status:200,json:async()=>JSON.parse(JSON.stringify(value))};
   };
@@ -124,4 +129,32 @@ test('older account can register its current password once using CSRF POST', asy
   d.getElementById('export-dialog').close();
   assert.equal(d.getElementById('ssh-share-password').value,'');
   assert.equal(d.getElementById('export-links').childElementCount,0);
+});
+
+test('download check subtracts exact directional baselines and compares the local file size', async t => {
+  const app = await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  [...d.querySelectorAll('#account-management .account-summary button')].find(b=>b.textContent==='Download check').click();
+  d.getElementById('download-check-start').click(); await app.flush();
+  Object.assign(app.state.users[0], bytes(B+9999999, 2*B+157286400));
+  const file = new app.win.File(['fixture'], '150MiB.zip');
+  Object.defineProperty(file, 'size', {value:157286400});
+  Object.defineProperty(d.getElementById('download-check-file'), 'files', {value:[file]});
+  d.getElementById('download-check-file').dispatchEvent(new app.win.Event('change'));
+  assert.equal(d.getElementById('download-check-bytes').value,'157286400');
+  d.getElementById('download-check-end').click(); await app.flush();
+  const result = d.getElementById('download-check-result').textContent;
+  assert.match(result,/Download increase: 157286400 bytes · 157\.286 MB · 150\.000 MiB/);
+  assert.match(result,/Difference: 0 bytes/);
+  assert.ok(app.calls.filter(c=>c.data?.command==='download_snapshot').every(c=>Object.keys(c.data.params).sort().join(',')==='kind,name'));
+});
+
+test('download check refuses a comparison after a reset even when usage grows past the baseline', async t => {
+  const app = await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  [...d.querySelectorAll('#account-management .account-summary button')].find(b=>b.textContent==='Download check').click();
+  d.getElementById('download-check-start').click(); await app.flush();
+  app.state.downloadReset='2026-11-05T17:01:00Z';
+  Object.assign(app.state.users[0],bytes(B,3*B));
+  d.getElementById('download-check-end').click(); await app.flush();
+  assert.match(d.getElementById('notice').textContent,/usage reset/);
+  assert.ok(!d.getElementById('download-check-result').textContent.includes('Download increase:'));
 });
