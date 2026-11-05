@@ -390,17 +390,6 @@ class Bot:
                 )
                 self.set_state(chat_id)
                 user = result["user"]
-                self.send(
-                    chat_id,
-                    "✅ <b>Account created</b>\n"
-                    f"Domain: <code>{html.escape(read_text(DOMAIN_FILE, 'Not set'))}</code>\n"
-                    f"Username: <code>{html.escape(user['username'])}</code>\n"
-                    f"Expiry: <code>{html.escape(user['expiry'])}</code>\n"
-                    f"Concurrent sessions: <code>{user['max_sessions']}</code>\n"
-                    "Ports: <code>22, 109, 447, 80, 443</code>\n\n"
-                    "The sharing password is encrypted in the root-private server vault.",
-                    self.users_keyboard(),
-                )
                 self.show_ssh_links(chat_id, user["username"])
             elif step == "delete_username":
                 self.set_state(chat_id)
