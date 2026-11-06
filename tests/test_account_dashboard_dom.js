@@ -43,6 +43,7 @@ async function dashboard() {
       if (data.command === 'set_quota') { ssh.quota_gb = Number(p.quota_gb); ssh.max_ips = p.max_ips; }
       if (data.command === 'download_snapshot') {
         const row = p.kind === 'ssh' ? ssh : profile;
+        if (state.pauseDownloadAt === calls.filter(c=>c.data?.command==='download_snapshot').length) await state.downloadWait;
         if (state.downloadSamples?.length) Object.assign(row, bytes(row.upload_bytes, state.downloadSamples.shift()));
         if (state.downloadDrift) Object.assign(row, bytes(row.upload_bytes, row.download_bytes + state.downloadDrift));
         value = {kind:p.kind,name:p.name,identity:p.kind+':'+p.name,reset_at:state.downloadReset || null,
@@ -214,6 +215,22 @@ test('SSH, Xray and traffic views refresh every five seconds and expose directio
   assert.match(d.querySelector('#xray-accounts .usage-cell').textContent,/30\.000 GB \/ 50 GiB/);
   [...d.querySelectorAll('#ssh-users button')].find(b=>b.textContent==='Download check').click();
   assert.equal(d.getElementById('download-check-dialog').open,true);
+});
+
+test('a late reply from a closed download dialog cannot clear a new measurement', async t => {
+  const app = await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  const open=()=>[...d.querySelectorAll('#account-management .account-summary button')].find(b=>b.textContent==='Download check').click();
+  let release; app.state.downloadWait=new Promise(resolve=>{release=resolve;}); app.state.pauseDownloadAt=2;
+  open(); d.getElementById('download-check-start').click();
+  for (let i=0;i<20 && app.calls.filter(c=>c.data?.command==='download_snapshot').length<2;i++) await tick();
+  assert.equal(app.calls.filter(c=>c.data?.command==='download_snapshot').length,2);
+  d.getElementById('download-check-dialog').close();
+  open(); d.getElementById('download-check-start').click(); await app.flush();
+  app.state.downloadReset='late-old-reply'; release(); await app.flush();
+  app.state.downloadReset=null;
+  Object.assign(app.state.users[0],bytes(B,2*B+157286400));
+  d.getElementById('download-check-end').click(); await app.flush();
+  assert.match(d.getElementById('download-check-result').textContent,/Difference: 0 bytes/);
 });
 
 test('both DNS mode requires a second zone and submits both routes together', async t => {

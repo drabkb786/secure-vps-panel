@@ -146,6 +146,7 @@ async function settledDownloadSnapshot(target) {
     await new Promise(resolve => setTimeout(resolve, 1000));
     if (downloadTarget !== target) return null;
     const next = await operation('download_snapshot', target);
+    if (downloadTarget !== target) return null;
     if (!sameDownloadScope(sample, next)) { downloadBaseline = null; throw new Error('Account was recreated or usage reset. Start a new measurement.'); }
     if (next.download_bytes !== sample.download_bytes) quietSince = Date.now();
     sample = next;
