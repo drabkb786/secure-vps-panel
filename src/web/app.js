@@ -50,6 +50,7 @@ async function command(name, params = {}, message = 'Saved successfully') {
   return result;
 }
 function showLogin() {
+  setSidebar(false);
   csrf = ''; state = null; $('app').hidden = true; $('login-screen').hidden = false;
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
   $('export-links').replaceChildren(); setText('login-error', '');
@@ -60,9 +61,49 @@ function showApp(session) {
   view('accounts');
 }
 function view(name) {
+  setSidebar(false);
   document.querySelectorAll('.view').forEach(n => { n.hidden = n.id !== `view-${name}`; });
-  document.querySelectorAll('.nav').forEach(n => n.classList.toggle('active', n.dataset.view === name));
-  setText('breadcrumb', {accounts: 'Account management', overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', cloudfront: 'CloudFront', diagnostics: 'Diagnostics', recovery: 'Backup & recovery', traffic: 'Traffic & connections', transports: 'UDP & SlowDNS', system: 'System toolbox', maintenance: 'Telegram & maintenance'}[name]);
+  document.querySelectorAll('.nav').forEach(n => {
+    const active = n.dataset.view === name; n.classList.toggle('active', active);
+    if (active) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
+  });
+  setText('breadcrumb', {accounts: 'Accounts', overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', cloudfront: 'CDN', diagnostics: 'Diagnostics', recovery: 'Backups', traffic: 'Traffic', transports: 'DNS tunnels', system: 'Tools', maintenance: 'Bot & updates'}[name]);
+}
+function setSidebar(open) {
+  const toggle = $('menu-toggle');
+  document.body.classList.toggle('sidebar-open', open);
+  toggle.setAttribute('aria-expanded', String(open));
+  $('sidebar-scrim').hidden = !open;
+  document.querySelector('.app > main').inert = open;
+  if (open) document.querySelector('.sidebar .nav.active')?.focus();
+  else if (document.querySelector('.sidebar').contains(document.activeElement)) toggle.focus();
+}
+$('menu-toggle').addEventListener('click', () => setSidebar(!document.body.classList.contains('sidebar-open')));
+$('sidebar-scrim').addEventListener('click', () => setSidebar(false));
+document.addEventListener('keydown', event => { if (event.key === 'Escape') { setSidebar(false); document.querySelectorAll('.account-menu[open]').forEach(menu => menu.open = false); } });
+document.addEventListener('click', event => { if (!event.target.closest('.account-menu')) document.querySelectorAll('.account-menu[open]').forEach(menu => menu.open = false); });
+if (typeof window.matchMedia === 'function') window.matchMedia('(min-width: 851px)').addEventListener('change', event => { if (event.matches) setSidebar(false); });
+function showExactUsage(show) {
+  document.body.classList.toggle('show-exact-usage', show);
+  $('account-exact-toggle').checked = show;
+}
+try { showExactUsage(localStorage.getItem('noway-exact-usage') === '1'); } catch (_) { showExactUsage(false); }
+$('account-exact-toggle').addEventListener('change', event => {
+  const show = event.target.checked; showExactUsage(show);
+  try { localStorage.setItem('noway-exact-usage', show ? '1' : '0'); } catch (_) { /* Presentation preference only. */ }
+});
+function moreActions(name, controls) {
+  const menu = element('details', 'account-menu'), summary = element('summary', '', '⋯');
+  summary.setAttribute('aria-label', `More actions for ${name}`);
+  const content = element('div', 'account-actions'); content.append(...controls);
+  menu.append(summary, content);
+  menu.addEventListener('toggle', () => {
+    if (!menu.open) return;
+    document.querySelectorAll('.account-menu[open]').forEach(other => { if (other !== menu) other.open = false; });
+    menu.classList.toggle('opens-up', menu.getBoundingClientRect().bottom + content.scrollHeight + 12 > window.innerHeight);
+  });
+  content.addEventListener('click', event => { if (event.target.closest('button')) menu.open = false; });
+  return menu;
 }
 const size = (value, unit = 'GB') => {
   if (!Number.isFinite(value)) return '—';
@@ -84,7 +125,7 @@ function byteCell(row, field) {
   const bytes = row.exact_bytes?.[field] ?? row[field] ?? 0;
   const node = element('td', 'mono', exactSize(bytes) + (field === 'used_bytes' ? ` / ${quotaLabel(row)}` : ''));
   node.title = `${bytes} bytes`;
-  node.append(element('div', 'small muted', `${exactSize(bytes, true)} · ${node.title}`));
+  node.append(element('div', 'small muted byte-detail', `${exactSize(bytes, true)} · ${node.title}`));
   return node;
 }
 function usageRecordedAt(sampledAt) {
@@ -96,8 +137,8 @@ function quotaCell(row, available = true, sampledAt = row.sampled_at) {
   const down = row.exact_bytes?.download_bytes ?? row.download_bytes ?? 0;
   const detail = element('div', 'small', `Download: ${exactSize(down)} · ${exactSize(down, true)}`);
   detail.title = `${down} download bytes`; cell.append(detail);
-  cell.append(element('div', 'small muted', `${available ? '' : 'Last recorded · '}${usageRecordedAt(sampledAt)}`));
-  cell.append(element('div', 'small muted', `IP cap: ${row.max_ips || 'Unlimited'}`));
+  cell.append(element('div', 'small muted byte-detail', `${available ? '' : 'Last recorded · '}${usageRecordedAt(sampledAt)}`));
+  cell.append(element('div', 'small muted byte-detail', `IP cap: ${row.max_ips || 'Unlimited'}`));
   return cell;
 }
 const percent = (used, total) => total > 0 ? Math.max(0, Math.min(100, used / total * 100)) : 0;
@@ -116,9 +157,8 @@ function profileRows(id, rows, controls) {
     const actions = element('td'), group = element('div', 'row-actions');
     if (row.active) group.append(button('Export ↗', () => exportProfile(row.name)));
     if (controls) {
-      group.append(button('Subscription', () => openSubscription(row)));
-      group.append(button('Limits', () => openUsage('xray', row)), button('Renew', () => openRenew('xray', row.name)), button(row.enabled === false ? 'Unlock' : 'Lock', () => command('xray_update', {name: row.name, action: 'toggle', enabled: row.enabled === false}, 'Profile updated')),
-        button('Delete', async () => { if (await confirmAction(`Delete Xray profile “${row.name}”? Its import links will stop working.`)) await command('xray_update', {name: row.name, action: 'delete'}, 'Profile deleted'); }, 'delete'));
+      group.append(moreActions(row.name, [button('Subscription', () => openSubscription(row)), button('Limits', () => openUsage('xray', row)), button('Renew', () => openRenew('xray', row.name)), button(row.enabled === false ? 'Unlock' : 'Lock', () => command('xray_update', {name: row.name, action: 'toggle', enabled: row.enabled === false}, 'Profile updated')),
+        button('Delete', async () => { if (await confirmAction(`Delete Xray profile “${row.name}”? Its import links will stop working.`)) await command('xray_update', {name: row.name, action: 'delete'}, 'Profile deleted'); }, 'delete')]));
     }
     actions.append(group); tr.append(actions); body.append(tr);
   });
@@ -161,7 +201,7 @@ function render() {
   if (!s.users.length) emptyRow(users, 5, 'No SSH accounts yet. Create an account to grant access.');
   s.users.forEach(user => {
     const tr = element('tr'); tr.append(element('td', 'mono', user.username), element('td', 'mono muted', user.expiry), element('td', '', `${(s.sessions.find(x => x.username === user.username) || {}).count || 0} / ${user.max_sessions}`), quotaCell(user, user.usage_available, user.sampled_at || s.traffic?.ssh_sampled_at));
-    const td = element('td'), actions = element('div', 'row-actions'); actions.append(button('Export ↗', () => exportSSH(user.username)), button('Limits', () => openUsage('ssh', user)), button(user.enabled === false ? 'Unlock' : 'Lock', () => command('set_user_lock', {username: user.username, enabled: user.enabled === false}, 'SSH account updated')), button('Renew', () => openRenew('ssh', user.username)), button('Download check', () => openDownloadCheck('ssh', user.username)), button('Delete', async () => { if (await confirmAction(`Delete SSH account “${user.username}”? Its active sessions will be disconnected.`)) await command('delete_user', {username: user.username}, 'Account deleted'); }, 'delete')); td.append(actions); tr.append(td); users.append(tr);
+    const td = element('td'), actions = element('div', 'row-actions'); actions.append(button('Export ↗', () => exportSSH(user.username)), moreActions(user.username, [button('Limits', () => openUsage('ssh', user)), button(user.enabled === false ? 'Unlock' : 'Lock', () => command('set_user_lock', {username: user.username, enabled: user.enabled === false}, 'SSH account updated')), button('Renew', () => openRenew('ssh', user.username)), button('Download check', () => openDownloadCheck('ssh', user.username)), button('Delete', async () => { if (await confirmAction(`Delete SSH account “${user.username}”? Its active sessions will be disconnected.`)) await command('delete_user', {username: user.username}, 'Account deleted'); }, 'delete')])); td.append(actions); tr.append(td); users.append(tr);
   });
   setText('xray-summary', `${s.xray_installed ? 'Installed' : 'Core not installed · run install.sh --with-xray'} · ${s.network.enabled ? 'Enabled' : 'Disabled'} · TLS on port 443${s.network.vless_non_tls_enabled ? ' · VLESS non-TLS on port 80' : ''}`);
   $('toggle-non-tls').textContent = s.network.vless_non_tls_enabled ? 'Disable VLESS non-TLS' : 'Enable VLESS non-TLS';
@@ -253,8 +293,10 @@ async function exportProfile(name, route = 'direct') {
       try { await navigator.clipboard.writeText(link); notify('Import link copied'); }
       catch (_) { input.select(); notify('Select and copy the highlighted link manually'); }
     }, 'btn small'), button('↓ Xray JSON', () => {
-      const blob = new Blob([result.files[`${name}-${protocol}.json`]], {type: 'application/json'}), url = URL.createObjectURL(blob);
-      const a = element('a'); a.href = url; a.download = `${name}-${protocol}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+      const filename = route === 'dns' ? `${name}-vless-dns.json` : `${name}-${protocol}.json`;
+      const content = result.files[filename]; if (!content) throw new Error('JSON is unavailable for this profile. Use the ZIP export.');
+      const blob = new Blob([content], {type: 'application/json'}), url = URL.createObjectURL(blob);
+      const a = element('a'); a.href = url; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
     }, 'btn small'));
     const textFile = element('a', 'btn small', '↓ Link TXT');
     textFile.href = API + `export?name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}&format=link&protocol=${encodeURIComponent(protocol)}`;
@@ -465,7 +507,7 @@ $('copy-result').addEventListener('click', () => busy($('copy-result'), async ()
 document.querySelectorAll('.command-snippet').forEach(box => { const code = box.querySelector('code'); box.append(button('Copy', async () => { try { await navigator.clipboard.writeText(code.textContent); notify('Command copied'); } catch (_) { notify('Select and copy the visible command.'); } }, 'btn small copy-command')); });
 let lastDashboardPoll = 0;
 async function pollDashboard() {
-  if (!csrf || refreshing || document.visibilityState !== 'visible' || document.querySelector('dialog[open]')) return;
+  if (!csrf || refreshing || document.visibilityState !== 'visible' || document.querySelector('dialog[open], .account-menu[open]') || document.body.classList.contains('sidebar-open')) return;
   const accountsVisible = !$('view-accounts').hidden;
   const countersVisible = accountsVisible || ['ssh', 'xray', 'traffic'].some(name => !$(`view-${name}`).hidden);
   if (!countersVisible && Date.now() - lastDashboardPoll < 30000) return;

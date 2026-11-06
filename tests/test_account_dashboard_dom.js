@@ -8,7 +8,10 @@ const bytes = (up, down) => ({upload_bytes: up, download_bytes: down, used_bytes
 
 async function dashboard() {
   const dom = new JSDOM(fs.readFileSync(path.join(root, 'src/web/index.html'), 'utf8'), {url:'http://localhost/panel/', runScripts:'outside-only'});
-  const win = dom.window, calls = [], intervals = [];
+  const win = dom.window, calls = [], intervals = [], blobs = [], downloads = [];
+  win.URL.createObjectURL = blob => { blobs.push(blob); return 'blob:http://localhost/preview-download'; };
+  win.URL.revokeObjectURL = () => {};
+  win.HTMLAnchorElement.prototype.click = function() { downloads.push({name:this.download,url:this.href}); };
   let clock = Date.now(); win.Date.now = () => clock;
   const timeout = win.setTimeout.bind(win);
   win.setTimeout = (callback, milliseconds, ...args) => milliseconds === 1000
@@ -32,6 +35,12 @@ async function dashboard() {
     if (url.endsWith('session')) value = {csrf:'test-csrf',username:'demo'};
     else if (url.endsWith('state')) value = state;
     else if (url.includes('export?kind=ssh')) value = exported();
+    else if (url.includes('/export?name=')) {
+      const params = new URL(url,'http://localhost').searchParams, name=params.get('name'), route=params.get('route');
+      const filename = route==='dns' ? `${name}-vless-dns.json` : `${name}-vless.json`;
+      value = {name,route,links:{vless:'vless://preview@127.0.0.1:7001?type=tcp'},
+        files:{[filename]:JSON.stringify({outbounds:[{protocol:'vless',settings:{vnext:[{address:'127.0.0.1',port:7001}]}}]})},readiness:{warnings:[]}};
+    }
     else if (url.endsWith('ssh-export')) {
       if (data.remember_password) state.legacyShare=false;
       value = exported(data.password || (state.legacyShare?'':'demo-secret'), data.route, data.port, data.path);
@@ -55,7 +64,7 @@ async function dashboard() {
   const context = dom.getInternalVMContext();
   for (const name of ['app.js','accounts.js']) new vm.Script(fs.readFileSync(path.join(root,'src/web',name),'utf8'),{filename:name}).runInContext(context);
   for (let i=0;i<6;i++) await tick();
-  return {dom,win,document:win.document,calls,state,intervals,flush:async()=>{for(let i=0;i<60;i++)await tick();}};
+  return {dom,win,document:win.document,calls,state,intervals,blobs,downloads,flush:async()=>{for(let i=0;i<60;i++)await tick();}};
 }
 
 test('real account template expands and paginates IPs without flattening account totals', async t => {
@@ -84,14 +93,16 @@ test('IP Block/Allow submits the selected account identity and updates its row',
 
 test('SSH limits save a real quota with session/IP caps, and disable quota without a meter', async t => {
   const app = await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
-  d.querySelector('#account-management .account-summary .row-actions button').click(); await app.flush();
+  d.querySelector('#account-management .account-menu summary').click();
+  [...d.querySelectorAll('#account-management .account-summary .account-actions button')].find(b=>b.textContent==='Limits').click(); await app.flush();
   assert.equal(d.getElementById('usage-quota').disabled,false);
   d.getElementById('usage-quota').value='20'; d.getElementById('usage-ips').value='1';
   d.getElementById('usage-form').dispatchEvent(new app.win.Event('submit',{cancelable:true})); await app.flush();
   assert.deepEqual(app.calls.find(c=>c.data?.command==='set_quota').data.params,{username:'basit',quota_gb:'20',quota_unit:'GB',max_sessions:3,max_ips:1});
   app.state.traffic.ssh_available=false;
   d.getElementById('accounts-refresh').click(); await app.flush();
-  d.querySelector('#account-management .account-summary .row-actions button').click(); await app.flush();
+  d.querySelector('#account-management .account-menu summary').click();
+  [...d.querySelectorAll('#account-management .account-summary .account-actions button')].find(b=>b.textContent==='Limits').click(); await app.flush();
   assert.equal(d.getElementById('usage-quota').disabled,true);
   d.getElementById('usage-form').dispatchEvent(new app.win.Event('submit',{cancelable:true})); await app.flush();
   const last=app.calls.filter(c=>c.data?.command).at(-1);
@@ -101,7 +112,7 @@ test('SSH limits save a real quota with session/IP caps, and disable quota witho
 
 test('SSH auto-share uses POST and shows exactly credentials and complete payload', async t => {
   const app = await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
-  d.querySelectorAll('#account-management .account-summary .row-actions button')[1].click(); await app.flush();
+  d.querySelector('#account-management .account-summary .connect-button').click(); await app.flush();
   assert.equal(d.querySelectorAll('#export-links textarea').length,2);
   assert.equal(d.querySelector('[aria-label="server:port@username:password"]').value,'vpn.example.com:80@basit:demo-secret');
   assert.match(d.querySelector('[aria-label="Payload"]').value,/GET \/cdn-cgi HTTP\/1\.1\[crlf\]Host: vpn\.example\.com/);
@@ -124,7 +135,7 @@ test('SSH auto-share uses POST and shows exactly credentials and complete payloa
 test('older account can register its current password once using CSRF POST', async t => {
   const app = await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
   app.state.legacyShare=true;
-  d.querySelectorAll('#account-management .account-summary .row-actions button')[1].click(); await app.flush();
+  d.querySelector('#account-management .account-summary .connect-button').click(); await app.flush();
   assert.equal(d.getElementById('ssh-share-options').hidden,false);
   d.getElementById('ssh-share-password').value='demo-secret'; d.getElementById('ssh-share-generate').click(); await app.flush();
   const call=app.calls.find(c=>c.data?.remember_password);
@@ -248,4 +259,56 @@ test('both DNS mode requires a second zone and submits both routes together', as
   assert.equal(call.data.params.mode,'both');
   assert.equal(call.data.params.xray_zone,'xdns.example.com');
   assert.equal(call.data.params.port,53);
+});
+
+test('compact actions stay available without expanding IP rows or refreshing an open menu', async t => {
+  const app=await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  Object.defineProperty(d,'visibilityState',{value:'visible',configurable:true});
+  const summary=d.querySelector('#account-management .account-menu summary');
+  summary.click(); await app.flush();
+  assert.equal(summary.parentElement.open,true);
+  assert.equal(d.querySelectorAll('.account-detail-row').length,0);
+  const before=app.calls.length; await app.intervals[0].callback();
+  assert.equal(app.calls.length,before);
+  [...summary.parentElement.querySelectorAll('button')].find(b=>b.textContent==='Renew').click(); await app.flush();
+  assert.equal(d.getElementById('renew-dialog').open,true);
+  assert.equal(summary.parentElement.open,false);
+});
+
+test('exact byte display is a local preference and keeps the underlying counters intact', async t => {
+  const app=await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  const before=JSON.stringify(app.state.users), calls=app.calls.length;
+  assert.equal(d.body.classList.contains('show-exact-usage'),false);
+  d.getElementById('account-exact-toggle').click();
+  assert.equal(d.body.classList.contains('show-exact-usage'),true);
+  assert.equal(app.win.localStorage.getItem('noway-exact-usage'),'1');
+  assert.match(d.querySelector('#account-management .byte-detail').textContent,/1000000000 bytes/);
+  assert.equal(JSON.stringify(app.state.users),before);
+  assert.equal(app.calls.length,calls);
+});
+
+test('mobile navigation supports selection and Escape without trapping the workspace', async t => {
+  const app=await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  d.getElementById('menu-toggle').click();
+  assert.equal(d.getElementById('menu-toggle').getAttribute('aria-expanded'),'true');
+  assert.equal(d.querySelector('.app > main').inert,true);
+  d.dispatchEvent(new app.win.KeyboardEvent('keydown',{key:'Escape'}));
+  assert.equal(d.body.classList.contains('sidebar-open'),false);
+  assert.equal(d.querySelector('.app > main').inert,false);
+  d.getElementById('menu-toggle').click();
+  d.querySelector('.nav[data-view="transports"]').click();
+  assert.equal(d.getElementById('view-transports').hidden,false);
+  assert.equal(d.querySelector('.nav[aria-current="page"]').dataset.view,'transports');
+  assert.equal(d.getElementById('sidebar-scrim').hidden,true);
+});
+
+test('DNS JSON export downloads the actual local VLESS profile instead of an undefined file', async t => {
+  const app=await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  d.querySelectorAll('#account-management .connect-button')[1].click(); await app.flush();
+  d.getElementById('export-route').value='dns';
+  d.getElementById('export-route').dispatchEvent(new app.win.Event('change')); await app.flush();
+  [...d.querySelectorAll('#export-links button')].find(b=>b.textContent==='↓ Xray JSON').click(); await app.flush();
+  assert.equal(app.downloads[0].name,'noway-vless-dns.json');
+  const content=await new Promise((resolve,reject)=>{ const reader=new app.win.FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsText(app.blobs[0]); });
+  assert.equal(JSON.parse(content).outbounds[0].settings.vnext[0].port,7001);
 });
