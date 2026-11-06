@@ -37,6 +37,9 @@ def test_simultaneous_dns_zones_authenticate_ssh_and_vless(tmp_path):
     config['inbounds']=[dns_inbound]
     config['api']['listen']=str(tmp_path/'stats.sock')
     config['routing']['rules']=[{'type':'field','inboundTag':['noway-dnstt'],'outboundTag':'direct'}]
+    # The maintained core also protects private destinations in freedom.
+    # Permit only this test's echo socket, as in the other native-core tests.
+    config['outbounds'][0]['settings']['finalRules']=[{'action':'allow','network':'tcp','ip':['127.0.0.1'],'port':str(echo.server_address[1])}]
     core_config=tmp_path/'xray.json'; core_config.write_text(json.dumps(config))
     private,public=tmp_path/'dns.key',tmp_path/'dns.pub'
     subprocess.run([server,'-gen-key','-privkey-file',str(private),'-pubkey-file',str(public)],check=True,capture_output=True,timeout=10)
@@ -85,6 +88,10 @@ dns_router.serve('''+repr(server)+','+repr(str(private))+','+repr({'zone':'ssh.e
             response=subprocess.run([core,'api','statsquery','--server=unix://'+str(tmp_path/'stats.sock'),'-pattern=user>>>'],check=True,capture_output=True,text=True,timeout=5)
             stats={x['name']:int(x.get('value',0)) for x in json.loads(response.stdout)['stat']}
             assert stats[f"user>>>{row['uuid']}-dnstt@noway.local>>>traffic>>>downlink"]==len(payload)
+        except BaseException:
+            log.flush()
+            print((tmp_path/'native.log').read_text())
+            raise
         finally:
             if transport: transport.close()
             for proc in reversed(processes):
