@@ -23,7 +23,7 @@ def query(name, identity=123):
 
 @pytest.mark.parametrize('name,expected', [('payload.tunnel.example.com','tunnel.example.com'),
     ('PAYLOAD.XDNS.EXAMPLE.COM','xdns.example.com'), ('tunnel.example.com.evil.test',None),
-    ('unrelated.example.com',None), ('tunnel.example.com',None)])
+    ('unrelated.example.com',None), ('tunnel.example.com','tunnel.example.com')])
 def test_dns_router_matches_whole_delegated_suffixes(name, expected):
     assert dns_router.question_zone(query(name), ['tunnel.example.com','xdns.example.com']) == expected
 
@@ -33,6 +33,12 @@ def test_dns_router_matches_whole_delegated_suffixes(name, expected):
     query('p.tunnel.example.com')[:-4]+struct.pack('!HH',255,1)])
 def test_router_drops_malformed_compressed_and_non_txt_queries(packet):
     assert dns_router.question_zone(packet, ['tunnel.example.com']) is None
+
+
+@pytest.mark.parametrize('query_type',[1,2,6,28])
+def test_router_passes_resolver_zone_probes_to_the_authoritative_backend(query_type):
+    packet=query('tunnel.example.com')[:-4]+struct.pack('!HH',query_type,1)
+    assert dns_router.question_zone(packet,['tunnel.example.com'])=='tunnel.example.com'
 
 
 def test_router_keeps_identical_ids_from_two_clients_and_zones_isolated(monkeypatch):

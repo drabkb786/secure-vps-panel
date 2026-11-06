@@ -37,10 +37,13 @@ def question_zone(packet, zones):
         return None
     if offset - 12 > 255 or offset + 4 > len(packet):
         return None
-    if struct.unpack_from('!HH', packet, offset) != (16, 1):
+    query_type, query_class = struct.unpack_from('!HH', packet, offset)
+    # Recursive resolvers may probe the zone with NS/SOA/A/AAAA before TXT.
+    # Let the official authoritative backend produce those responses too.
+    if query_class != 1 or query_type not in (1, 2, 6, 16, 28):
         return None
     name = '.'.join(labels)
-    return next((zone for zone in zones if name.endswith('.' + zone)), None)
+    return next((zone for zone in zones if name == zone or name.endswith('.' + zone)), None)
 
 
 class Router:
