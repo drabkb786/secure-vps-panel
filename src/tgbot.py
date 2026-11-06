@@ -199,6 +199,8 @@ class Bot:
         elif data == "xray_find":
             self.set_state(chat_id, "xray_export_name")
             self.edit(chat_id, message_id, "Enter the Xray profile name to get its direct import links:")
+        elif data.startswith("xray_dns:"):
+            self.show_xray_links(chat_id, message_id, data.split(":", 1)[1], route="dns")
         elif data.startswith("xray_export:"):
             self.show_xray_links(chat_id, message_id, data.split(":", 1)[1])
         elif data == "menu_super":
@@ -275,7 +277,7 @@ class Bot:
         except RuntimeError as exc:
             self.edit(chat_id, message_id, f"❌ {html.escape(str(exc))}", self.main_keyboard(self.is_super(chat_id)))
 
-    def show_xray_links(self, chat_id: str, message_id: int | None, name: str) -> None:
+    def show_xray_links(self, chat_id: str, message_id: int | None, name: str, route="direct") -> None:
         self.set_state(chat_id)
         def display(text: str, keyboard: dict) -> None:
             if message_id is None:
@@ -283,12 +285,18 @@ class Bot:
             else:
                 self.edit(chat_id, message_id, text, keyboard)
         try:
-            result = self.panel("xray_export", name=name)
+            params = {"name": name}
+            if route != "direct":
+                params["route"] = route
+            result = self.panel("xray_export", **params)
             lines = [f"<b>🔗 {html.escape(result['name'])}</b>", "Treat import links as account passwords."]
             for protocol, link in result["links"].items():
                 lines.append(f"\n<b>{html.escape(protocol.upper())}</b>\n<code>{html.escape(link)}</code>")
             lines.extend(f"\n⚠️ {html.escape(w)}" for w in result.get("readiness", {}).get("warnings", []))
-            display("\n".join(lines), {"inline_keyboard": [[{"text": "⬅️ Xray profiles", "callback_data": "menu_xray"}]]})
+            if result.get("dnstt"):
+                info = result["dnstt"]
+                lines.append("\n<b>Start DNSTT first</b>\n<code>" + html.escape(info["doh_command"]) + "</code>")
+            display("\n".join(lines), {"inline_keyboard": [[{"text": "DNS tunnel export", "callback_data": f"xray_dns:{name}"}], [{"text": "⬅️ Xray profiles", "callback_data": "menu_xray"}]]})
         except RuntimeError as exc:
             display(f"❌ {html.escape(str(exc))}", self.main_keyboard(self.is_super(chat_id)))
 

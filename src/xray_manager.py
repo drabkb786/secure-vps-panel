@@ -31,6 +31,7 @@ import account_policy
 import gateway_identity
 import xray_runtime
 import reality_transport
+import slowdns
 from reality_transport import vless_encryption
 
 from common import (BASE_DIR, DOMAIN_FILE, ValidationError, atomic_write,
@@ -46,6 +47,7 @@ ENABLED_FILE = CONFIG_DIR / "enabled"
 CERT_ROOT = Path("/etc/letsencrypt/live")
 XRAY_BINARY = Path("/usr/local/lib/abdulbasit/xray")
 BACKUP_DIR = BASE_DIR / "backups"
+DNS_PORT = 10006
 XHTTP_PORT, XHTTP_PATH = 10004, "/xhttp/"
 PROTOCOLS = {"vless": (10001, "/vless"), "vmess": (10002, "/vmess"), "trojan": (10003, "/trojan")}
 DEFAULT_DNS = {"servers": ["1.1.1.1", "8.8.8.8"], "query_strategy": "UseIPv4"}
@@ -56,7 +58,7 @@ def settings() -> dict:
     data = read_json(SETTINGS_FILE, None) if SETTINGS_FILE.exists() else {}
     if not isinstance(data, dict):
         raise RuntimeError("Network settings are unreadable or invalid; restore a known-good backup")
-    return {"enabled": False, "vless_non_tls_enabled": False, "xhttp_enabled": False, "reality_enabled": False, "reality_port": 8443, "udp_enabled": True, "dns": dict(DEFAULT_DNS), **data}
+    return {"enabled": False, "vless_non_tls_enabled": False, "xhttp_enabled": False, "reality_enabled": False, "dns_tunnel_enabled": False, "reality_port": 8443, "udp_enabled": True, "dns": dict(DEFAULT_DNS), **data}
 
 
 def accounts(*, hydrate=True) -> list[dict]:
@@ -169,6 +171,13 @@ def server_config(config: dict, rows: list[dict]) -> dict:
         clients = [{"id": row["uuid"], "email": f"{row['uuid']}-reality@noway.local", "flow": "xtls-rprx-vision"}
                    for row in rows if active(row) and "vless" in row["protocols"]]
         inbounds.append(reality_transport.inbound(config, clients, read_text(DOMAIN_FILE)))
+    if config.get("dns_tunnel_enabled"):
+        clients = [{"id": row["uuid"], "email": f"{row['uuid']}-dnstt@noway.local", "level": 0}
+                   for row in rows if active(row) and "vless" in row["protocols"]
+                   and not row.get("max_ips", 0) and not account_policy.blocked_ips(row)]
+        inbounds.append({"tag": "noway-dnstt", "listen": "127.0.0.1", "port": DNS_PORT,
+                         "protocol": "vless", "settings": {"clients": clients, "decryption": "none"},
+                         "streamSettings": {"network": "raw", "security": "none"}})
     ip_rules = [{"type": "field", "user": sorted(traffic.emails(row)),
                  "source": account_policy.blocked_ips(row), "outboundTag": "block"}
                 for row in rows if account_policy.blocked_ips(row)]
@@ -267,6 +276,8 @@ class Manager:
                 ports.append(vless_encryption.PORT)
             if settings().get("reality_enabled"):
                 ports.append(settings()["reality_port"])
+            if settings().get("dns_tunnel_enabled"):
+                ports.append(DNS_PORT)
             for port in ports:
                 with socket.create_connection(("127.0.0.1", port), timeout=0.3):
                     pass
@@ -470,6 +481,10 @@ class Manager:
             if not isinstance(params["xhttp_enabled"], bool):
                 raise ValidationError("xhttp_enabled must be a boolean")
             cfg["xhttp_enabled"] = params["xhttp_enabled"]
+        if "dns_tunnel_enabled" in params:
+            if type(params["dns_tunnel_enabled"]) is not bool:
+                raise ValidationError("dns_tunnel_enabled must be a boolean")
+            cfg["dns_tunnel_enabled"] = params["dns_tunnel_enabled"]
         if "udp_enabled" in params:
             if not isinstance(params["udp_enabled"], bool):
                 raise ValidationError("udp_enabled must be a boolean")
@@ -572,6 +587,8 @@ class Manager:
         return {"name": name, "action": action}
 
     def export(self, params: dict) -> dict:
+        if params.get("route") == "dns":
+            return self.export_dns(params)
         domain = self.ready()
         cfg = settings()
         if not cfg["enabled"]:
@@ -597,6 +614,35 @@ class Manager:
             warnings.append(("Bunny" if route == "bunny" else "CloudFront") + " delivery: run endpoint checks and a real client transfer; CDN deployment and speed are not verified by this export.")
         return {"name": name, "route": route, "links": links, "files": files,
                 "readiness": {"core_ready": running, "public_reachability": "not_checked", "warnings": warnings}}
+
+    def export_dns(self, params):
+        name = validate_username(str(params.get("name", "")))
+        cfg = settings()
+        tunnel = slowdns.Manager(self.run).status({})
+        if not cfg["enabled"] or not cfg.get("dns_tunnel_enabled") or not tunnel["enabled"] or "xray" not in tunnel["tunnels"]:
+            raise ValidationError("Enable Xray and the Xray/both DNS tunnel mode first")
+        row = next((x for x in accounts() if x["name"] == name), None)
+        if row is None or not active(row) or "vless" not in row["protocols"]:
+            raise ValidationError("Choose an active VLESS account")
+        if row.get("max_ips", 0) or account_policy.blocked_ips(row):
+            raise ValidationError("DNS hides viewer IPs. This route requires IP cap 0 and an empty IP block list")
+        info = tunnel["tunnels"]["xray"]
+        if not info["public_key"]:
+            raise ValidationError("DNSTT public key is missing")
+        client = {"log": {"loglevel": "warning"},
+            "inbounds": [{"listen": "127.0.0.1", "port": 10808, "protocol": "socks", "settings": {"auth": "noauth", "udp": True}}],
+            "outbounds": [{"protocol": "vless", "settings": {"vnext": [{"address": "127.0.0.1", "port": 7001,
+                "users": [{"id": row["uuid"], "encryption": "none"}]}]}, "streamSettings": {"network": "raw", "security": "none"}}]}
+        link = f"vless://{row['uuid']}@127.0.0.1:7001?encryption=none&security=none&type=tcp#NOWAY-DNSTT-{name}"
+        setup = (f"Tunnel zone: {info['zone']}\nPublic key: {info['public_key']}\n"
+                 f"Start one DNSTT client (UDP / DoH / DoT):\n{info['udp_command']}\n{info['doh_command']}\n{info['dot_command']}\n\n"
+                 "Keep the DNSTT client running, then import the local VLESS link/JSON. An ordinary VLESS app needs the separate DNSTT client.\n"
+                 "Local ports: DNSTT 7001; Xray SOCKS 10808. SSH DNSTT can run separately on local port 7000.\n"
+                 "Account byte quota, expiry and lock still apply. Viewer IP is unavailable. External resolver reachability needs a client test.\n")
+        return {"name": name, "route": "dns", "links": {"vless": link},
+            "files": {f"{name}-vless-dns.json": json.dumps(client, indent=2) + "\n", "dnstt-client.txt": setup, "links.txt": link + "\n"},
+            "dnstt": info, "readiness": {"core_ready": self.health_probe(), "public_reachability": "not_checked",
+                "warnings": ["Start the DNSTT client on 127.0.0.1:7001 before importing this VLESS profile. Download the ZIP for UDP/DoH/DoT commands."]}}
 
     def subscription_rotate(self, params: dict) -> dict:
         name = validate_username(str(params.get("name", "")))

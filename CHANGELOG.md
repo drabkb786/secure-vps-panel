@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.7.0 — Concurrent SSH and Xray DNS tunnels
+
+- Add SSH, Xray VLESS, and simultaneous modes to the existing DNSTT settings and CLI. Preserve legacy SSH zones and keys.
+- Route two distinct delegated zones through one bounded public UDP ingress to private DNSTT backends. Supervise both children and roll back failed configuration changes.
+- Integrate private VLESS DNS accounts with existing expiry, lock and byte quotas. Exclude IP-capped/IP-blocked accounts because DNS does not reveal viewer addresses, and show DNS usage under unknown sources.
+- Export local VLESS profiles with DNSTT UDP, DoH and DoT setup commands through web, CLI and bot. The local DNSTT client must run before the exported VLESS profile.
+
 ## 4.6.3 — Download comparisons with exact baselines
 
 - Keep traffic display in decimal MB/GB independently of the quota unit and show the binary MiB/GiB equivalent alongside the original integer bytes.

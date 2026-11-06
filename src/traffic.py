@@ -55,6 +55,12 @@ def state():
                 raise RuntimeError("Invalid IP traffic ledger entry")
             for key in ("upload_bytes", "download_bytes"):
                 integer(entry.get(key, 0))
+    dns_totals = data.get("dns_totals", {})
+    if not isinstance(dns_totals, dict) or any(not isinstance(entry, dict) for entry in dns_totals.values()):
+        raise RuntimeError("DNS traffic state is corrupt")
+    for entry in dns_totals.values():
+        for field in ("upload_bytes", "download_bytes"):
+            integer(entry.get(field, 0))
     return data
 
 
@@ -77,7 +83,7 @@ def hydrate(rows):
 def emails(row):
     protocols = set(row["protocols"])
     if "vless" in protocols:
-        protocols.update(("xhttp", "reality"))
+        protocols.update(("xhttp", "reality", "dnstt"))
     # Accept legacy names while upgrading; new configs use immutable UUIDs.
     return {f"{identity}-{p}@noway.local" for identity in (row["uuid"], row["name"]) for p in protocols}
 
@@ -87,6 +93,7 @@ def reset_profile(row):
     # Keep the current baselines: the next sample counts only new bytes.
     data.setdefault("totals", {})[row["uuid"]] = {"upload_bytes": 0, "download_bytes": 0}
     data.setdefault("ip_totals", {})[row["uuid"]] = {}
+    data.setdefault("dns_totals", {})[row["uuid"]] = {}
     data.setdefault("resets", {})[row["name"]] = datetime.now(timezone.utc).isoformat()
     atomic_write_json(STATE_FILE, data)
 
@@ -106,6 +113,7 @@ def accumulate(rows, response, epoch):
     totals = {row["uuid"]: copy.deepcopy(data.get("totals", {}).get(row["uuid"], {
         "upload_bytes": integer(row.get("upload_bytes", 0)), "download_bytes": integer(row.get("download_bytes", 0))})) for row in rows}
     mapped = {email: row for row in rows for email in emails(row)}
+    dns_totals = copy.deepcopy(data.get("dns_totals", {}))
     ip_totals = copy.deepcopy(data.get("ip_totals", {}))
     seen = set()
     for item in response.get("stat", []):
@@ -117,6 +125,8 @@ def accumulate(rows, response, epoch):
         seen.add(key)
         ip_match = IP_COUNTER.fullmatch(key)
         if ip_match and ip_match[1] in mapped:
+            if ip_match[1].endswith("-dnstt@noway.local"):
+                continue  # A DNS resolver/loopback address is not the viewer IP.
             address = canonical_ip(ip_match[2])
             value = integer(item.get("value", 0))
             row = mapped[ip_match[1]]
@@ -152,11 +162,15 @@ def accumulate(rows, response, epoch):
         field = "upload_bytes" if match[2] == "uplink" else "download_bytes"
         totals[row["uuid"]][field] += delta
         integer(totals[row["uuid"]][field])
+        if match[1].endswith("-dnstt@noway.local"):
+            entry = dns_totals.setdefault(row["uuid"], {})
+            entry[field] = integer(entry.get(field, 0)) + delta
+            integer(entry[field])
     for row in rows:
         row.update(totals[row["uuid"]])
         row["used_bytes"] = row["upload_bytes"] + row["download_bytes"]
     marker = {item["name"]: item.get("value", 0) for item in response.get("stat", [])}
-    data.update(epoch=epoch, counters=current, owners=owners, totals=totals, ip_totals=ip_totals,
+    data.update(epoch=epoch, counters=current, owners=owners, totals=totals, ip_totals=ip_totals, dns_totals=dns_totals,
                 ip_meter_available=integer(marker.get("user>>>noway-meter>>>version", 0)) == 1,
                 ip_meter_overflow=integer(marker.get("user>>>noway-meter>>>overflow", 0)) > 0,
                 sampled_at=datetime.now(timezone.utc).isoformat())
@@ -183,6 +197,8 @@ def ip_rows(response):
             raise RuntimeError("Invalid online-IP user")
         email = item.get("email", "")
         if not isinstance(email, str) or not email.endswith("@noway.local"):
+            continue
+        if email.endswith("-dnstt@noway.local"):
             continue
         ips = item.get("ips", [])
         if not isinstance(ips, list):

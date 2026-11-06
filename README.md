@@ -1317,3 +1317,21 @@ Account traffic cells show decimal MB/GB, binary MiB/GiB and exact bytes. Quota 
 Use the account's **Download check** action. Pause downloads on that account for five seconds, save its starting counter, perform the download, and wait five seconds after traffic stops before comparing. Enter the actual byte size or select the completed local file to read its size without uploading its contents. The comparison uses only the download counter, keeps existing quota totals, and rejects usage resets or recreated accounts.
 
 These counters measure the account's tunnel payload. HTTP/TLS bytes inside that payload are included. A completed file's size and the account's total download increase are different measurements. Comparing them requires an exact starting byte count and the same account/measurement interval.
+
+### SSH and Xray over DNS
+
+The Transports page supports **SSH**, **Xray VLESS**, and **SSH + Xray together**. Existing configurations default to SSH. Both mode preserves the original SSH zone/key and requires a second, disjoint zone for Xray, for example `xdns.example.com`. Delegate both zones to the same DNS-only nameserver hostname pointing to this VPS. One public UDP port (normally 53) dispatches by delegated zone to two private DNSTT instances. Private UDP ports 53530/53531 and VLESS TCP 10006 bind only on loopback.
+
+After installing the official core, enable the managed Xray core and configure both tunnels:
+
+```bash
+sudo abdulbasit-panelctl slowdns-enable --mode both --zone tunnel.example.com --xray-zone xdns.example.com --ns-host ns1.example.com
+sudo abdulbasit-panelctl slowdns-check
+sudo abdulbasit-panelctl xray-export ACCOUNT --route dns --zip ACCOUNT-dns.zip
+```
+
+The DNS export uses the existing VLESS account UUID and its normal byte quota, expiry and lock. IP cap must be 0 and the account IP block list empty. DNS resolvers hide the viewer address, so the panel excludes restricted accounts and labels DNS source usage unknown. It never counts a resolver/loopback address as the client. DNS bytes remain part of the same account total across reconnects and reset with that account.
+
+On the client, start one of the exported DNSTT commands (UDP, DoH or DoT) on local port 7001, then import the provided VLESS link/JSON. For concurrent SSH use the original SSH DNSTT zone on local port 7000. An ordinary Xray client requires a separate DNSTT client. Public resolver/carrier access and speed need a real client test.
+
+The uploaded switching script was used as a reference for DNSTT-to-VLESS topology. This integration keeps the system resolver, uses the panel's pinned DNSTT build, and authenticates against managed accounts. It does not execute the uploaded script or create an unrelated shared UUID.

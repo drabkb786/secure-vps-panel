@@ -176,7 +176,7 @@ transport_menu() {
       1) run_ctl xray-udp on; pause ;;
       2) run_ctl xray-udp off; pause ;;
       3) run_ctl slowdns-status; pause ;;
-      4) read -r -p 'Tunnel zone: ' zone; read -r -p 'Nameserver host: ' ns; read -r -p 'UDP port [53]: ' port; read -r -p 'MTU [1232]: ' mtu; run_ctl slowdns-enable --zone "$zone" --ns-host "$ns" --port "${port:-53}" --mtu "${mtu:-1232}"; pause ;;
+      4) read -r -p 'DNS mode [ssh/xray/both, default ssh]: ' mode; read -r -p 'Xray zone (both mode only): ' xzone; read -r -p 'Tunnel zone: ' zone; read -r -p 'Nameserver host: ' ns; read -r -p 'UDP port [53]: ' port; read -r -p 'MTU [1232]: ' mtu; run_ctl slowdns-enable --zone "$zone" --ns-host "$ns" --port "${port:-53}" --mtu "${mtu:-1232}" --mode "${mode:-ssh}" --xray-zone "$xzone"; pause ;;
       5) run_ctl slowdns-check; pause ;;
       6) run_ctl slowdns-disable; pause ;;
       7) run_ctl slowdns-install; pause ;;

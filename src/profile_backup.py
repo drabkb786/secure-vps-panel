@@ -38,6 +38,9 @@ def validate(data: dict, dns_validator) -> tuple[dict, list[dict]]:
         from reality_transport import vless_encryption
         vless_encryption.keys()  # Preserve local identity; never rotate on restore.
     network = {"enabled": config["enabled"], "vless_non_tls_enabled": config.get("vless_non_tls_enabled", False), "xhttp_enabled": config.get("xhttp_enabled", False), "udp_enabled": config.get("udp_enabled", True), "dns": dns_validator(config.get("dns", {}))}
+    if type(config.get("dns_tunnel_enabled", False)) is not bool:
+        raise ValidationError("Backup DNS tunnel flag is invalid")
+    network["dns_tunnel_enabled"] = config.get("dns_tunnel_enabled", False)
     if not isinstance(config.get("reality_enabled", False), bool):
         raise ValidationError("Backup REALITY flag is invalid")
     if config.get("reality_enabled"):

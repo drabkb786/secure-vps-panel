@@ -170,7 +170,7 @@ function render() {
   for (const [name, path] of Object.entries(cf.paths || {})) { const row = element('div', 'service-row'); row.append(element('strong', '', name.toUpperCase()), element('code', 'mono muted', path)); $('cf-paths').append(row); }
   const slow = s.slowdns || {};
   setText('slowdns-state', !slow.installed ? 'Core not installed' : slow.enabled ? 'Enabled' : 'Disabled');
-  if (!$('slowdns-form').contains(document.activeElement)) { $('slowdns-zone').value = slow.zone || ''; $('slowdns-ns').value = slow.ns_host || ''; $('slowdns-port').value = slow.port || 53; $('slowdns-mtu').value = slow.mtu || 1232; }
+  if (!$('slowdns-form').contains(document.activeElement)) { $('slowdns-mode').value = slow.mode || 'ssh'; updateDNSMode(); $('slowdns-xray-zone').value = slow.xray_zone || ''; $('slowdns-zone').value = slow.zone || ''; $('slowdns-ns').value = slow.ns_host || ''; $('slowdns-port').value = slow.port || 53; $('slowdns-mtu').value = slow.mtu || 1232; }
   if (!$('domain-form').contains(document.activeElement)) $('domain-input').value = s.domain === 'Not set' ? '' : s.domain;
   if (!$('dns-form').contains(document.activeElement)) { $('dns-servers').value = s.network.dns.servers.join('\n'); $('dns-strategy').value = s.network.dns.query_strategy; }
   setText('connection-state', 'Connected'); $('connection-state').classList.add('online'); setText('last-updated', `Updated ${new Date().toLocaleTimeString()}`);
@@ -207,6 +207,7 @@ async function exportSSH(name, route = 'direct', password = '', remember = false
   $('ssh-direct-port').value = String(port);
   $('ssh-direct-path').value = path;
   $('ssh-share-options').hidden = result.password_available; $('ssh-share-password').value = '';
+  $('export-route').querySelector('[value="dns"]').disabled = true;
   $('export-route').value = route;
   setText('export-title', `SSH · ${name}`);
   $('export-dialog').querySelectorAll(':scope > p').forEach(p => p.hidden = true);
@@ -227,6 +228,7 @@ async function exportProfile(name, route = 'direct') {
   $('download-zip').hidden = false; $('copy-all-links').hidden = false;
   $('export-route').value = route;
   currentExport = result;
+  $('export-route').querySelector('[value="dns"]').disabled = false;
   $('ssh-direct-settings').hidden = true;
   $('ssh-share-options').hidden = true; $('ssh-share-password').value = '';
   const warnings = result.readiness?.warnings || [];
@@ -435,8 +437,14 @@ $('packet-test').addEventListener('click', () => busy($('packet-test'), async ()
 $('load-banner').addEventListener('click', () => busy($('load-banner'), async () => { const result = await operation('banner_get'); $('banner-text').value = result.text; $('save-banner').disabled = false; }));
 bindForm('banner-form', async data => { if (await confirmAction('Save this managed SSH banner?')) await command('banner_set', {text: data.get('text')}, 'SSH banner saved'); });
 $('toggle-udp').addEventListener('click', () => busy($('toggle-udp'), async () => { if (await confirmAction('Change authenticated UDP forwarding policy and restart Xray?')) await command('xray_configure', {enabled: true, udp_enabled: state.network.udp_enabled === false}, 'UDP policy saved'); }));
+function updateDNSMode() {
+  const both = $('slowdns-mode').value === 'both';
+  $('slowdns-xray-zone-label').hidden = !both;
+  $('slowdns-xray-zone').required = both;
+}
+$('slowdns-mode').addEventListener('change', updateDNSMode);
 bindForm('slowdns-form', async data => {
-  if (await confirmAction('Enable the DNS tunnel on the selected UDP port? An official core, NS delegation and external firewall access are required.')) await command('slowdns_configure', {enabled: true, zone: data.get('zone'), ns_host: data.get('ns_host'), port: Number(data.get('port')), mtu: Number(data.get('mtu'))}, 'DNS tunnel enabled');
+  if (await confirmAction('Enable the DNS tunnel on the selected UDP port? An official core, NS delegation and external firewall access are required.')) await command('slowdns_configure', {enabled: true, zone: data.get('zone'), ns_host: data.get('ns_host'), port: Number(data.get('port')), mtu: Number(data.get('mtu')), mode: data.get('mode'), xray_zone: data.get('xray_zone')}, 'DNS tunnel enabled');
 });
 $('disable-slowdns').addEventListener('click', () => busy($('disable-slowdns'), async () => { if (await confirmAction('Disable the DNS tunnel and disconnect its clients?')) await command('slowdns_configure', {enabled: false}, 'DNS tunnel disabled'); }));
 $('check-slowdns').addEventListener('click', () => busy($('check-slowdns'), async () => { const result = await operation('slowdns_check'); setText('slowdns-result', JSON.stringify(result, null, 2)); $('slowdns-result').hidden = false; }));
