@@ -86,19 +86,22 @@ function renderAccountManagement() {
   if (!selected.length) emptyRow(body, 7, 'No matching accounts. Create an SSH account or Xray profile.');
   selected.forEach(row => {
     const key = accountKey(row.kind, row.name), tr = element('tr', 'account-summary'), name = element('td');
-    const toggle = button(`${expandedAccounts.has(key) ? '▾' : '▸'} ${row.name}`, async () => {
+    const toggle = button(row.name, async () => {
       if (expandedAccounts.has(key)) expandedAccounts.delete(key);
       else { expandedAccounts.clear(); expandedAccounts.set(key, 8); renderAccountManagement(); await fetchAccountDetails(row.kind, row.name); }
       renderAccountManagement();
     }, 'account-toggle');
+    toggle.append(element('span', 'expand-mark', expandedAccounts.has(key) ? '−' : '+'));
     toggle.setAttribute('aria-expanded', String(expandedAccounts.has(key))); toggle.setAttribute('aria-label', `${expandedAccounts.has(key) ? 'Collapse' : 'Expand'} IPs for ${row.kind} ${row.name}`);
-    name.append(toggle, tags(row.protocols), element('div', 'small muted', 'Expires ' + row.expiry));
+    const identity = element('div', 'account-identity'), avatar = element('span', `account-avatar ${row.kind}`, row.name.slice(0, 1)), info = element('div', 'account-name-block');
+    avatar.setAttribute('aria-hidden', 'true'); info.append(toggle, tags(row.protocols), element('div', 'account-expiry', row.expiry)); identity.append(avatar, info); name.append(identity);
     tr.append(name, accountByteCell(row, 'upload_bytes', row.usage_available !== false), accountByteCell(row, 'download_bytes', row.usage_available !== false), accountByteCell(row, 'used_bytes', row.usage_available !== false), element('td', 'mono', `${(row.online_ips || []).length} / ${row.max_ips || '∞'}`));
     const status = element('td'); status.append(pill(profileStatus(row), row.active ? 'good' : 'warn')); tr.append(status);
     const actions = element('td'), group = element('div', 'row-actions');
-    group.append(button('Limits', () => openUsage(row.kind, row)), button('Links & settings', () => row.kind === 'ssh' ? exportSSH(row.name) : exportProfile(row.name)), button(row.enabled === false ? 'Unlock' : 'Lock', () => command(row.kind === 'ssh' ? 'set_user_lock' : 'xray_update', row.kind === 'ssh' ? {username: row.name, enabled: row.enabled === false} : {name: row.name, action: 'toggle', enabled: row.enabled === false}, 'Account access updated')), button('Renew', () => openRenew(row.kind, row.name)), button('Download check', () => openDownloadCheck(row.kind, row.name)));
+    group.append(button('Links & settings', () => row.kind === 'ssh' ? exportSSH(row.name) : exportProfile(row.name), 'connect-button'), moreActions(row.name, [button('Limits', () => openUsage(row.kind, row)), button(row.enabled === false ? 'Unlock' : 'Lock', () => command(row.kind === 'ssh' ? 'set_user_lock' : 'xray_update', row.kind === 'ssh' ? {username: row.name, enabled: row.enabled === false} : {name: row.name, action: 'toggle', enabled: row.enabled === false}, 'Account access updated')), button('Renew', () => openRenew(row.kind, row.name)), button('Download check', () => openDownloadCheck(row.kind, row.name))]));
     actions.append(group); tr.append(actions);
-    tr.addEventListener('click', event => { if (!event.target.closest('button, a, input, select')) toggle.click(); }); body.append(tr);
+    ['Account', 'Upload', 'Download', 'Used / limit', 'IPs', 'Status', 'Actions'].forEach((label, index) => tr.children[index].dataset.label = label);
+    tr.addEventListener('click', event => { if (!event.target.closest('button, a, input, select, summary, details')) toggle.click(); }); body.append(tr);
     if (expandedAccounts.has(key)) { const detail = element('tr', 'account-detail-row'), cell = element('td'); cell.colSpan = 7; cell.append(accountDetail(row.kind, row.name)); detail.append(cell); body.append(detail); }
   });
 }

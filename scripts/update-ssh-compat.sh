@@ -26,7 +26,7 @@ esac
 exec 9>/run/noway-ssh-update.lock
 flock -n 9 || { echo 'Another SSH compatibility update is running' >&2; exit 1; }
 modules=(common ws_proxy paneld panel_client panelctl web_server ssh_backend ssh_identity ssh_sessions dropbear_sessions openssh_sessions session_enforcer traffic slowdns dns_router account_policy ssh_meter ssh_secrets tgbot cdn_manager bunny_manager diagnostics operations ssh_profiles ssh_ws_client xray_manager client_formats profile_backup reality_transport)
-assets=(index.html app.js accounts.js accounts.css)
+assets=(index.html app.js accounts.js style.css accounts.css)
 files=("$nginx_config")
 if [[ $backend == openssh ]]; then files+=("$ssh_config"); fi
 for module in "${modules[@]}"; do files+=("$app_dir/$module.py"); done

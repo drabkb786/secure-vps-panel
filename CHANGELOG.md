@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.8.0 — Aurora dashboard
+
+- Replace the dashboard styles with a responsive midnight workspace, mixed violet/emerald/cyan/rose metric cards, raised buttons and restrained page/dialog motion. Respect reduced-motion preferences and keep all assets local under the existing CSP.
+- Shorten headings, group navigation and put technical explanations behind Details. Keep common connection actions visible and move secondary actions into keyboard-accessible More menus. Preserve account/IP controls and measured totals.
+- Add a mobile navigation drawer and account cards, with focus handling, Escape dismissal and a persistent local Exact bytes display preference.
+- Include the main stylesheet in committed-source staging, backups, installation and rollback during application updates. Correct the individual DNS JSON export filename.
+
 ## 4.7.1 — Fresh download baselines and consistent usage views
 
 - Refresh visible SSH, Xray, Traffic and account usage every five seconds through one polling loop. The legacy SSH view previously waited 30 seconds. Retain the slower polling rate for other administration views.

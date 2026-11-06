@@ -34,7 +34,7 @@ def snapshot(project, destination, modules, *, web_assets=False):
         if source.is_symlink() or not source.is_file() or source.read_bytes() != content:
             changed.append(relative)
     if web_assets:
-        for asset in ('web/index.html', 'web/app.js', 'web/accounts.js', 'web/accounts.css'):
+        for asset in ('web/index.html', 'web/app.js', 'web/accounts.js', 'web/style.css', 'web/accounts.css'):
             relative = 'src/' + asset
             content = git(project, 'show', revision + ':' + relative)
             content.decode('utf-8')

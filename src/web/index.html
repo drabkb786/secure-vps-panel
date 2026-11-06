@@ -1,138 +1,524 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark"><meta name="description" content="NOWAY VPS control room — server access, Xray profiles, DNS and diagnostics.">
-  <title>NOWAY · VPS Control Room</title>
-  <link rel="icon" href="data:,"><link rel="stylesheet" href="/panel/style.css">
+  <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+<meta name="description" content="NOWAY VPS control room — server access, Xray profiles, DNS and diagnostics.">
+  <title>NOWAY · Dashboard</title>
+  <link rel="icon" href="data:,">
+<link rel="stylesheet" href="/panel/style.css">
   <script src="/panel/qr.js" defer></script>
   <script src="/panel/app.js" defer></script>
   <script src="/panel/accounts.js" defer></script>
   <link rel="stylesheet" href="/panel/accounts.css">
 </head>
 <body>
-  <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+  <svg class="icon-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs><symbol id="icon-grid" viewbox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"></rect><rect x="14" y="3" width="7" height="7" rx="2"></rect><rect x="3" y="14" width="7" height="7" rx="2"></rect><rect x="14" y="14" width="7" height="7" rx="2"></rect></symbol><symbol id="icon-users" viewbox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M15 3.13a4 4 0 0 1 0 7.75"></path><circle cx="9" cy="7" r="4"></circle></symbol><symbol id="icon-terminal" viewbox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="m7 9 3 3-3 3m6 0h4"></path></symbol><symbol id="icon-shield" viewbox="0 0 24 24"><path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7l-9-4Z"></path><path d="m8 12 3 3 5-6"></path></symbol><symbol id="icon-activity" viewbox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"></path></symbol><symbol id="icon-globe" viewbox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a19 19 0 0 1 0 18 19 19 0 0 1 0-18Z"></path></symbol><symbol id="icon-layers" viewbox="0 0 24 24"><path d="m12 3 10 6-10 6L2 9l10-6Zm-10 12 10 6 10-6M2 12l10 6 10-6"></path></symbol><symbol id="icon-route" viewbox="0 0 24 24"><circle cx="6" cy="5" r="2"></circle><circle cx="18" cy="19" r="2"></circle><path d="M8 5h7a4 4 0 0 1 0 8H9a3 3 0 0 0 0 6h7"></path></symbol><symbol id="icon-settings" viewbox="0 0 24 24"><path d="m12 3 2 3 4-1 1 4 3 3-3 3-1 4-4-1-2 3-2-3-4 1-1-4-3-3 3-3 1-4 4 1 2-3Z"></path><circle cx="12" cy="12" r="3"></circle></symbol><symbol id="icon-pulse" viewbox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="M6 12h3l2-4 3 8 2-4h2"></path></symbol><symbol id="icon-archive" viewbox="0 0 24 24"><rect x="3" y="3" width="18" height="5" rx="1"></rect><path d="M5 8v12h14V8m-9 4h4"></path></symbol><symbol id="icon-bot" viewbox="0 0 24 24"><rect x="4" y="7" width="16" height="13" rx="4"></rect><path d="M12 7V3m-4 9v2m8-2v2m-8 3h8M1 12h3m16 0h3"></path></symbol><symbol id="icon-download" viewbox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"></path></symbol><symbol id="icon-upload" viewbox="0 0 24 24"><path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4"></path></symbol><symbol id="icon-check" viewbox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></symbol><symbol id="icon-refresh" viewbox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"></path><path d="M6 7a7 7 0 0 1 12-2l2 3M4 16l2 3a7 7 0 0 0 12-2"></path></symbol><symbol id="icon-menu" viewbox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"></path></symbol><symbol id="icon-arrow" viewbox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"></path></symbol><symbol id="icon-search" viewbox="0 0 24 24"><circle cx="10" cy="10" r="6"></circle><path d="m15 15 6 6"></path></symbol><symbol id="icon-plus" viewbox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></symbol></defs></svg><div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
   <section id="login-screen" class="login-screen">
-    <div class="login-art"><a class="brand" href="/panel/"><span class="monogram">N</span><span>NOWAY<span class="brand-sub">VPS CONTROL ROOM</span></span></a>
-      <div class="login-message"><span class="eyebrow">YOUR INFRASTRUCTURE. YOUR RULES.</span><h1>Control starts<br>with <em>clarity.</em></h1><p>Server access, secure profiles and network health.<br>Everything in one place.</p><div class="login-chips"><span>VLESS</span><span>VMess</span><span>Trojan</span><span>SSH</span></div></div>
-      <div class="login-footer">Built for Abdul Basit <span>NOWAY / 032</span></div>
-    </div>
-    <div class="login-side"><form id="login-form" class="login-card"><span class="mini-mark">↗</span><span class="eyebrow">ADMIN ACCESS</span><h2>Welcome back.</h2><p class="muted">Sign in to your private control room.</p>
-      <label>Username<input name="username" autocomplete="username" minlength="3" maxlength="48" required placeholder="Your admin username"></label>
+    <div class="login-art">
+<a class="brand" href="/panel/" aria-label="NOWAY dashboard"><span class="monogram">N<span class="brand-spark"></span></span><span>NOWAY<span class="brand-sub">VPS PANEL</span></span></a><div class="login-visual" aria-hidden="true">
+<div class="orbit orbit-one"></div>
+<div class="orbit orbit-two"></div>
+<div class="floating-tile tile-main">N</div>
+<div class="floating-tile tile-small"><svg class="ui-icon" aria-hidden="true"><use href="#icon-shield"></use></svg></div>
+<div class="floating-tile tile-cyan"><svg class="ui-icon" aria-hidden="true"><use href="#icon-terminal"></use></svg></div>
+<span class="orbit-dot"></span>
+</div>
+<div class="login-caption">
+<span class="pill good">SSH + XRAY</span><h1>Your network.<br><span>Your control.</span>
+</h1>
+</div>
+</div>
+    <div class="login-side"><form id="login-form" class="login-card">
+<h2>Welcome back</h2>
+<label>Username<input name="username" autocomplete="username" minlength="3" maxlength="48" required placeholder="Your admin username"></label>
       <label>Password<input name="password" type="password" autocomplete="current-password" maxlength="128" required placeholder="Enter your password"></label>
-      <button class="btn primary full" type="submit">Enter control room <span>→</span></button>
+      <button class="btn primary full" type="submit">Sign in</button>
       <p id="login-error" class="form-error" role="alert"></p>
-      <div class="setup-note"><strong>First time here?</strong><p>Set your login from the VPS terminal:</p><code>abdulbasit-panelctl configure-web</code></div>
-      <p class="small muted">Public login requires HTTPS. Local HTTP is supported through an SSH tunnel.</p>
-    </form></div>
+      <details class="context-help login-setup"><summary>First-time setup</summary><div class="help-content"><code>abdulbasit-panelctl configure-web</code></div></details>
+</form></div>
   </section>
 
   <div id="app" class="app" hidden>
-    <aside class="sidebar">
-      <a class="brand" href="/panel/"><span class="monogram">N</span><span>NOWAY<span class="brand-sub">VPS CONTROL ROOM</span></span></a>
-      <div class="workspace-label">WORKSPACE <span>01</span></div>
-      <nav aria-label="Main navigation">
-        <button class="nav" data-view="accounts"><span class="nav-icon">⇌</span>Account management</button>
-        <button class="nav active" data-view="overview"><span class="nav-icon">◫</span>Overview<span class="nav-arrow">↗</span></button>
-        <button class="nav" data-view="ssh"><span class="nav-icon">⌘</span>SSH accounts</button>
-        <button class="nav" data-view="xray"><span class="nav-icon">◇</span>Xray profiles<span class="nav-count" id="nav-profiles">0</span></button>
-        <button class="nav" data-view="traffic"><span class="nav-icon">↗</span>Traffic &amp; connections</button>
-        <button class="nav" data-view="network"><span class="nav-icon">◎</span>DNS &amp; SSL</button>
-        <button class="nav" data-view="cloudfront"><span class="nav-icon">◈</span>CDN delivery</button>
-        <button class="nav" data-view="transports"><span class="nav-icon">⇌</span>UDP &amp; SlowDNS</button>
-        <button class="nav" data-view="system"><span class="nav-icon">⊞</span>System toolbox</button>
-        <button class="nav" data-view="diagnostics"><span class="nav-icon">⌁</span>Diagnostics</button>
-        <button class="nav" data-view="recovery"><span class="nav-icon">▱</span>Backup &amp; recovery</button>
-        <button class="nav" data-view="maintenance"><span class="nav-icon">⚙</span>Telegram &amp; maintenance</button>
-      </nav>
-      <div class="sidebar-note"><span class="eyebrow">MANAGED CONNECTIONS</span><strong>One secure entry point.</strong><p>Public TLS on :443.<br>Internal services on loopback.</p><span class="line-label">WS + TLS <i></i> NGINX</span></div>
-      <div class="sidebar-bottom"><span class="avatar">AB</span><div><strong>Abdul Basit</strong><span id="admin-name">Administrator</span></div><span class="version">v4.6</span></div>
+    <button id="sidebar-scrim" class="sidebar-scrim" aria-label="Close navigation" hidden></button><aside class="sidebar" id="sidebar">
+      <a class="brand" href="/panel/" aria-label="NOWAY dashboard"><span class="monogram">N<span class="brand-spark"></span></span><span>NOWAY<span class="brand-sub">VPS PANEL</span></span></a><nav aria-label="Main navigation">
+        <div class="nav-group">
+<span class="nav-group-label">WORKSPACE</span><button class="nav" data-view="accounts"><svg class="ui-icon" aria-hidden="true"><use href="#icon-users"></use></svg><span class="nav-title">Accounts</span></button>
+        <button class="nav active" data-view="overview"><svg class="ui-icon" aria-hidden="true"><use href="#icon-grid"></use></svg><span class="nav-title">Overview</span></button>
+        <button class="nav" data-view="traffic"><svg class="ui-icon" aria-hidden="true"><use href="#icon-activity"></use></svg><span class="nav-title">Traffic</span></button>
+        </div>
+<div class="nav-group">
+<span class="nav-group-label">CONNECTIONS</span><button class="nav" data-view="ssh"><svg class="ui-icon" aria-hidden="true"><use href="#icon-terminal"></use></svg><span class="nav-title">SSH</span></button>
+        <button class="nav" data-view="xray"><svg class="ui-icon" aria-hidden="true"><use href="#icon-shield"></use></svg><span class="nav-title">Xray</span><span class="nav-count" id="nav-profiles">0</span></button>
+        <button class="nav" data-view="transports"><svg class="ui-icon" aria-hidden="true"><use href="#icon-route"></use></svg><span class="nav-title">DNS tunnels</span></button>
+        <button class="nav" data-view="network"><svg class="ui-icon" aria-hidden="true"><use href="#icon-globe"></use></svg><span class="nav-title">DNS &amp; SSL</span></button>
+        <button class="nav" data-view="cloudfront"><svg class="ui-icon" aria-hidden="true"><use href="#icon-layers"></use></svg><span class="nav-title">CDN</span></button>
+        </div>
+<div class="nav-group">
+<span class="nav-group-label">SYSTEM</span><button class="nav" data-view="system"><svg class="ui-icon" aria-hidden="true"><use href="#icon-settings"></use></svg><span class="nav-title">Tools</span></button>
+        <button class="nav" data-view="diagnostics"><svg class="ui-icon" aria-hidden="true"><use href="#icon-pulse"></use></svg><span class="nav-title">Diagnostics</span></button>
+        <button class="nav" data-view="recovery"><svg class="ui-icon" aria-hidden="true"><use href="#icon-archive"></use></svg><span class="nav-title">Backups</span></button>
+        <button class="nav" data-view="maintenance"><svg class="ui-icon" aria-hidden="true"><use href="#icon-bot"></use></svg><span class="nav-title">Bot &amp; updates</span></button>
+      </div></nav>
+      <div class="sidebar-bottom">
+<span class="avatar">AB</span><div>
+<strong>Administrator</strong><span id="admin-name">Administrator</span>
+</div>
+<span class="version">4.8</span>
+</div>
     </aside>
     <main>
-      <header class="topbar"><div><span class="muted">Workspace</span><span class="slash">/</span><strong id="breadcrumb">Overview</strong></div><div class="top-actions"><span class="connection-state" id="connection-state">Connecting</span><button id="refresh" class="icon-button" aria-label="Refresh dashboard">↻</button><button id="logout" class="btn small">Sign out</button></div></header>
+      <header class="topbar"><div>
+<button id="menu-toggle" class="icon-button mobile-menu" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false"><svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"></use></svg></button><strong id="breadcrumb">Overview</strong>
+</div>
+<div class="top-actions">
+<span class="connection-state" id="connection-state">Connecting</span><button id="refresh" class="icon-button" aria-label="Refresh dashboard"><svg class="ui-icon" aria-hidden="true"><use href="#icon-refresh"></use></svg></button><button id="logout" class="btn small">Sign out</button>
+</div></header>
       <div class="main-content">
         <section id="view-accounts" class="view" hidden>
-          <div class="page-heading compact"><div><span class="eyebrow">SSH / VLESS MANAGEMENT</span><h1>Every account.<br><span class="soft">Every connection.</span></h1><p class="muted">Measured traffic, source IPs and access controls in one place.</p></div><div class="action-row"><button class="btn" data-new="ssh">＋ SSH account</button><button class="btn primary" data-new="xray">＋ Xray profile</button></div></div>
-          <div class="account-stats"><article><span>MANAGED ACCOUNTS</span><strong id="account-count">—</strong><span>SSH + Xray profiles</span></article><article><span>ACTIVE ACCOUNTS</span><strong id="account-active">—</strong><span>Eligible for access</span></article><article><span>UPLOADING</span><strong id="account-upload">—</strong><span>Client → server payload</span></article><article><span>DOWNLOADING</span><strong id="account-download">—</strong><span>Server → client payload</span></article></div>
-          <div class="filter-bar"><input id="account-search" aria-label="Search all accounts" placeholder="Search an account…"><select id="account-kind" aria-label="Filter account type"><option value="all">SSH + Xray</option><option value="ssh">SSH accounts</option><option value="xray">Xray profiles</option></select><button id="accounts-refresh" class="btn">Refresh accounts &amp; IPs</button></div>
-          <p id="accounts-meter-note" class="small muted" role="status"></p>
-          <article class="panel"><div class="table-scroll"><table><thead><tr><th>ACCOUNT</th><th>UPLOADING</th><th>DOWNLOADING</th><th>TOTAL / LIMIT</th><th>IPS / LIMIT</th><th>STATUS</th><th>CONTROLS</th></tr></thead><tbody id="account-management"></tbody></table></div></article>
+          <div class="page-heading compact">
+<div><h1>Accounts</h1></div>
+<div class="action-row">
+<button class="btn" data-new="ssh">New SSH<svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg></button><button class="btn primary" data-new="xray">New Xray<svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg></button>
+</div>
+</div>
+          <div class="account-stats">
+<article class="metric-card metric-violet"><span>Total accounts</span><strong id="account-count">—</strong><span class="metric-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-users"></use></svg></span><span class="metric-decoration" aria-hidden="true"></span></article><article class="metric-card metric-green"><span>Active</span><strong id="account-active">—</strong><span class="metric-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-check"></use></svg></span><span class="metric-decoration" aria-hidden="true"></span></article><article class="metric-card metric-cyan"><span>Upload</span><strong id="account-upload">—</strong><span class="metric-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-upload"></use></svg></span><span class="metric-decoration" aria-hidden="true"></span></article><article class="metric-card metric-rose"><span>Download</span><strong id="account-download">—</strong><span class="metric-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-download"></use></svg></span><span class="metric-decoration" aria-hidden="true"></span></article>
+</div>
+          <div class="filter-bar">
+<div class="search-field">
+<svg class="ui-icon" aria-hidden="true"><use href="#icon-search"></use></svg><input id="account-search" aria-label="Search all accounts" placeholder="Search accounts…">
+</div>
+<select id="account-kind" aria-label="Filter account type"><option value="all">SSH + Xray</option>
+<option value="ssh">SSH accounts</option>
+<option value="xray">Xray profiles</option></select><label class="detail-switch"><input id="account-exact-toggle" type="checkbox"><span>Exact bytes</span></label><button id="accounts-refresh" class="btn">Refresh</button>
+</div>
+          <details class="context-help"><summary>Meter details</summary><div class="help-content">
+<p id="accounts-meter-note" class="small muted" role="status"></p>
+          </div></details><article class="panel actions-panel"><div class="table-scroll actions-table"><table class="account-table">
+<thead><tr>
+<th scope="col">Account</th>
+<th scope="col">Upload</th>
+<th scope="col">Download</th>
+<th scope="col">Used / limit</th>
+<th scope="col">IPs</th>
+<th scope="col">Status</th>
+<th scope="col"></th>
+</tr></thead>
+<tbody id="account-management"></tbody>
+</table></div></article>
         </section>
         <section id="view-overview" class="view">
-          <div class="page-heading"><div><span class="eyebrow">INFRASTRUCTURE AT A GLANCE</span><h1>Your VPS.<br><span class="soft">Under control.</span></h1><p class="muted">Access, traffic and recovery. Know what is running. Control what happens next.</p></div><button class="btn primary" data-new="xray">＋ New profile</button></div>
-          <div class="node-strip"><span class="node-symbol">▣</span><div><strong id="node-host">Loading server…</strong><span id="node-domain">Domain not configured</span></div><span class="node-meta" id="node-uptime">—</span><span class="pill" id="node-status">Checking</span></div>
+          <div class="page-heading">
+<div><h1>Overview</h1></div>
+<button class="btn primary" data-new="xray">New Xray<svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg></button>
+</div>
+          <div class="node-strip">
+<span class="node-symbol">▣</span><div>
+<strong id="node-host">Loading server…</strong><span id="node-domain">Domain not configured</span>
+</div>
+<span class="node-meta" id="node-uptime">—</span><span class="pill" id="node-status">Checking</span>
+</div>
           <div class="stats-grid">
             <article class="stat"><span class="stat-label">SYSTEM LOAD <span>↗</span></span><strong id="stat-load">—</strong><span id="stat-cpus" class="muted">1-minute average</span></article>
             <article class="stat"><span class="stat-label">MEMORY <span>▤</span></span><strong id="stat-memory">—</strong><meter id="memory-meter" min="0" max="100" value="0" aria-label="Memory utilization"></meter><span id="memory-detail" class="muted">Waiting for node</span></article>
             <article class="stat"><span class="stat-label">DISK USAGE <span>▱</span></span><strong id="stat-disk">—</strong><meter id="disk-meter" min="0" max="100" value="0" aria-label="Disk utilization"></meter><span id="disk-detail" class="muted">Waiting for node</span></article>
             <article class="stat accent"><span class="stat-label">ACTIVE PROFILES <span>◇</span></span><strong id="stat-profiles">0</strong><span id="stat-access" class="muted">SSH + Xray access</span></article>
           </div>
-          <div class="quick-launch"><div><span class="eyebrow">YOUR DAILY WORKFLOW</span><h2>One place. Every control.</h2></div><button class="launch-action" data-new="xray"><span>＋</span><strong>Create VIP profile</strong><small>VLESS · VMess · Trojan</small></button><button class="launch-action" data-trial><span>◷</span><strong>24-hour trial</strong><small>Exact expiry · optional GB cap</small></button><button class="launch-action" data-view="traffic"><span>↗</span><strong>Traffic &amp; IPs</strong><small>Measured payload · core activity</small></button><button class="launch-action" data-view="system"><span>⌁</span><strong>System toolbox</strong><small>Doctor · logs · packet test</small></button></div>
-          <div class="overview-grid"><article class="panel"><div class="panel-heading"><div><span class="eyebrow">CONNECTION LAYER</span><h2>Protocol gateway</h2></div><button class="text-button" data-view="xray">Manage ↗</button></div><div id="protocol-cards" class="protocol-cards"></div><div class="panel-foot"><span class="small muted">Separate profiles. Shared TLS entry.</span><span class="mono">:443</span></div></article>
-            <article class="panel"><div class="panel-heading"><div><span class="eyebrow">SYSTEM SERVICES</span><h2>Node health</h2></div><span id="service-total" class="pill">—</span></div><div id="service-list" class="service-list"></div></article></div>
-          <article class="panel accounts-preview"><div class="panel-heading"><div><span class="eyebrow">ACCESS DIRECTORY</span><h2>Xray profiles</h2></div><button class="text-button" data-view="xray">View all ↗</button></div><div class="table-scroll"><table><thead><tr><th>PROFILE</th><th>PROTOCOLS</th><th>EXPIRY</th><th>STATUS</th><th></th></tr></thead><tbody id="overview-profiles"></tbody></table></div></article>
-          <footer class="page-footer"><span>NOWAY VPS PANEL <b>/</b> PRIVATE INFRASTRUCTURE</span><span id="last-updated">Not refreshed yet</span></footer>
+          <div class="quick-launch">
+<button class="launch-action" data-new="xray">New Xray<svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg></button><button class="launch-action" data-trial><span>◷</span><strong>Trial</strong></button><button class="launch-action" data-view="traffic"><span>↗</span><strong>Traffic</strong></button><button class="launch-action" data-view="system"><span>⌁</span><strong>Tools</strong></button>
+</div>
+          <div class="overview-grid">
+<article class="panel"><div class="panel-heading">
+<div><h2>Protocol gateway</h2></div>
+<button class="text-button" data-view="xray">Manage ↗</button>
+</div>
+<div id="protocol-cards" class="protocol-cards"></div>
+<div class="panel-foot">
+<span class="small muted">TLS gateway</span><span class="mono">:443</span>
+</div></article>
+            <article class="panel"><div class="panel-heading">
+<div><h2>Node health</h2></div>
+<span id="service-total" class="pill">—</span>
+</div>
+<div id="service-list" class="service-list"></div></article>
+</div>
+          <article class="panel accounts-preview"><div class="panel-heading">
+<div><h2>Xray profiles</h2></div>
+<button class="text-button" data-view="xray">View all ↗</button>
+</div>
+<div class="table-scroll"><table>
+<thead><tr>
+<th scope="col">PROFILE</th>
+<th scope="col">PROTOCOLS</th>
+<th scope="col">EXPIRY</th>
+<th scope="col">STATUS</th>
+<th scope="col"></th>
+</tr></thead>
+<tbody id="overview-profiles"></tbody>
+</table></div></article>
+          <footer class="page-footer"><span>NOWAY</span><span id="last-updated">Not refreshed yet</span></footer>
         </section>
 
-        <section id="view-ssh" class="view" hidden><div class="page-heading compact"><div><span class="eyebrow">ACCESS MANAGEMENT</span><h1>SSH accounts<span class="heading-dot">.</span></h1><p class="muted">Managed SSH with separate session and unique-source-IP caps.</p></div><button class="btn primary" data-new="ssh">＋ New account</button></div><div id="ssh-note" class="info-banner">SSH byte metering is unavailable. Finite GB quotas are rejected. IP and session checks run every 5 seconds plus processing time; unknown sources cannot use an IP-limited account.</div><article class="panel"><div class="table-scroll"><table><thead><tr><th>USERNAME</th><th>EXPIRY</th><th>SESSIONS</th><th>QUOTA</th><th>ACTIONS</th></tr></thead><tbody id="ssh-users"></tbody></table></div></article></section>
+        <section id="view-ssh" class="view" hidden><div class="page-heading compact">
+<div><h1>SSH accounts</h1></div>
+<button class="btn primary" data-new="ssh">New SSH<svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg></button>
+</div>
+<details class="context-help"><summary>Meter details</summary><div class="help-content"><div id="ssh-note" class="info-banner">SSH byte metering is unavailable. Finite GB quotas are rejected. IP and session checks run every 5 seconds plus processing time; unknown sources cannot use an IP-limited account.</div></div></details><article class="panel actions-panel"><div class="table-scroll actions-table"><table>
+<thead><tr>
+<th scope="col">USERNAME</th>
+<th scope="col">EXPIRY</th>
+<th scope="col">SESSIONS</th>
+<th scope="col">QUOTA</th>
+<th scope="col">ACTIONS</th>
+</tr></thead>
+<tbody id="ssh-users"></tbody>
+</table></div></article></section>
 
-        <section id="view-xray" class="view" hidden><div class="page-heading compact"><div><span class="eyebrow">SECURE CONNECTIONS</span><h1>Xray profiles<span class="heading-dot">.</span></h1><p class="muted">VLESS, VMess and Trojan. Ready to import into your client.</p></div><button class="btn primary" data-new="xray">＋ New profile</button></div><div class="filter-bar"><input id="profile-search" aria-label="Search Xray profiles" placeholder="Search profiles…"><select id="profile-filter" aria-label="Filter Xray profiles"><option value="all">All profiles</option><option value="active">Active</option><option value="locked">Locked</option><option value="trial">Trials</option><option value="quota">Quota reached</option></select><button class="btn" data-trial>◷ 24-hour trial</button></div><div class="engine-strip panel"><div><strong>Xray core</strong><p id="xray-summary" class="muted">Checking installation…</p></div><div class="action-row"><button id="toggle-non-tls" class="btn">Enable VLESS non-TLS</button><button id="toggle-xhttp" class="btn">Enable XHTTP</button><button id="toggle-xray" class="btn">Enable Xray</button></div></div><div class="info-banner">TLS certificate required. Expired profiles are removed from the running config on the next 5-second check (plus API/restart time). Config changes briefly reconnect existing clients.</div><article class="panel"><div class="table-scroll"><table><thead><tr><th>PROFILE</th><th>PROTOCOLS</th><th>EXPIRY</th><th>STATUS</th><th>USAGE / LIMIT</th><th>ACTIONS</th></tr></thead><tbody id="xray-accounts"></tbody></table></div></article></section>
+        <section id="view-xray" class="view" hidden><div class="page-heading compact">
+<div><h1>Xray profiles</h1></div>
+<button class="btn primary" data-new="xray">New Xray<svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg></button>
+</div>
+<div class="filter-bar">
+<input id="profile-search" aria-label="Search Xray profiles" placeholder="Search profiles…"><select id="profile-filter" aria-label="Filter Xray profiles"><option value="all">All profiles</option>
+<option value="active">Active</option>
+<option value="locked">Locked</option>
+<option value="trial">Trials</option>
+<option value="quota">Quota reached</option></select><button class="btn" data-trial>◷ 24-hour trial</button>
+</div>
+<div class="engine-strip panel">
+<div>
+<strong>Xray core</strong><p id="xray-summary" class="muted">Checking installation…</p>
+</div>
+<div class="action-row">
+<button id="toggle-non-tls" class="btn">Enable VLESS non-TLS</button><button id="toggle-xhttp" class="btn">Enable XHTTP</button><button id="toggle-xray" class="btn">Enable Xray</button>
+</div>
+</div>
+<details class="context-help"><summary>Details</summary><div class="help-content"><div class="info-banner">TLS certificate required. Expired profiles are removed from the running config on the next 5-second check (plus API/restart time). Config changes briefly reconnect existing clients.</div></div></details><article class="panel actions-panel"><div class="table-scroll actions-table"><table>
+<thead><tr>
+<th scope="col">PROFILE</th>
+<th scope="col">PROTOCOLS</th>
+<th scope="col">EXPIRY</th>
+<th scope="col">STATUS</th>
+<th scope="col">USAGE / LIMIT</th>
+<th scope="col">ACTIONS</th>
+</tr></thead>
+<tbody id="xray-accounts"></tbody>
+</table></div></article></section>
 
         <section id="view-cloudfront" class="view" hidden>
-          <article class="panel form-panel"><span class="eyebrow">BUNNY DELIVERY</span><h2>Bunny CDN</h2><form id="bunny-form"><label>CDN hostname<input name="endpoint" placeholder="cdn.example.com" required></label><button class="btn primary">Prepare Bunny origin</button></form><p class="small muted">Download private setup and apply both origin request headers at Bunny. Existing raw payloads are separate from RFC6455 WSS. CDN charges apply.</p><div class="action-row"><a class="btn" href="/panel/api/bunny-setup">Private setup ZIP</a><button id="bunny-check" class="btn">Check route</button><button id="bunny-disable" class="btn">Disable</button></div><pre id="bunny-result" class="result-box" hidden></pre></article>
-          <div class="page-heading compact"><div><span class="eyebrow">AWS EDGE DELIVERY</span><h1>CloudFront<span class="heading-dot">.</span></h1><p class="muted">One verified TLS route for VLESS, VMess, Trojan and SSH.</p></div><span id="cf-state" class="pill">Disabled</span></div>
-          <div class="info-banner">AWS usage charges apply. Your VPS keeps handling authentication. Speed depends on the client, edge location and origin route.</div>
-          <div class="two-columns">
-            <article class="panel form-panel"><span class="eyebrow">01 / ORIGIN &amp; DISTRIBUTION</span><h2>Connect your edge</h2><p class="muted">Prepare the origin, download the private setup, deploy it in your AWS account, then attach the distribution hostname.</p>
-              <form id="cloudfront-form"><label>Distribution hostname <span class="muted small">optional while preparing</span><input id="cf-endpoint" name="endpoint" placeholder="d123example.cloudfront.net" maxlength="78" autocomplete="off" spellcheck="false"></label><label>Edge coverage<select id="cf-price" name="price_class"><option value="PriceClass_All">All regions · widest coverage</option><option value="PriceClass_200">Price class 200 · selected regions</option><option value="PriceClass_100">Price class 100 · limited regions</option></select></label><button class="btn primary" type="submit">Prepare / save CloudFront →</button></form>
-              <div class="action-row"><a id="cf-setup" class="btn" href="/panel/api/cloudfront-setup">↓ Private AWS setup ZIP</a><button id="cf-disable" class="btn">Disable routes</button></div><p class="small muted">The ZIP contains an origin secret. Keep it private. Origin DNS must point directly to this VPS and have a valid public TLS certificate. Disabling routes does not delete or stop AWS billing.</p>
-            </article>
-            <article class="panel form-panel"><span class="eyebrow">02 / VERIFY &amp; CONNECT</span><h2>Check the complete route</h2><p id="cf-check-note" class="muted">No endpoint check has run.</p><button id="cf-check" class="btn primary">Check TLS &amp; WebSocket routes ↗</button><label>SSH WebSocket URL<input id="cf-ssh" readonly placeholder="Attach a distribution first"></label><p class="small muted">Use an RFC6455 binary WebSocket client with SSH. Keep SSH host-key checking on; legacy raw Upgrade clients cannot use CloudFront.</p><div id="cf-paths" class="cf-paths"></div><p class="small muted">For Xray, open a profile's Export dialog and select CloudFront. XHTTP requires the updated setup with uncached GET/POST delivery. Checks verify handshakes; test an actual login and file transfer before sharing access.</p><pre id="cf-result" class="result-box" hidden></pre></article>
+          <div class="page-heading compact">
+<div><h1>CDN delivery</h1></div>
+<span id="cf-state" class="pill">Disabled</span>
+</div>
+          <article class="panel form-panel"><h2>Bunny CDN</h2>
+<form id="bunny-form">
+<label>CDN hostname<input name="endpoint" placeholder="cdn.example.com" required></label><button class="btn primary">Prepare Bunny origin</button>
+</form>
+<details class="context-help"><summary>Details</summary><div class="help-content"><p class="small muted">Download private setup and apply both origin request headers at Bunny. Existing raw payloads are separate from RFC6455 WSS. CDN charges apply.</p></div></details><div class="action-row">
+<a class="btn" href="/panel/api/bunny-setup">Private setup ZIP</a><button id="bunny-check" class="btn">Check route</button><button id="bunny-disable" class="btn">Disable</button>
+</div>
+<pre id="bunny-result" class="result-box" hidden></pre></article>
+          <details class="context-help"><summary>Details</summary><div class="help-content">
+<div class="info-banner">AWS usage charges apply. Your VPS keeps handling authentication. Speed depends on the client, edge location and origin route.</div>
+          </div></details><div class="two-columns">
+            <article class="panel form-panel"><h2>CloudFront</h2>
+<details class="context-help"><summary>Details</summary><div class="help-content">
+<p class="muted">Prepare the origin, download the private setup, deploy it in your AWS account, then attach the distribution hostname.</p>
+              <p class="small muted">The ZIP contains an origin secret. Keep it private. Origin DNS must point directly to this VPS and have a valid public TLS certificate. Disabling routes does not delete or stop AWS billing.</p>
+            </div></details><form id="cloudfront-form">
+<label>Distribution hostname <span class="muted small">optional while preparing</span><input id="cf-endpoint" name="endpoint" placeholder="d123example.cloudfront.net" maxlength="78" autocomplete="off" spellcheck="false"></label><label>Edge coverage<select id="cf-price" name="price_class"><option value="PriceClass_All">All regions · widest coverage</option>
+<option value="PriceClass_200">Price class 200 · selected regions</option>
+<option value="PriceClass_100">Price class 100 · limited regions</option></select></label><button class="btn primary" type="submit">Prepare / save CloudFront →</button>
+</form>
+              <div class="action-row">
+<a id="cf-setup" class="btn" href="/panel/api/cloudfront-setup">↓ Private AWS setup ZIP</a><button id="cf-disable" class="btn">Disable routes</button>
+</div></article>
+            <article class="panel form-panel"><h2>Connection check</h2>
+<p id="cf-check-note" class="muted">No endpoint check has run.</p>
+<button id="cf-check" class="btn primary">Check TLS &amp; WebSocket routes ↗</button><label>SSH WebSocket URL<input id="cf-ssh" readonly placeholder="Attach a distribution first"></label><details class="context-help"><summary>Details</summary><div class="help-content">
+<p class="small muted">Use an RFC6455 binary WebSocket client with SSH. Keep SSH host-key checking on; legacy raw Upgrade clients cannot use CloudFront.</p>
+<p class="small muted">For Xray, open a profile's Export dialog and select CloudFront. XHTTP requires the updated setup with uncached GET/POST delivery. Checks verify handshakes; test an actual login and file transfer before sharing access.</p>
+</div></details><div id="cf-paths" class="cf-paths"></div>
+<pre id="cf-result" class="result-box" hidden></pre></article>
           </div>
         </section>
-        <section id="view-network" class="view" hidden><div class="page-heading compact"><div><span class="eyebrow">NETWORK CONFIGURATION</span><h1>DNS &amp; SSL<span class="heading-dot">.</span></h1><p class="muted">Give your server a name. Keep its connections verified.</p></div></div><div class="two-columns"><article class="panel form-panel"><span class="eyebrow">01 / DOMAIN</span><h2>Public hostname</h2><p class="muted">Create A/AAAA records at your DNS provider pointing to this VPS, then save the hostname here.</p><form id="domain-form"><label>Domain<input id="domain-input" name="domain" placeholder="vpn.example.com" required maxlength="253"></label><button class="btn primary" type="submit">Save domain →</button></form><div class="action-row"><button id="lookup-dns" class="btn">Check DNS</button><button id="issue-cert" class="btn">Issue / renew SSL</button></div><pre id="dns-result" class="result-box" hidden></pre><p class="small muted">Port 80 must be reachable for Let's Encrypt. Disable Xray before switching domains.</p></article>
-            <article class="panel form-panel"><span class="eyebrow">02 / RESOLUTION</span><h2>Resolver settings</h2><p class="muted">Used by Xray and included in generated client JSON files. Does not replace the VPS system resolver.</p><form id="dns-form"><label>DNS servers · one per line<textarea id="dns-servers" name="servers" rows="4" required placeholder="1.1.1.1&#10;8.8.8.8"></textarea></label><label>IP strategy<select id="dns-strategy" name="strategy"><option value="UseIPv4">IPv4 only · recommended for IPv4 VPS</option><option value="UseIP">IPv4 + IPv6</option><option value="UseIPv6">IPv6 only</option></select></label><button type="submit" class="btn primary">Apply resolvers →</button></form><p class="small muted">Accepts 1–4 IP addresses or HTTPS DoH URLs, such as https://cloudflare-dns.com/dns-query. No public recursive DNS listener is opened.</p></article></div></section>
+        <section id="view-network" class="view" hidden><div class="page-heading compact"><div><h1>DNS &amp; SSL</h1></div></div>
+<div class="two-columns">
+<article class="panel form-panel"><h2>Domain</h2>
+<details class="context-help"><summary>Details</summary><div class="help-content">
+<p class="muted">Create A/AAAA records at your DNS provider pointing to this VPS, then save the hostname here.</p>
+<p class="small muted">Port 80 must be reachable for Let's Encrypt. Disable Xray before switching domains.</p>
+</div></details><form id="domain-form">
+<label>Domain<input id="domain-input" name="domain" placeholder="vpn.example.com" required maxlength="253"></label><button class="btn primary" type="submit">Save domain →</button>
+</form>
+<div class="action-row">
+<button id="lookup-dns" class="btn">Check DNS</button><button id="issue-cert" class="btn">Issue / renew SSL</button>
+</div>
+<pre id="dns-result" class="result-box" hidden></pre></article>
+            <article class="panel form-panel"><h2>DNS resolvers</h2>
+<details class="context-help"><summary>Details</summary><div class="help-content">
+<p class="muted">Used by Xray and included in generated client JSON files. Does not replace the VPS system resolver.</p>
+<p class="small muted">Accepts 1–4 IP addresses or HTTPS DoH URLs, such as https://cloudflare-dns.com/dns-query. No public recursive DNS listener is opened.</p>
+</div></details><form id="dns-form">
+<label>DNS servers · one per line<textarea id="dns-servers" name="servers" rows="4" required placeholder="1.1.1.1
+8.8.8.8"></textarea></label><label>IP strategy<select id="dns-strategy" name="strategy"><option value="UseIPv4">IPv4 only · recommended for IPv4 VPS</option>
+<option value="UseIP">IPv4 + IPv6</option>
+<option value="UseIPv6">IPv6 only</option></select></label><button type="submit" class="btn primary">Apply resolvers →</button>
+</form></article>
+</div></section>
 
-        <section id="view-diagnostics" class="view" hidden><div class="page-heading compact"><div><span class="eyebrow">FIND THE FAILURE</span><h1>Diagnostics<span class="heading-dot">.</span></h1><p class="muted">Check the config, internal listeners, DNS, TLS and server clock.</p></div><button id="run-diagnostics" class="btn primary">Run checks ↗</button></div><article class="panel"><div class="panel-heading"><h2>Health report</h2><span id="diagnostic-summary" class="pill">Not run yet</span></div><div id="diagnostic-list" class="diagnostic-list"><div class="empty"><span>⌁</span><h3>Know where to look.</h3><p>Run a check to see findings and practical fixes.</p></div></div></article><div class="info-banner">These checks run on the VPS. Provider firewall rules and real client connections still need an external test.</div></section>
+        <section id="view-diagnostics" class="view" hidden><div class="page-heading compact">
+<div><h1>Diagnostics</h1></div>
+<button id="run-diagnostics" class="btn primary">Run checks ↗</button>
+</div>
+<article class="panel"><div class="panel-heading">
+<h2>Health report</h2>
+<span id="diagnostic-summary" class="pill">Not run yet</span>
+</div>
+<div id="diagnostic-list" class="diagnostic-list"><div class="empty">
+<span>⌁</span><h3>Know where to look.</h3>
+<p>Run a check to see findings and practical fixes.</p>
+</div></div></article><details class="context-help"><summary>Details</summary><div class="help-content"><div class="info-banner">These checks run on the VPS. Provider firewall rules and real client connections still need an external test.</div></div></details></section>
 
-        <section id="view-recovery" class="view" hidden><div class="page-heading compact"><div><span class="eyebrow">KEEP A RECOVERY COPY</span><h1>Backup &amp; recovery<span class="heading-dot">.</span></h1><p class="muted">Download your Xray profiles and settings before making large changes.</p></div></div><article class="panel form-panel"><h2>Private profile backup</h2><p class="muted">Includes Xray credentials, expiry dates, subscription digests, DNS and transport settings. Keep the JSON somewhere private. SSH users/passwords, TLS keys, web login and Telegram token are excluded.</p><a class="btn primary" href="/panel/api/backup">↓ Download backup JSON</a><div class="info-banner">Restore runs from the root CLI and validates the entire file before replacing profiles. A recovery copy is saved before applying the restore. The current domain is preserved.</div><code>sudo abdulbasit-panelctl restore /root/NOWAY-xray-backup.json</code></article></section>
+        <section id="view-recovery" class="view" hidden><div class="page-heading compact"><div><h1>Backups</h1></div></div>
+<article class="panel form-panel"><h2>Profile backup</h2>
+<details class="context-help"><summary>Details</summary><div class="help-content"><p class="muted">Includes Xray credentials, expiry dates, subscription digests, DNS and transport settings. Keep the JSON somewhere private. SSH users/passwords, TLS keys, web login and Telegram token are excluded.</p></div></details><a class="btn primary" href="/panel/api/backup">↓ Download backup JSON</a><div class="info-banner">Restore runs from the root CLI and validates the entire file before replacing profiles. A recovery copy is saved before applying the restore. The current domain is preserved.</div>
+<code>sudo abdulbasit-panelctl restore /root/NOWAY-xray-backup.json</code></article></section>
         <section id="view-traffic" class="view" hidden>
-          <div class="page-heading compact"><div><span class="eyebrow">MEASURED, NOT ESTIMATED</span><h1>Traffic &amp; connections<span class="heading-dot">.</span></h1><p class="muted">Exact byte totals and unique source IPs of authenticated streams.</p></div><button id="sample-traffic" class="btn primary">Refresh live data ↗</button></div>
-          <div class="stats-grid"><article class="stat"><span class="stat-label">XRAY PAYLOAD</span><strong id="traffic-total">—</strong><span class="muted">Upload + download</span></article><article class="stat"><span class="stat-label">UPLOAD</span><strong id="traffic-up">—</strong><span class="muted">Client → Internet</span></article><article class="stat"><span class="stat-label">DOWNLOAD</span><strong id="traffic-down">—</strong><span class="muted">Internet → client</span></article><article class="stat accent"><span class="stat-label">AUTHENTICATED IPS</span><strong id="online-total">—</strong><span class="muted">Active streams · unique source IPs</span></article></div>
-          <div id="traffic-note" class="info-banner">Target sampling: 5 seconds plus API/restart time. Quotas can overshoot between checks. Core crashes can lose uncheckpointed bytes. SSH byte metering is unavailable. Shared NAT counts as one IP.</div>
-          <article class="panel"><div class="panel-heading"><h2>Profile usage</h2><span id="traffic-sampled" class="small muted">Waiting for a sample</span></div><div class="table-scroll"><table><thead><tr><th>PROFILE</th><th>UPLOAD</th><th>DOWNLOAD</th><th>USED / LIMIT</th><th>STATUS</th></tr></thead><tbody id="traffic-profiles"></tbody></table></div></article>
-          <div class="two-columns live-columns"><article class="panel"><div class="panel-heading"><h2>Authenticated Xray IPs</h2><span class="pill good">CORE API</span></div><div id="authenticated-ips" class="connection-list"><p class="muted">Refresh live data to load activity.</p></div></article><article class="panel"><div class="panel-heading"><h2>Gateway peers</h2><span class="pill">TCP OBSERVATION</span></div><div id="gateway-ips" class="connection-list"><p class="muted">TCP peers alone do not prove account authentication.</p></div></article></div>
+          <div class="page-heading compact">
+<div><h1>Traffic</h1></div>
+<button id="sample-traffic" class="btn primary">Refresh live data ↗</button>
+</div>
+          <div class="stats-grid">
+<article class="stat"><span class="stat-label">XRAY PAYLOAD</span><strong id="traffic-total">—</strong><span class="muted">Upload + download</span></article><article class="stat"><span class="stat-label">UPLOAD</span><strong id="traffic-up">—</strong><span class="muted">Client → Internet</span></article><article class="stat"><span class="stat-label">DOWNLOAD</span><strong id="traffic-down">—</strong><span class="muted">Internet → client</span></article><article class="stat accent"><span class="stat-label">AUTHENTICATED IPS</span><strong id="online-total">—</strong><span class="muted">Active streams · unique source IPs</span></article>
+</div>
+          <details class="context-help"><summary>Details</summary><div class="help-content">
+<div id="traffic-note" class="info-banner">Target sampling: 5 seconds plus API/restart time. Quotas can overshoot between checks. Core crashes can lose uncheckpointed bytes. SSH byte metering is unavailable. Shared NAT counts as one IP.</div>
+          </div></details><article class="panel"><div class="panel-heading">
+<h2>Profile usage</h2>
+<span id="traffic-sampled" class="small muted">Waiting for a sample</span>
+</div>
+<div class="table-scroll"><table>
+<thead><tr>
+<th scope="col">PROFILE</th>
+<th scope="col">UPLOAD</th>
+<th scope="col">DOWNLOAD</th>
+<th scope="col">USED / LIMIT</th>
+<th scope="col">STATUS</th>
+</tr></thead>
+<tbody id="traffic-profiles"></tbody>
+</table></div></article>
+          <div class="two-columns live-columns">
+<article class="panel"><div class="panel-heading">
+<h2>Authenticated Xray IPs</h2>
+<span class="pill good">CORE API</span>
+</div>
+<div id="authenticated-ips" class="connection-list"><p class="muted">Refresh live data to load activity.</p></div></article><article class="panel"><div class="panel-heading">
+<h2>Gateway peers</h2>
+<span class="pill">TCP OBSERVATION</span>
+</div>
+<div id="gateway-ips" class="connection-list"><p class="muted">TCP peers alone do not prove account authentication.</p></div></article>
+</div>
         </section>
         <section id="view-transports" class="view" hidden>
-          <div class="page-heading compact"><div><span class="eyebrow">TRANSPORT WORKBENCH</span><h1>More ways to connect<span class="heading-dot">.</span></h1><p class="muted">An explicit UDP policy and an optional DNS tunnel.</p></div></div>
-          <div class="two-columns"><article class="panel form-panel"><span class="eyebrow">01 / UDP FORWARDING</span><h2>UDP through Xray</h2><p class="muted">Forward client UDP through an authenticated profile. No unauthenticated UDP proxy is opened.</p><div class="setting-line"><span id="udp-state" class="pill">Checking</span><button id="toggle-udp" class="btn primary">Change UDP policy</button></div><p class="small muted">Private-address blocking stays active. Your client must support UDP forwarding.</p><button class="btn" data-view="diagnostics">Check managed listeners ↗</button></article>
-          <article class="panel form-panel"><span class="eyebrow">02 / DNS TUNNEL</span><div class="panel-heading"><h2>SlowDNS · dnstt</h2><span id="slowdns-state" class="pill">Optional core</span></div><p class="muted">Choose SSH, Xray VLESS, or both. Both mode shares one UDP port using separate delegated zones.</p><form id="slowdns-form"><label>Mode<select id="slowdns-mode" name="mode"><option value="ssh">SSH over DNS</option><option value="xray">Xray over DNS · VLESS</option><option value="both">SSH + Xray together</option></select></label><label>Primary tunnel zone<input id="slowdns-zone" name="zone" placeholder="tunnel.example.com" required></label><label id="slowdns-xray-zone-label" hidden>Xray tunnel zone · both mode<input id="slowdns-xray-zone" name="xray_zone" placeholder="xdns.example.com"></label><label>Nameserver hostname<input id="slowdns-ns" name="ns_host" placeholder="ns1.example.com" required></label><label>UDP port<input id="slowdns-port" name="port" type="number" min="1" max="65535" value="53" required></label><label>DNS packet MTU<input id="slowdns-mtu" name="mtu" type="number" min="512" max="1400" value="1232" required></label><div class="action-row"><button class="btn primary" type="submit">Save &amp; enable tunnel →</button><button id="disable-slowdns" type="button" class="btn">Disable</button></div></form><p class="small muted">Xray DNS uses an existing VLESS account with IP cap 0 and no IP block entries. Download its DNS export for the DNSTT client commands.</p><button id="check-slowdns" class="btn">Check delegation / client setup</button><p class="small muted">Public NS delegation needs UDP :53 or an explicit port-forward arrangement. Existing DNS services are kept.</p><div class="command-snippet"><span>Install official core · root terminal</span><code>sudo abdulbasit-panelctl slowdns-install</code></div><pre id="slowdns-result" class="result-box" hidden></pre></article></div>
+          <div class="page-heading compact"><div><h1>DNS tunnels</h1></div></div>
+          <div class="two-columns">
+<article class="panel form-panel"><h2>UDP forwarding</h2>
+<details class="context-help"><summary>Details</summary><div class="help-content">
+<p class="muted">Forward client UDP through an authenticated profile. No unauthenticated UDP proxy is opened.</p>
+<p class="small muted">Private-address blocking stays active. Your client must support UDP forwarding.</p>
+</div></details><div class="setting-line">
+<span id="udp-state" class="pill">Checking</span><button id="toggle-udp" class="btn primary">Change UDP policy</button>
+</div>
+<button class="btn" data-view="diagnostics">Check managed listeners ↗</button></article>
+          <article class="panel form-panel"><div class="panel-heading">
+<h2>DNS tunnel</h2>
+<span id="slowdns-state" class="pill">Optional core</span>
+</div>
+<details class="context-help"><summary>Details</summary><div class="help-content">
+<p class="muted">Choose SSH, Xray VLESS, or both. Both mode shares one UDP port using separate delegated zones.</p>
+<p class="small muted">Xray DNS uses an existing VLESS account with IP cap 0 and no IP block entries. Download its DNS export for the DNSTT client commands.</p>
+<p class="small muted">Public NS delegation needs UDP :53 or an explicit port-forward arrangement. Existing DNS services are kept.</p>
+</div></details><form id="slowdns-form">
+<label>Mode<select id="slowdns-mode" name="mode"><option value="ssh">SSH over DNS</option>
+<option value="xray">Xray over DNS · VLESS</option>
+<option value="both">SSH + Xray together</option></select></label><label>Primary tunnel zone<input id="slowdns-zone" name="zone" placeholder="tunnel.example.com" required></label><label id="slowdns-xray-zone-label" hidden>Xray tunnel zone · both mode<input id="slowdns-xray-zone" name="xray_zone" placeholder="xdns.example.com"></label><label>Nameserver hostname<input id="slowdns-ns" name="ns_host" placeholder="ns1.example.com" required></label><label>UDP port<input id="slowdns-port" name="port" type="number" min="1" max="65535" value="53" required></label><label>DNS packet MTU<input id="slowdns-mtu" name="mtu" type="number" min="512" max="1400" value="1232" required></label><div class="action-row">
+<button class="btn primary" type="submit">Save &amp; enable tunnel →</button><button id="disable-slowdns" type="button" class="btn">Disable</button>
+</div>
+</form>
+<button id="check-slowdns" class="btn">Check delegation / client setup</button><div class="command-snippet">
+<span>Install official core · root terminal</span><code>sudo abdulbasit-panelctl slowdns-install</code>
+</div>
+<pre id="slowdns-result" class="result-box" hidden></pre></article>
+</div>
         </section>
         <section id="view-system" class="view" hidden>
-          <div class="page-heading compact"><div><span class="eyebrow">OPERATIONS DESK</span><h1>Find it. Fix it<span class="heading-dot">.</span></h1><p class="muted">Bounded diagnostics, clear results and deliberate service changes.</p></div><button id="view-config" class="btn">View config · redacted ↗</button></div>
-          <div class="tool-grid"><button id="doctor-inspect" class="tool-card"><span class="tool-icon">⌁</span><strong>Auto-doctor</strong><span>Inspect configs, listeners, TLS and clock</span><b>Run inspection ↗</b></button><button id="doctor-repair" class="tool-card"><span class="tool-icon cyan">↻</span><strong>Repair failed services</strong><span>Validate Nginx, then restart failed managed services</span><b>Review repair →</b></button><button id="restart-managed" class="tool-card"><span class="tool-icon violet">⇄</span><strong>Restart gateway</strong><span>Reconnect clients; retain normal OpenSSH access</span><b>Restart managed →</b></button><button id="memory-report" class="tool-card"><span class="tool-icon amber">▤</span><strong>Memory &amp; retention</strong><span>Inspect reclaimable cache and maintenance controls</span><b>Inspect memory ↗</b></button></div>
-          <div class="two-columns live-columns"><article class="panel form-panel"><span class="eyebrow">LIVE ERROR TEST</span><h2>Service journal</h2><div class="inline-fields"><label>Service<select id="log-service"><option>abdulbasit-xray</option><option>nginx</option><option>abdulbasit-sshd</option><option>dropbear</option><option>abdulbasit-ws</option><option>abdulbasit-dnstt</option><option>abdulbasit-web</option><option>abdulbasit-paneld</option><option>abdulbasit-bot</option></select></label><label>Entries<select id="log-level"><option value="error">Errors only</option><option value="all">Recent entries</option></select></label></div><button id="read-logs" class="btn primary">Read recent journal →</button><p class="small muted">Up to 100 entries. Private links and tokens are redacted.</p></article><article class="panel form-panel"><span class="eyebrow">15-SECOND PACKET TEST</span><h2>Loss &amp; latency</h2><p class="muted">15 ICMP probes from this VPS. This measures latency and loss, not bandwidth.</p><label>Destination<select id="packet-target"><option value="1.1.1.1">Cloudflare · 1.1.1.1</option><option value="8.8.8.8">Google · 8.8.8.8</option></select></label><button id="packet-test" class="btn primary">Run packet test ↗</button><p class="small muted">Allow about 15 seconds. Some networks filter ICMP.</p></article></div>
-          <article class="panel form-panel live-columns"><div class="panel-heading"><div><span class="eyebrow">SSH BANNER</span><h2>Your welcome message</h2></div><button id="load-banner" class="btn small">Load current banner</button></div><form id="banner-form"><label>Managed SSH login banner<textarea id="banner-text" name="text" rows="4" maxlength="2000" placeholder="Load the current banner, then edit."></textarea></label><button id="save-banner" type="submit" class="btn primary" disabled>Save banner →</button></form><p class="small muted">Applies to the selected tunnel backend. OpenSSH reloads its banner; Dropbear restarts.</p></article>
+          <div class="page-heading compact">
+<div><h1>System tools</h1></div>
+<button id="view-config" class="btn">View config · redacted ↗</button>
+</div>
+          <div class="tool-grid">
+<button id="doctor-inspect" class="tool-card" title="Inspect configs, listeners, TLS and clock"><span class="tool-icon">⌁</span><strong>Auto-doctor</strong></button><button id="doctor-repair" class="tool-card" title="Validate Nginx, then restart failed managed services"><span class="tool-icon cyan">↻</span><strong>Repair failed services</strong></button><button id="restart-managed" class="tool-card" title="Reconnect clients; retain normal OpenSSH access"><span class="tool-icon violet">⇄</span><strong>Restart gateway</strong></button><button id="memory-report" class="tool-card" title="Inspect reclaimable cache and maintenance controls"><span class="tool-icon amber">▤</span><strong>Memory &amp; retention</strong></button>
+</div>
+          <div class="two-columns live-columns">
+<article class="panel form-panel"><h2>Service journal</h2>
+<div class="inline-fields">
+<label>Service<select id="log-service"><option>abdulbasit-xray</option>
+<option>nginx</option>
+<option>abdulbasit-sshd</option>
+<option>dropbear</option>
+<option>abdulbasit-ws</option>
+<option>abdulbasit-dnstt</option>
+<option>abdulbasit-web</option>
+<option>abdulbasit-paneld</option>
+<option>abdulbasit-bot</option></select></label><label>Entries<select id="log-level"><option value="error">Errors only</option>
+<option value="all">Recent entries</option></select></label>
+</div>
+<button id="read-logs" class="btn primary">Read recent journal →</button><details class="context-help"><summary>Details</summary><div class="help-content"><p class="small muted">Up to 100 entries. Private links and tokens are redacted.</p></div></details></article><article class="panel form-panel"><h2>Loss &amp; latency</h2>
+<details class="context-help"><summary>Details</summary><div class="help-content">
+<p class="muted">15 ICMP probes from this VPS. This measures latency and loss, not bandwidth.</p>
+<p class="small muted">Allow about 15 seconds. Some networks filter ICMP.</p>
+</div></details><label>Destination<select id="packet-target"><option value="1.1.1.1">Cloudflare · 1.1.1.1</option>
+<option value="8.8.8.8">Google · 8.8.8.8</option></select></label><button id="packet-test" class="btn primary">Run packet test ↗</button></article>
+</div>
+          <article class="panel form-panel live-columns"><div class="panel-heading">
+<div><h2>SSH banner</h2></div>
+<button id="load-banner" class="btn small">Load current banner</button>
+</div>
+<form id="banner-form">
+<label>Managed SSH login banner<textarea id="banner-text" name="text" rows="4" maxlength="2000" placeholder="Load the current banner, then edit."></textarea></label><button id="save-banner" type="submit" class="btn primary" disabled>Save banner →</button>
+</form>
+<details class="context-help"><summary>Details</summary><div class="help-content"><p class="small muted">Applies to the selected tunnel backend. OpenSSH reloads its banner; Dropbear restarts.</p></div></details></article>
         </section>
         <section id="view-maintenance" class="view" hidden>
-          <div class="page-heading compact"><div><span class="eyebrow">OWNER CONTROLS</span><h1>Operate with a way back<span class="heading-dot">.</span></h1><p class="muted">Telegram administration and maintenance from your root terminal.</p></div></div>
-          <div class="two-columns"><article class="panel form-panel"><span class="eyebrow">TELEGRAM BOT MENU</span><h2>Your second control room</h2><p class="muted">Existing Telegram account/service menus and Xray-link retrieval remain available.</p><div class="command-snippet"><span>Set token &amp; Super Admin</span><code>sudo abdulbasit-panelctl configure-bot</code></div><div class="command-snippet"><span>Review administrators</span><code>sudo abdulbasit-panelctl list-admins</code></div><div class="command-snippet"><span>Open the terminal menu</span><code>sudo menu</code></div></article>
-          <article class="panel form-panel"><span class="eyebrow">MEMORY &amp; LOGS</span><h2>Deliberate housekeeping</h2><p class="muted">Linux reclaims caches automatically. Manual cache reclamation may temporarily reduce performance.</p><div class="command-snippet"><span>Inspect memory</span><code>sudo abdulbasit-panelctl maintenance memory</code></div><div class="command-snippet"><span>Reclaim caches · typed confirmation</span><code>sudo abdulbasit-panelctl maintenance memory --reclaim</code></div><div class="command-snippet"><span>System journal retention · 7 days / 256 MiB</span><code>sudo abdulbasit-panelctl maintenance clean-logs</code></div><p class="small muted">Cleanup permanently removes older archived journal entries after confirmation.</p></article>
-          <article class="panel form-panel"><span class="eyebrow">REINSTALL</span><h2>Upgrade with a checkpoint</h2><p class="muted">A private installation archive is saved before running the reviewed, root-owned source checkout.</p><div class="command-snippet"><span>Replace the path with your repository checkout</span><code>sudo abdulbasit-panelctl maintenance reinstall --source /root/secure-vps-panel</code></div><button class="btn" data-view="recovery">Download an Xray snapshot ↗</button></article>
-          <article class="panel form-panel caution-panel"><span class="eyebrow">UNINSTALL</span><h2>Remove the panel carefully</h2><p class="muted">Requires active normal OpenSSH and typed confirmation. Saves a private archive, removes panel services/routes and locks managed SSH users. Keeps configuration, certificates and shared packages.</p><div class="command-snippet"><span>Root terminal only · this website cannot trigger it</span><code>sudo abdulbasit-panelctl maintenance uninstall</code></div></article></div>
+          <div class="page-heading compact"><div><h1>Bot &amp; updates</h1></div></div>
+          <div class="two-columns">
+<article class="panel form-panel"><h2>Telegram bot</h2>
+<details class="context-help"><summary>Details</summary><div class="help-content"><p class="muted">Existing Telegram account/service menus and Xray-link retrieval remain available.</p></div></details><div class="command-snippet">
+<span>Set token &amp; Super Admin</span><code>sudo abdulbasit-panelctl configure-bot</code>
+</div>
+<div class="command-snippet">
+<span>Review administrators</span><code>sudo abdulbasit-panelctl list-admins</code>
+</div>
+<div class="command-snippet">
+<span>Open the terminal menu</span><code>sudo menu</code>
+</div></article>
+          <article class="panel form-panel"><h2>Cleanup</h2>
+<details class="context-help"><summary>Details</summary><div class="help-content">
+<p class="muted">Linux reclaims caches automatically. Manual cache reclamation may temporarily reduce performance.</p>
+<p class="small muted">Cleanup permanently removes older archived journal entries after confirmation.</p>
+</div></details><div class="command-snippet">
+<span>Inspect memory</span><code>sudo abdulbasit-panelctl maintenance memory</code>
+</div>
+<div class="command-snippet">
+<span>Reclaim caches · typed confirmation</span><code>sudo abdulbasit-panelctl maintenance memory --reclaim</code>
+</div>
+<div class="command-snippet">
+<span>System journal retention · 7 days / 256 MiB</span><code>sudo abdulbasit-panelctl maintenance clean-logs</code>
+</div></article>
+          <article class="panel form-panel"><h2>Update panel</h2>
+<details class="context-help"><summary>Details</summary><div class="help-content"><p class="muted">A private installation archive is saved before running the reviewed, root-owned source checkout.</p></div></details><div class="command-snippet">
+<span>Replace the path with your repository checkout</span><code>sudo abdulbasit-panelctl maintenance reinstall --source /root/secure-vps-panel</code>
+</div>
+<button class="btn" data-view="recovery">Download an Xray snapshot ↗</button></article>
+          <article class="panel form-panel caution-panel"><h2>Uninstall</h2>
+<details class="context-help"><summary>Details</summary><div class="help-content"><p class="muted">Requires active normal OpenSSH and typed confirmation. Saves a private archive, removes panel services/routes and locks managed SSH users. Keeps configuration, certificates and shared packages.</p></div></details><div class="command-snippet">
+<span>Root terminal only · this website cannot trigger it</span><code>sudo abdulbasit-panelctl maintenance uninstall</code>
+</div></article>
+</div>
         </section>
       </div>
     </main>
   </div>
 
-  <dialog id="create-dialog"><form id="create-form"><div class="dialog-heading"><div><span class="eyebrow">ACCESS MANAGEMENT</span><h2 id="create-title">New profile</h2></div><button type="button" class="icon-button" data-close="create-dialog" aria-label="Close dialog">×</button></div><label>Account name<input name="name" pattern="[a-z_][a-z0-9_-]{0,30}" maxlength="31" required placeholder="e.g. basit_mobile"></label><label>Validity · days<input name="days" type="number" min="1" max="3650" value="30" required></label><fieldset id="protocol-fields"><legend>Protocols</legend><label class="checkbox"><input name="vless" type="checkbox" checked>VLESS</label><label class="checkbox"><input name="vmess" type="checkbox" checked>VMess</label><label class="checkbox"><input name="trojan" type="checkbox" checked>Trojan</label></fieldset><div id="xray-fields"><label>GB limit · or Unlimited<input name="xray_quota" value="Unlimited" required></label><p id="trial-note" class="small muted" hidden>Expires exactly 24 hours after creation. The core removes access on the next 5-second check (plus API/restart time).</p></div><div id="ssh-fields" hidden><label>SSH password · at least 3 characters<input name="password" type="password" minlength="3" maxlength="128" autocomplete="new-password"></label><label>Concurrent sessions<input name="sessions" type="number" min="1" max="20" value="2"></label><label>SSH traffic limit · GB or Unlimited<input name="ssh_quota" value="Unlimited"></label><p class="small muted">Finite SSH quotas require the metered Dropbear backend.</p></div><label>Unique IP cap · 0 = Unlimited<input name="ips" type="number" min="0" max="20" value="0"></label><p class="small muted">Checks every 5 seconds plus processing time. Xray over-limit profiles pause for 30 seconds; config changes reconnect clients.</p><button type="submit" class="btn primary full">Create account →</button></form></dialog>
-  <dialog id="renew-dialog"><form id="renew-form"><div class="dialog-heading"><h2>Renew account</h2><button type="button" class="icon-button" data-close="renew-dialog" aria-label="Close dialog">×</button></div><p id="renew-name" class="muted"></p><label>Days to add<input name="days" type="number" min="1" max="3650" value="30" required></label><button type="submit" class="btn primary full">Extend validity →</button></form></dialog>
-  <dialog id="confirm-dialog"><form id="confirm-form"><div class="dialog-heading"><h2>Confirm action</h2><button type="button" class="icon-button" data-close="confirm-dialog" aria-label="Close dialog">×</button></div><p id="confirm-message"></p><div class="action-row"><button type="button" class="btn" data-close="confirm-dialog">Cancel</button><button type="submit" class="btn danger">Confirm</button></div></form></dialog>
-  <dialog id="export-dialog" class="export-dialog"><div class="dialog-heading"><div><span class="eyebrow">CLIENT CONNECTIONS</span><h2 id="export-title">Import profile</h2></div><button type="button" class="icon-button" data-close="export-dialog" aria-label="Close dialog">×</button></div><p class="muted">Copy an import link, download individual Xray JSON files, or get the full ZIP bundle.</p><label>Delivery route<select id="export-route"><option value="dns">DNS · local DNSTT client</option><option value="direct">Direct · origin profiles</option><option value="cloudfront">CloudFront · edge TLS</option><option value="bunny">Bunny · edge TLS</option></select></label><div id="ssh-direct-settings" hidden><label>Connection port<select id="ssh-direct-port"><option value="80">80 · HTTP</option><option value="443">443 · TLS</option></select></label><label>Payload path<select id="ssh-direct-path"><option>/cdn-cgi</option><option>/ssh/raw</option><option>/</option></select></label></div><div id="ssh-share-options" hidden><label>Current SSH password · one-time registration for an older account<input id="ssh-share-password" type="password" minlength="3" maxlength="128" autocomplete="off"></label><button id="ssh-share-generate" class="btn">Verify and save current password</button><p class="small muted">New accounts fill their password automatically. Older accounts need their current password once; it is verified locally and encrypted on the server.</p></div><p id="export-warning" class="info-banner" role="status" hidden></p><div id="export-links"></div><button type="button" id="copy-all-links" class="btn full">Copy all links</button><a id="download-zip" class="btn primary full" href="#">↓ Download all · ZIP</a><p class="small muted">Treat these links and files as passwords. Share only with the intended account holder.</p></dialog>
-  <dialog id="subscription-dialog" class="export-dialog"><div class="dialog-heading"><div><span class="eyebrow">LIVE CLIENT UPDATES</span><h2 id="subscription-title">Subscription URL</h2></div><button type="button" class="icon-button" data-close="subscription-dialog" aria-label="Close dialog">×</button></div><p class="muted">The client fetches current eligible profiles from this private URL. Treat it as a password.</p><p id="subscription-note" class="small muted"></p><label>Delivery route<select id="subscription-route"><option value="direct">Direct</option><option value="cloudfront">CloudFront</option><option value="bunny">Bunny</option></select></label><label>Private subscription URL<input id="subscription-url" readonly placeholder="Create a URL to show it here"></label><div id="subscription-formats" class="action-row"></div><div class="action-row"><button id="subscription-rotate" class="btn primary">Create / rotate URL</button><button id="subscription-revoke" class="btn danger">Revoke URL</button><button id="subscription-copy" class="btn" disabled>Copy URL</button><button id="subscription-qr" class="btn" disabled>QR code</button></div><p class="small muted">The URL is shown once and only its hash is stored. Rotation revokes the old URL; downloaded proxy credentials stay unchanged. Disabling or expiring the profile blocks subscription access.</p></dialog>
-  <dialog id="qr-dialog"><div class="dialog-heading"><h2>Scan in your client</h2><button type="button" class="icon-button" data-close="qr-dialog" aria-label="Close dialog">×</button></div><div class="qr-frame"><img id="qr-image" alt="QR code containing the selected private connection link"></div><p class="small muted">Generated locally. No link is sent to an external QR service.</p></dialog>
+  <dialog id="create-dialog"><form id="create-form">
+<div class="dialog-heading">
+<div>
+<span class="eyebrow">ACCESS MANAGEMENT</span><h2 id="create-title">New profile</h2>
+</div>
+<button type="button" class="icon-button" data-close="create-dialog" aria-label="Close dialog">×</button>
+</div>
+<label>Account name<input name="name" pattern="[a-z_][a-z0-9_-]{0,30}" maxlength="31" required placeholder="e.g. basit_mobile"></label><label>Validity · days<input name="days" type="number" min="1" max="3650" value="30" required></label><fieldset id="protocol-fields">
+<legend>Protocols</legend>
+<label class="checkbox"><input name="vless" type="checkbox" checked>VLESS</label><label class="checkbox"><input name="vmess" type="checkbox" checked>VMess</label><label class="checkbox"><input name="trojan" type="checkbox" checked>Trojan</label>
+</fieldset>
+<div id="xray-fields">
+<label>GB limit · or Unlimited<input name="xray_quota" value="Unlimited" required></label><p id="trial-note" class="small muted" hidden>Expires exactly 24 hours after creation. The core removes access on the next 5-second check (plus API/restart time).</p>
+</div>
+<div id="ssh-fields" hidden>
+<label>SSH password · at least 3 characters<input name="password" type="password" minlength="3" maxlength="128" autocomplete="new-password"></label><label>Concurrent sessions<input name="sessions" type="number" min="1" max="20" value="2"></label><label>SSH traffic limit · GB or Unlimited<input name="ssh_quota" value="Unlimited"></label><p class="small muted">Finite SSH quotas require the metered Dropbear backend.</p>
+</div>
+<label>Unique IP cap · 0 = Unlimited<input name="ips" type="number" min="0" max="20" value="0"></label><p class="small muted">Checks every 5 seconds plus processing time. Xray over-limit profiles pause for 30 seconds; config changes reconnect clients.</p>
+<button type="submit" class="btn primary full">Create account →</button>
+</form></dialog>
+  <dialog id="renew-dialog"><form id="renew-form">
+<div class="dialog-heading">
+<h2>Renew account</h2>
+<button type="button" class="icon-button" data-close="renew-dialog" aria-label="Close dialog">×</button>
+</div>
+<p id="renew-name" class="muted"></p>
+<label>Days to add<input name="days" type="number" min="1" max="3650" value="30" required></label><button type="submit" class="btn primary full">Extend validity →</button>
+</form></dialog>
+  <dialog id="confirm-dialog"><form id="confirm-form">
+<div class="dialog-heading">
+<h2>Confirm action</h2>
+<button type="button" class="icon-button" data-close="confirm-dialog" aria-label="Close dialog">×</button>
+</div>
+<p id="confirm-message"></p>
+<div class="action-row">
+<button type="button" class="btn" data-close="confirm-dialog">Cancel</button><button type="submit" class="btn danger">Confirm</button>
+</div>
+</form></dialog>
+  <dialog id="export-dialog" class="export-dialog"><div class="dialog-heading">
+<div>
+<span class="eyebrow">CLIENT CONNECTIONS</span><h2 id="export-title">Import profile</h2>
+</div>
+<button type="button" class="icon-button" data-close="export-dialog" aria-label="Close dialog">×</button>
+</div>
+<p class="muted">Copy an import link, download individual Xray JSON files, or get the full ZIP bundle.</p>
+<label>Delivery route<select id="export-route"><option value="dns">DNS · local DNSTT client</option>
+<option value="direct">Direct · origin profiles</option>
+<option value="cloudfront">CloudFront · edge TLS</option>
+<option value="bunny">Bunny · edge TLS</option></select></label><div id="ssh-direct-settings" hidden>
+<label>Connection port<select id="ssh-direct-port"><option value="80">80 · HTTP</option>
+<option value="443">443 · TLS</option></select></label><label>Payload path<select id="ssh-direct-path"><option>/cdn-cgi</option>
+<option>/ssh/raw</option>
+<option>/</option></select></label>
+</div>
+<div id="ssh-share-options" hidden>
+<label>Current SSH password · one-time registration for an older account<input id="ssh-share-password" type="password" minlength="3" maxlength="128" autocomplete="off"></label><button id="ssh-share-generate" class="btn">Verify and save current password</button><p class="small muted">New accounts fill their password automatically. Older accounts need their current password once; it is verified locally and encrypted on the server.</p>
+</div>
+<p id="export-warning" class="info-banner" role="status" hidden></p>
+<div id="export-links"></div>
+<button type="button" id="copy-all-links" class="btn full">Copy all links</button><a id="download-zip" class="btn primary full" href="#">↓ Download all · ZIP</a><p class="small muted">Treat these links and files as passwords. Share only with the intended account holder.</p></dialog>
+  <dialog id="subscription-dialog" class="export-dialog"><div class="dialog-heading">
+<div>
+<span class="eyebrow">LIVE CLIENT UPDATES</span><h2 id="subscription-title">Subscription URL</h2>
+</div>
+<button type="button" class="icon-button" data-close="subscription-dialog" aria-label="Close dialog">×</button>
+</div>
+<p class="muted">The client fetches current eligible profiles from this private URL. Treat it as a password.</p>
+<p id="subscription-note" class="small muted"></p>
+<label>Delivery route<select id="subscription-route"><option value="direct">Direct</option>
+<option value="cloudfront">CloudFront</option>
+<option value="bunny">Bunny</option></select></label><label>Private subscription URL<input id="subscription-url" readonly placeholder="Create a URL to show it here"></label><div id="subscription-formats" class="action-row"></div>
+<div class="action-row">
+<button id="subscription-rotate" class="btn primary">Create / rotate URL</button><button id="subscription-revoke" class="btn danger">Revoke URL</button><button id="subscription-copy" class="btn" disabled>Copy URL</button><button id="subscription-qr" class="btn" disabled>QR code</button>
+</div>
+<p class="small muted">The URL is shown once and only its hash is stored. Rotation revokes the old URL; downloaded proxy credentials stay unchanged. Disabling or expiring the profile blocks subscription access.</p></dialog>
+  <dialog id="qr-dialog"><div class="dialog-heading">
+<h2>Scan in your client</h2>
+<button type="button" class="icon-button" data-close="qr-dialog" aria-label="Close dialog">×</button>
+</div>
+<div class="qr-frame"><img id="qr-image" alt="QR code containing the selected private connection link"></div>
+<p class="small muted">Generated locally. No link is sent to an external QR service.</p></dialog>
   <dialog id="download-check-dialog" class="export-dialog">
-    <div class="dialog-heading"><h2 id="download-check-title">Download check</h2><button type="button" class="icon-button" data-close="download-check-dialog" aria-label="Close dialog">×</button></div>
+    <div class="dialog-heading">
+<h2 id="download-check-title">Download check</h2>
+<button type="button" class="icon-button" data-close="download-check-dialog" aria-label="Close dialog">×</button>
+</div>
     <p class="muted">Pause this account's downloads, then save its starting counter. Start the test download after the counter is saved. When it finishes, compare. Each reading waits for five seconds without a download-counter change.</p>
     <button type="button" id="download-check-start" class="btn primary">Save starting counter</button>
     <label>Completed file size · exact bytes<input id="download-check-bytes" inputmode="numeric" value="157286400"></label>
@@ -143,7 +529,21 @@
     <div id="download-check-result" role="status"></div>
     <p class="small muted">The increase includes all download payload on this account during the measurement, including application headers. Quota totals are retained.</p>
   </dialog>
-  <dialog id="usage-dialog"><form id="usage-form"><div class="dialog-heading"><h2 id="usage-title">Account limits</h2><button type="button" class="icon-button" data-close="usage-dialog" aria-label="Close dialog">×</button></div><p id="usage-scope" class="small muted"></p><label>Traffic limit · or Unlimited<input id="usage-quota" name="quota" required></label><label>Unit<select id="usage-unit" name="unit"><option value="GB">GB · 1,000,000,000 bytes</option><option value="GiB">GiB · 1,073,741,824 bytes</option></select></label><label>Unique IP cap · 0 = Unlimited<input id="usage-ips" name="ips" type="number" min="0" max="20" value="0" required></label><label id="usage-sessions-label">Concurrent SSH sessions<input id="usage-sessions" name="sessions" type="number" min="1" max="20" value="2"></label><button type="submit" class="btn primary full">Save limits →</button><button id="reset-usage" type="button" class="btn full">Reset measured Xray usage</button></form></dialog>
-  <dialog id="result-dialog" class="export-dialog"><div class="dialog-heading"><div><span class="eyebrow">OPERATION RESULT</span><h2 id="result-title">Result</h2></div><button type="button" class="icon-button" data-close="result-dialog" aria-label="Close dialog">×</button></div><pre id="operation-result" class="result-box"></pre><button id="copy-result" class="btn">Copy result</button></dialog>
+  <dialog id="usage-dialog"><form id="usage-form">
+<div class="dialog-heading">
+<h2 id="usage-title">Account limits</h2>
+<button type="button" class="icon-button" data-close="usage-dialog" aria-label="Close dialog">×</button>
+</div>
+<details class="context-help"><summary>How limits work</summary><div class="help-content"><p id="usage-scope" class="small muted"></p></div></details><label>Traffic limit · or Unlimited<input id="usage-quota" name="quota" required></label><label>Unit<select id="usage-unit" name="unit"><option value="GB">GB · 1,000,000,000 bytes</option>
+<option value="GiB">GiB · 1,073,741,824 bytes</option></select></label><label>Unique IP cap · 0 = Unlimited<input id="usage-ips" name="ips" type="number" min="0" max="20" value="0" required></label><label id="usage-sessions-label">Concurrent SSH sessions<input id="usage-sessions" name="sessions" type="number" min="1" max="20" value="2"></label><button type="submit" class="btn primary full">Save limits →</button><button id="reset-usage" type="button" class="btn full">Reset measured Xray usage</button>
+</form></dialog>
+  <dialog id="result-dialog" class="export-dialog"><div class="dialog-heading">
+<div>
+<span class="eyebrow">OPERATION RESULT</span><h2 id="result-title">Result</h2>
+</div>
+<button type="button" class="icon-button" data-close="result-dialog" aria-label="Close dialog">×</button>
+</div>
+<pre id="operation-result" class="result-box"></pre>
+<button id="copy-result" class="btn">Copy result</button></dialog>
 </body>
 </html>

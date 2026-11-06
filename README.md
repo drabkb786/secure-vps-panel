@@ -1,4 +1,4 @@
-# NOWAY VPS Control Room v4.7.1
+# NOWAY VPS Control Room v4.8.0
 
 [SSH two-value sharing, `/cdn-cgi` aliases and automatic encrypted password retrieval](docs/SSH_SIMPLE_SHARE_4_6_1.md).
 
