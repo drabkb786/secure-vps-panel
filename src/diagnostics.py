@@ -140,6 +140,8 @@ def report(_: dict) -> dict:
         ports.update({p.upper(): value[0] for p, value in PROTOCOLS.items()})
         if settings().get("vless_non_tls_enabled"):
             ports["VLESS Encryption non-TLS"] = 10005
+        if settings().get("dns_tunnel_enabled"):
+            ports["Private VLESS DNS"] = 10006
         if settings().get("xhttp_enabled"):
             ports["VLESS XHTTP"] = 10004
     for name, port in ports.items():

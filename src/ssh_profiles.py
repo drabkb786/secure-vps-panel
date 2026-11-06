@@ -117,7 +117,7 @@ def export(params, lookup):
             "Configure both private edge-origin headers using the provider setup export.\n"
             "No client/mobile reachability or SSH authentication was tested by exporting these files.\n")
     tunnel = slowdns.settings()
-    if tunnel["enabled"]:
+    if tunnel["enabled"] and tunnel.get("mode", "ssh") in {"ssh", "both"}:
         key = read_text(slowdns.PUBLIC_KEY)
         if account.get("max_ips", 0):
             notes.append("This account has an IP limit and cannot use SlowDNS, whose viewer IP is unavailable. Set its IP cap to 0 first.")

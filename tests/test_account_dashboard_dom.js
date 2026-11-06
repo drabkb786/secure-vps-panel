@@ -158,3 +158,20 @@ test('download check refuses a comparison after a reset even when usage grows pa
   assert.match(d.getElementById('notice').textContent,/usage reset/);
   assert.ok(!d.getElementById('download-check-result').textContent.includes('Download increase:'));
 });
+
+test('both DNS mode requires a second zone and submits both routes together', async t => {
+  const app=await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  d.getElementById('slowdns-mode').value='both';
+  d.getElementById('slowdns-mode').dispatchEvent(new app.win.Event('change'));
+  assert.equal(d.getElementById('slowdns-xray-zone-label').hidden,false);
+  assert.equal(d.getElementById('slowdns-xray-zone').required,true);
+  d.getElementById('slowdns-zone').value='ssh.example.com';
+  d.getElementById('slowdns-xray-zone').value='xdns.example.com';
+  d.getElementById('slowdns-ns').value='ns1.example.com';
+  d.getElementById('slowdns-form').dispatchEvent(new app.win.Event('submit',{cancelable:true})); await app.flush();
+  d.getElementById('confirm-form').dispatchEvent(new app.win.Event('submit',{cancelable:true})); await app.flush();
+  const call=app.calls.find(c=>c.data?.command==='slowdns_configure');
+  assert.equal(call.data.params.mode,'both');
+  assert.equal(call.data.params.xray_zone,'xdns.example.com');
+  assert.equal(call.data.params.port,53);
+});

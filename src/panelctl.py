@@ -126,6 +126,8 @@ def parser() -> argparse.ArgumentParser:
     logs = sub.add_parser("logs"); logs.add_argument("--service", default="abdulbasit-xray"); logs.add_argument("--level", choices=["error", "all"], default="error")
     banner = sub.add_parser("set-banner"); banner.add_argument("path", type=Path)
     slow = sub.add_parser("slowdns-enable"); slow.add_argument("--zone", required=True); slow.add_argument("--ns-host", required=True); slow.add_argument("--port", type=int, default=53); slow.add_argument("--mtu", type=int, default=1232)
+    slow.add_argument("--mode", choices=["ssh", "xray", "both"], default=None)
+    slow.add_argument("--xray-zone", default=None)
     udp = sub.add_parser("xray-udp"); udp.add_argument("mode", choices=["on", "off"])
     maintenance = sub.add_parser("maintenance"); maintenance.add_argument("operation", choices=["memory", "clean-logs", "reinstall", "uninstall"]); maintenance.add_argument("--source", type=Path); maintenance.add_argument("--reclaim", action="store_true")
     for action in ("cloudfront-status", "cloudfront-check", "cloudfront-disable"):
@@ -136,7 +138,7 @@ def parser() -> argparse.ArgumentParser:
     setup = sub.add_parser("cloudfront-setup", help="Save private CloudFormation setup ZIP; AWS charges apply")
     setup.add_argument("--output", type=Path, required=True)
     for command in (export, link):
-        command.add_argument("--route", choices=["direct", "cloudfront", "bunny"], default="direct")
+        command.add_argument("--route", choices=["direct", "cloudfront", "bunny", "dns"], default="direct")
     ssh = sub.add_parser("ssh-export")
     ssh.add_argument("username")
     ssh.add_argument("--route", choices=["direct", "bunny", "cloudfront"], default="direct")
@@ -219,7 +221,14 @@ def main() -> int:
         elif args.action == "logs": result = request("live_logs", service=args.service, level=args.level)
         elif args.action == "set-banner": result = request("banner_set", text=args.path.read_text())
         elif args.action in {"slowdns-enable", "slowdns-disable"}:
-            result = request("slowdns_configure", **({"enabled": True, "zone": args.zone, "ns_host": args.ns_host, "port": args.port, "mtu": args.mtu} if args.action == "slowdns-enable" else {"enabled": False}))
+            params = {"enabled": args.action == "slowdns-enable"}
+            if params["enabled"]:
+                params.update(zone=args.zone, ns_host=args.ns_host, port=args.port, mtu=args.mtu)
+                if args.mode is not None:
+                    params["mode"] = args.mode
+                if args.xray_zone is not None:
+                    params["xray_zone"] = args.xray_zone
+            result = request("slowdns_configure", **params)
         elif args.action == "xray-udp":
             result = request("xray_configure", enabled=True, udp_enabled=args.mode == "on")
         elif args.action == "create-user":

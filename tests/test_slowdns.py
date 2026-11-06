@@ -59,11 +59,13 @@ def test_slow_listener_keeps_config_until_ready_or_timeout(dns_manager, monkeypa
     monkeypatch.setattr(slowdns.time, "sleep", lambda delay: now.__setitem__(0, now[0] + delay))
     def run(args, **kw):
         calls.append(args)
+        if "--property=MainPID" in args:
+            return SimpleNamespace(stdout="4321")
         if "-Hlunp" in args and slowdns.RUNTIME_FILE.exists():
             config = json.loads(slowdns.RUNTIME_FILE.read_text())
             assert config["enabled"] and config["zone"] == "tunnel.example.com"
             probes[0] += 1
-            return SimpleNamespace(stdout="dnstt-server" if opens and probes[0] >= 3 else "")
+            return SimpleNamespace(stdout="dnstt-server pid=4321,fd=3" if opens and probes[0] >= 3 else "")
         return SimpleNamespace(stdout="")
     dns_manager.run = run
     params = {"enabled": True, "zone": "tunnel.example.com", "ns_host": "ns1.example.com"}

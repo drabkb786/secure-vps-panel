@@ -704,6 +704,23 @@ def remove_admin(params: dict[str, Any]) -> dict[str, Any]:
 
 XRAY = xray_manager.Manager(run, gateway_apply=lambda: install_nginx_config(validate_domain(read_text(DOMAIN_FILE))))
 SLOWDNS = slowdns.Manager(run)
+
+
+def slowdns_configure(params):
+    old = xray_manager.settings()
+    mode = params.get("mode", slowdns.settings()["mode"])
+    wants_xray = params.get("enabled") is True and mode in {"xray", "both"}
+    if wants_xray and not old["enabled"]:
+        raise ValidationError("Enable the managed Xray core before selecting Xray/both DNS mode")
+    changed = bool(old.get("dns_tunnel_enabled")) != wants_xray
+    if changed:
+        XRAY.configure({"enabled": old["enabled"], "dns_tunnel_enabled": wants_xray})
+    try:
+        return SLOWDNS.configure(params)
+    except Exception:
+        if changed:
+            XRAY.configure({"enabled": old["enabled"], "dns_tunnel_enabled": bool(old.get("dns_tunnel_enabled"))})
+        raise
 OPS = operations.Manager(run, XRAY, service_status, install_nginx_config)
 
 
@@ -757,7 +774,10 @@ def account_connections(params):
         if account is None:
             raise ValidationError("Xray account does not exist")
         ledger = xray_manager.traffic.state()
-        values = ledger.get("ip_totals", {}).get(account["uuid"], {})
+        values = dict(ledger.get("ip_totals", {}).get(account["uuid"], {}))
+        dns_usage = ledger.get("dns_totals", {}).get(account["uuid"], {})
+        if dns_usage:
+            values["unknown"] = {**dns_usage, "protocols": ["vless-dns"]}
         online = set(XRAY.online({}).get("profiles", {}).get(name, []))
         ready = ledger.get("ip_meter_available", False) and not ledger.get("ip_meter_overflow", False)
         protocols = account["protocols"]
@@ -770,7 +790,7 @@ def account_connections(params):
     for address in sorted(addresses, key=lambda ip: (ip not in online, ip not in blocked, ip)):
         value = values.get(address, {})
         rows.append({"ip": address, **account_policy.exact(value), "online": address in online,
-                     "blocked": address in blocked, "usage_available": ready and address in values,
+                     "blocked": address in blocked, "usage_available": (ready or address == "unknown") and address in values,
                      "protocols": value.get("protocols", protocols), "last_seen": value.get("last_seen")})
     return {"kind": kind, "name": name, "connections": rows[offset:offset + limit],
             "total": len(rows), "offset": offset, "has_more": offset + limit < len(rows),
@@ -891,7 +911,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "banner_set": OPS.banner_set,
     "memory_report": OPS.memory,
     "slowdns_status": SLOWDNS.status,
-    "slowdns_configure": SLOWDNS.configure,
+    "slowdns_configure": slowdns_configure,
     "slowdns_check": SLOWDNS.check,
 }
 
