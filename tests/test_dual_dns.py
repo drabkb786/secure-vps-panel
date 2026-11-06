@@ -120,6 +120,13 @@ def test_combined_configuration_rolls_xray_back_when_dns_restart_fails(monkeypat
     assert [c['dns_tunnel_enabled'] for c in calls]==[True,False]
 
 
+def test_invalid_mode_does_not_restart_the_working_xray_core(monkeypatch):
+    monkeypatch.setattr(xray,'settings',lambda:{'enabled':True,'dns_tunnel_enabled':True})
+    monkeypatch.setattr(paneld.XRAY,'configure',lambda _:pytest.fail('Invalid request restarted Xray'))
+    with pytest.raises(ValidationError,match='Choose ssh'):
+        paneld.slowdns_configure({'enabled':True,'mode':[]})
+
+
 def test_dns_export_uses_managed_uuid_and_rejects_ip_limited_accounts(manager,dns_manager):
     atomic_write_json(xray.SETTINGS_FILE,{'enabled':True,'dns_tunnel_enabled':True,'dns':xray.DEFAULT_DNS})
     atomic_write_json(slowdns.SETTINGS_FILE,{'enabled':True,'mode':'both','zone':'ssh.example.com','xray_zone':'xdns.example.com','ns_host':'ns1.example.com'})

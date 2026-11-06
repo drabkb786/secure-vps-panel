@@ -707,9 +707,13 @@ SLOWDNS = slowdns.Manager(run)
 
 
 def slowdns_configure(params):
+    if type(params.get("enabled")) is not bool:
+        raise ValidationError("enabled must be a boolean")
     old = xray_manager.settings()
     mode = params.get("mode", slowdns.settings()["mode"])
-    wants_xray = params.get("enabled") is True and mode in {"xray", "both"}
+    if mode not in ("ssh", "xray", "both"):
+        raise ValidationError("Choose ssh, xray or both DNS tunnel modes")
+    wants_xray = params["enabled"] and mode in ("xray", "both")
     if wants_xray and not old["enabled"]:
         raise ValidationError("Enable the managed Xray core before selecting Xray/both DNS mode")
     changed = bool(old.get("dns_tunnel_enabled")) != wants_xray

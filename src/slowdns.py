@@ -80,7 +80,7 @@ class Manager:
             return self.status({})
         zone = validate_domain(str(params.get("zone", old["zone"])))
         mode = params.get("mode", old["mode"])
-        if mode not in {"ssh", "xray", "both"}:
+        if mode not in ("ssh", "xray", "both"):
             raise ValidationError("Choose ssh, xray or both DNS tunnel modes")
         xray_zone = str(params.get("xray_zone", old["xray_zone"]))
         if mode == "both":
@@ -93,7 +93,7 @@ class Manager:
             raise ValidationError("Nameserver host must be outside the delegated tunnel zone")
         try: port = int(params.get("port", old["port"]))
         except (ValueError, TypeError): raise ValidationError("Invalid UDP port")
-        if port not in range(1, 65536) or port in (80, 443, 109, 447, 2082, 9090, 10006, 53530, 53531):
+        if port not in range(1, 65536) or port in (80, 443, 109, 447, 2082, 9090) or (mode == "both" and port in (53530, 53531)):
             raise ValidationError("Choose a free UDP port, normally 53")
         if not BINARY.is_file():
             raise ValidationError("Install the official dnstt core first: bash scripts/install-dnstt.sh")
