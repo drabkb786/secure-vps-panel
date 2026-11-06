@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -225,6 +226,63 @@ def test_real_dropbear_authenticated_payload_and_ip_policy(tmp_path, monkeypatch
                 assert totals["ips"][address]["download_bytes"] == totals["download_bytes"]
             finally:
                 download.shutdown(); download.server_close()
+            # Download-manager style: eight simultaneous HTTP Range responses
+            # over one authenticated SSH session, without reading a UI baseline.
+            size = 152_000_000
+            segment = size // 8
+            response_headers = []
+            class Ranges(socketserver.BaseRequestHandler):
+                def handle(self):
+                    received = bytearray()
+                    while not received.endswith(b"\r\n\r\n"):
+                        chunk = self.request.recv(4096)
+                        if not chunk:
+                            return
+                        received.extend(chunk)
+                    line = next(line for line in received.decode().split("\r\n") if line.startswith("Range: bytes="))
+                    start, end = map(int, line.removeprefix("Range: bytes=").split("-"))
+                    assert 0 <= start <= end < size
+                    length = end - start + 1
+                    header = f"HTTP/1.1 206 Partial Content\r\nContent-Length: {length}\r\nContent-Range: bytes {start}-{end}/{size}\r\nConnection: close\r\n\r\n".encode()
+                    response_headers.append(len(header))
+                    self.request.sendall(header)
+                    chunk = b"r" * 65536
+                    while length:
+                        sent = min(length, len(chunk)); self.request.sendall(chunk[:sent]); length -= sent
+            ranges = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Ranges)
+            ranges.daemon_threads = True
+            threading.Thread(target=ranges.serve_forever, daemon=True).start()
+            before_ranges = totals["download_bytes"]
+            def get_range(index):
+                start = index * segment; end = (index + 1) * segment - 1
+                channel = limited.open_channel("direct-tcpip", ranges.server_address, ("127.0.0.1", 12400 + index), timeout=5)
+                try:
+                    channel.sendall(f"GET /file HTTP/1.1\r\nHost: localhost\r\nRange: bytes={start}-{end}\r\n\r\n".encode())
+                    response = bytearray()
+                    while not response.endswith(b"\r\n\r\n"):
+                        response.extend(core_tools.read_exact(channel, 1))
+                    remaining = segment
+                    while remaining:
+                        chunk = channel.recv(min(65536, remaining))
+                        assert chunk and chunk == b"r" * len(chunk)
+                        remaining -= len(chunk)
+                    assert channel.recv(1) == b""
+                finally:
+                    channel.close()
+            try:
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    list(pool.map(get_range, range(8)))
+                expected = size + sum(response_headers)
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline:
+                    totals = ssh_meter.state()["accounts"][ssh_id(row)]
+                    if totals["download_bytes"] - before_ranges == expected:
+                        break
+                    time.sleep(.1)
+                assert len(response_headers) == 8
+                assert totals["download_bytes"] - before_ranges == expected
+            finally:
+                ranges.shutdown(); ranges.server_close()
             row.update(quota_gb=.1, quota_unit="GB", quota_enforced=True)
             atomic_write_json(directory / (name + ".json"), row)
             monkeypatch.setattr(session_enforcer, "USERS_DIR", directory)

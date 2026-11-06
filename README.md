@@ -1,4 +1,4 @@
-# NOWAY VPS Control Room v4.6.1
+# NOWAY VPS Control Room v4.7.1
 
 [SSH two-value sharing, `/cdn-cgi` aliases and automatic encrypted password retrieval](docs/SSH_SIMPLE_SHARE_4_6_1.md).
 
@@ -1314,7 +1314,9 @@ The server owner is responsible for:
 
 Account traffic cells show decimal MB/GB, binary MiB/GiB and exact bytes. Quota units do not change traffic display units. A downloader may label 157,286,400 bytes as “150 MB”, which is 150 MiB and 157.2864 decimal MB.
 
-Use the account's **Download check** action. Pause downloads on that account for five seconds, save its starting counter, perform the download, and wait five seconds after traffic stops before comparing. Enter the actual byte size or select the completed local file to read its size without uploading its contents. The comparison uses only the download counter, keeps existing quota totals, and rejects usage resets or recreated accounts.
+Use the account's **Download check** action in Account management or the SSH account row. Pause that account's downloads and save its starting counter. The dialog samples the meter until download bytes remain unchanged for five seconds; start the test only after it confirms the saved counter. When the download finishes, compare. The end reading also waits for five quiet seconds. A reading that keeps changing for 15 seconds is rejected. Enter the actual byte size or select the completed local file to read its size without uploading its contents. The comparison uses only the download counter, keeps existing quota totals, and rejects usage resets or recreated accounts.
+
+SSH, Xray and Traffic views refresh every five seconds while visible. Their quota cells include a separate download counter, binary equivalent, exact bytes and recorded time. The previous SSH view refreshed every 30 seconds, so a number copied from that table during traffic could predate the actual download start. Use the saved starting counter for comparisons. These changes preserve the underlying measured totals; they do not subtract a guessed percentage or backfill historical differences.
 
 These counters measure the account's tunnel payload. HTTP/TLS bytes inside that payload are included. A completed file's size and the account's total download increase are different measurements. Comparing them requires an exact starting byte count and the same account/measurement interval.
 
