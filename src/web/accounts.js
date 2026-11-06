@@ -106,23 +106,26 @@ function renderAccountManagement() {
 $('account-search').addEventListener('input', renderAccountManagement);
 $('account-kind').addEventListener('change', renderAccountManagement);
 $('accounts-refresh').addEventListener('click', () => busy($('accounts-refresh'), async () => { await refresh(); for (const [key, count] of expandedAccounts) { const [kind, name] = key.split(':'); await fetchAccountDetails(kind, name, count); } }));
-setInterval(async () => {
-  if (!csrf || document.visibilityState !== 'visible' || $('view-accounts').hidden || document.querySelector('dialog[open]') || $('account-management').contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
-  try { await refresh(); for (const [key, count] of expandedAccounts) { if (accountDetails.get(key)?.offset) continue; const [kind, name] = key.split(':'); await fetchAccountDetails(kind, name, count); } } catch (_) { /* retain the last sample; normal refresh reports connectivity */ }
-}, 5000);
+async function refreshExpandedAccounts() {
+  for (const [key, count] of expandedAccounts) {
+    if (accountDetails.get(key)?.offset) continue;
+    const [kind, name] = key.split(':'); await fetchAccountDetails(kind, name, count);
+  }
+}
 
 $('ssh-share-generate').addEventListener('click', () => busy($('ssh-share-generate'), async () => {
   if (currentExport?.kind === 'ssh') await exportSSH(currentExport.name, currentExport.route, $('ssh-share-password').value, true, currentExport.port, currentExport.path);
 }));
 $('export-dialog').addEventListener('close', () => { $('ssh-share-password').value = ''; currentExport = null; $('export-links').replaceChildren(); });
 
-let downloadTarget = null, downloadBaseline = null;
+let downloadTarget = null, downloadBaseline = null, downloadCapture = null;
 function openDownloadCheck(kind, name) {
-  downloadTarget = {kind, name}; downloadBaseline = null;
+  downloadTarget = {kind, name}; downloadBaseline = null; downloadCapture = null;
   setText('download-check-title', `Download check · ${name}`);
   $('download-check-file').value = '';
   $('download-check-bytes').value = '157286400';
   $('download-check-result').replaceChildren();
+  setText('download-check-progress', '');
   $('download-check-end').disabled = true;
   $('download-check-start').disabled = false;
   $('download-check-dialog').showModal();
@@ -132,35 +135,61 @@ function showDownloadSnapshot(label, sample) {
   $('download-check-result').append(element('p', 'mono', `${label}: ${bytes} bytes · ${exactSize(bytes)} · ${exactSize(bytes, true)}`),
     element('p', 'small muted', `Sampled ${sample.sampled_at ? new Date(sample.sampled_at).toLocaleString() : 'before first traffic'}`));
 }
-$('download-check-start').addEventListener('click', () => busy($('download-check-start'), async () => {
-  const target = downloadTarget;
-  const sample = await operation('download_snapshot', target);
-  if (downloadTarget !== target) return;
-  downloadBaseline = sample;
-  $('download-check-result').replaceChildren(); showDownloadSnapshot('Before', sample);
-  $('download-check-end').disabled = false;
-}));
+function sameDownloadScope(a, b) {
+  return a.identity === b.identity && a.reset_at === b.reset_at && BigInt(b.download_bytes) >= BigInt(a.download_bytes);
+}
+async function settledDownloadSnapshot(target) {
+  const started = Date.now();
+  let sample = await operation('download_snapshot', target), quietSince = Date.now();
+  while (downloadTarget === target) {
+    setText('download-check-progress', 'Checking the download counter. Keep this account’s downloads paused…');
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (downloadTarget !== target) return null;
+    const next = await operation('download_snapshot', target);
+    if (downloadTarget !== target) return null;
+    if (!sameDownloadScope(sample, next)) { downloadBaseline = null; throw new Error('Account was recreated or usage reset. Start a new measurement.'); }
+    if (next.download_bytes !== sample.download_bytes) quietSince = Date.now();
+    sample = next;
+    if (Date.now() - quietSince >= 5000) return sample;
+    if (Date.now() - started >= 15000) throw new Error('Download bytes are still changing. Pause this account’s downloads, then retry.');
+  }
+  return null;
+}
+async function captureDownload(ending) {
+  if (!downloadTarget || downloadCapture) return;
+  const target = downloadTarget, before = downloadBaseline, capture = {};
+  if (ending && !before) return;
+  const text = $('download-check-bytes').value.trim();
+  if (ending && (!/^[0-9]{1,19}$/.test(text) || BigInt(text) === 0n)) { notify('Enter the exact positive file size in bytes', true); return; }
+  if (!ending) downloadBaseline = null;
+  downloadCapture = capture;
+  $('download-check-start').disabled = true; $('download-check-end').disabled = true;
+  try {
+    const sample = await settledDownloadSnapshot(target);
+    if (!sample || downloadTarget !== target) return;
+    if (!ending) {
+      downloadBaseline = sample;
+      $('download-check-result').replaceChildren(); showDownloadSnapshot('Before', sample);
+      setText('download-check-progress', 'Starting counter saved. Start your test download now.');
+    } else {
+      if (!sameDownloadScope(before, sample)) { downloadBaseline = null; throw new Error('Account was recreated or usage reset. Start a new measurement.'); }
+      const delta = BigInt(sample.download_bytes) - BigInt(before.download_bytes), difference = delta - BigInt(text);
+      $('download-check-result').replaceChildren();
+      showDownloadSnapshot('Before', before); showDownloadSnapshot('After', sample);
+      $('download-check-result').append(element('p', 'mono', `Download increase: ${delta} bytes · ${exactSize(delta)} · ${exactSize(delta, true)}`),
+        element('p', 'mono', `File: ${text} bytes`), element('p', 'mono', `Difference: ${difference > 0n ? '+' : ''}${difference} bytes`));
+      setText('download-check-progress', 'Comparison saved after the download counter stopped changing.');
+    }
+  } catch (err) {
+    if (downloadTarget === target) { setText('download-check-progress', 'Counter was not saved. Retry after pausing downloads.'); notify(err.message || 'Download measurement failed', true); }
+  } finally {
+    if (downloadCapture === capture) { downloadCapture = null; $('download-check-start').disabled = false; $('download-check-end').disabled = !downloadBaseline; }
+  }
+}
+$('download-check-start').addEventListener('click', () => captureDownload(false));
 $('download-check-file').addEventListener('change', () => {
   const file = $('download-check-file').files[0];
   if (file) $('download-check-bytes').value = String(file.size);
 });
-$('download-check-end').addEventListener('click', () => busy($('download-check-end'), async () => {
-  const text = $('download-check-bytes').value.trim();
-  if (!/^[0-9]{1,19}$/.test(text) || BigInt(text) === 0n) throw new Error('Enter the exact positive file size in bytes');
-  const target = downloadTarget, before = downloadBaseline;
-  if (!before) throw new Error('Save a new starting counter first');
-  const after = await operation('download_snapshot', target);
-  if (downloadTarget !== target || downloadBaseline !== before) return;
-  if (after.identity !== before.identity || after.reset_at !== before.reset_at || BigInt(after.download_bytes) < BigInt(before.download_bytes)) {
-    downloadBaseline = null; $('download-check-end').disabled = true;
-    throw new Error('Account was recreated or usage reset. Start a new measurement.');
-  }
-  const delta = BigInt(after.download_bytes) - BigInt(before.download_bytes);
-  const difference = delta - BigInt(text);
-  $('download-check-result').replaceChildren();
-  showDownloadSnapshot('Before', before); showDownloadSnapshot('After', after);
-  $('download-check-result').append(element('p', 'mono', `Download increase: ${delta} bytes · ${exactSize(delta)} · ${exactSize(delta, true)}`),
-    element('p', 'mono', `File: ${text} bytes`),
-    element('p', 'mono', `Difference: ${difference > 0n ? '+' : ''}${difference} bytes`));
-}));
-$('download-check-dialog').addEventListener('close', () => { downloadTarget = null; downloadBaseline = null; });
+$('download-check-end').addEventListener('click', () => captureDownload(true));
+$('download-check-dialog').addEventListener('close', () => { downloadTarget = null; downloadBaseline = null; downloadCapture = null; });

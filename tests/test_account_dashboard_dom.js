@@ -8,8 +8,12 @@ const bytes = (up, down) => ({upload_bytes: up, download_bytes: down, used_bytes
 
 async function dashboard() {
   const dom = new JSDOM(fs.readFileSync(path.join(root, 'src/web/index.html'), 'utf8'), {url:'http://localhost/panel/', runScripts:'outside-only'});
-  const win = dom.window, calls = [];
-  win.setInterval = () => 0;
+  const win = dom.window, calls = [], intervals = [];
+  let clock = Date.now(); win.Date.now = () => clock;
+  const timeout = win.setTimeout.bind(win);
+  win.setTimeout = (callback, milliseconds, ...args) => milliseconds === 1000
+    ? setImmediate(() => { clock += 1000; callback(...args); }) : timeout(callback, milliseconds, ...args);
+  win.setInterval = (callback, milliseconds) => { intervals.push({callback, milliseconds}); return intervals.length; };
   win.HTMLDialogElement.prototype.showModal = function() { this.open = true; };
   win.HTMLDialogElement.prototype.close = function() { this.open = false; this.dispatchEvent(new win.Event('close')); };
   const common = {expiry:'2030-01-01', enabled:true, active:true, quota_gb:50, quota_unit:'GB', quota_bytes:50*B, max_ips:2, blocked_ips:[]};
@@ -39,6 +43,9 @@ async function dashboard() {
       if (data.command === 'set_quota') { ssh.quota_gb = Number(p.quota_gb); ssh.max_ips = p.max_ips; }
       if (data.command === 'download_snapshot') {
         const row = p.kind === 'ssh' ? ssh : profile;
+        if (state.pauseDownloadAt === calls.filter(c=>c.data?.command==='download_snapshot').length) await state.downloadWait;
+        if (state.downloadSamples?.length) Object.assign(row, bytes(row.upload_bytes, state.downloadSamples.shift()));
+        if (state.downloadDrift) Object.assign(row, bytes(row.upload_bytes, row.download_bytes + state.downloadDrift));
         value = {kind:p.kind,name:p.name,identity:p.kind+':'+p.name,reset_at:state.downloadReset || null,
           download_bytes:row.exact_bytes.download_bytes,sampled_at:'2026-11-05T17:00:00Z'};
       }
@@ -48,7 +55,7 @@ async function dashboard() {
   const context = dom.getInternalVMContext();
   for (const name of ['app.js','accounts.js']) new vm.Script(fs.readFileSync(path.join(root,'src/web',name),'utf8'),{filename:name}).runInContext(context);
   for (let i=0;i<6;i++) await tick();
-  return {dom,win,document:win.document,calls,state,flush:async()=>{for(let i=0;i<8;i++)await tick();}};
+  return {dom,win,document:win.document,calls,state,intervals,flush:async()=>{for(let i=0;i<60;i++)await tick();}};
 }
 
 test('real account template expands and paginates IPs without flattening account totals', async t => {
@@ -157,6 +164,73 @@ test('download check refuses a comparison after a reset even when usage grows pa
   d.getElementById('download-check-end').click(); await app.flush();
   assert.match(d.getElementById('notice').textContent,/usage reset/);
   assert.ok(!d.getElementById('download-check-result').textContent.includes('Download increase:'));
+});
+
+test('a delayed 25 MB checkpoint is settled before the starting download counter is saved', async t => {
+  const app = await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  // A browser can show an old 112 MB value while the collector has 25 MB pending.
+  Object.assign(app.state.users[0], bytes(0,112000000));
+  app.state.downloadSamples=[112000000,137000000];
+  [...d.querySelectorAll('#account-management .account-summary button')].find(b=>b.textContent==='Download check').click();
+  d.getElementById('download-check-start').click(); await app.flush();
+  assert.match(d.getElementById('download-check-result').textContent,/Before: 137000000 bytes/);
+  Object.assign(app.state.users[0], bytes(0,289000000));
+  d.getElementById('download-check-bytes').value='152000000';
+  d.getElementById('download-check-end').click(); await app.flush();
+  assert.match(d.getElementById('download-check-result').textContent,/Download increase: 152000000 bytes/);
+  assert.match(d.getElementById('download-check-result').textContent,/Difference: 0 bytes/);
+});
+
+test('download capture refuses a still-changing counter and cancels cleanly when closed', async t => {
+  const app = await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  [...d.querySelectorAll('#account-management .account-summary button')].find(b=>b.textContent==='Download check').click();
+  app.state.downloadDrift=1000000;
+  d.getElementById('download-check-start').click(); await app.flush();
+  assert.match(d.getElementById('notice').textContent,/still changing/);
+  assert.equal(d.getElementById('download-check-end').disabled,true);
+  assert.ok(!d.getElementById('download-check-result').textContent.includes('Before:'));
+  app.state.downloadDrift=0;
+  d.getElementById('download-check-start').click();
+  d.getElementById('download-check-dialog').close(); await app.flush();
+  assert.equal(d.getElementById('download-check-dialog').open,false);
+  assert.equal(d.getElementById('download-check-end').disabled,true);
+});
+
+test('SSH, Xray and traffic views refresh every five seconds and expose directional recorded bytes', async t => {
+  const app = await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  Object.defineProperty(d, 'visibilityState', {value:'visible', configurable:true});
+  assert.equal(app.intervals.length,1);
+  assert.equal(app.intervals[0].milliseconds,5000);
+  for (const name of ['ssh','xray','traffic']) {
+    [...d.querySelectorAll('.nav')].find(n=>n.dataset.view===name).click(); await app.flush();
+    const before=app.calls.filter(c=>c.url.endsWith('state')).length;
+    await app.intervals[0].callback(); await app.flush();
+    assert.equal(app.calls.filter(c=>c.url.endsWith('state')).length,before+1);
+  }
+  assert.match(d.querySelector('#ssh-users .usage-cell').textContent,/Download: 2\.000 GB/);
+  assert.match(d.querySelector('#xray-accounts .usage-cell').textContent,/Download: 25\.000 GB/);
+  app.state.users[0].quota_unit='GiB'; app.state.accounts[0].quota_unit='GiB';
+  d.getElementById('refresh').click(); await app.flush();
+  assert.match(d.querySelector('#ssh-users .usage-cell').textContent,/Download: 2\.000 GB/);
+  assert.match(d.querySelector('#xray-accounts .usage-cell').textContent,/30\.000 GB \/ 50 GiB/);
+  [...d.querySelectorAll('#ssh-users button')].find(b=>b.textContent==='Download check').click();
+  assert.equal(d.getElementById('download-check-dialog').open,true);
+});
+
+test('a late reply from a closed download dialog cannot clear a new measurement', async t => {
+  const app = await dashboard(); t.after(()=>app.dom.window.close()); const d=app.document;
+  const open=()=>[...d.querySelectorAll('#account-management .account-summary button')].find(b=>b.textContent==='Download check').click();
+  let release; app.state.downloadWait=new Promise(resolve=>{release=resolve;}); app.state.pauseDownloadAt=2;
+  open(); d.getElementById('download-check-start').click();
+  for (let i=0;i<20 && app.calls.filter(c=>c.data?.command==='download_snapshot').length<2;i++) await tick();
+  assert.equal(app.calls.filter(c=>c.data?.command==='download_snapshot').length,2);
+  d.getElementById('download-check-dialog').close();
+  open(); d.getElementById('download-check-start').click(); await app.flush();
+  app.state.downloadReset='late-old-reply'; release(); await app.flush();
+  app.state.downloadReset=null;
+  Object.assign(app.state.users[0],bytes(B,2*B+157286400));
+  d.getElementById('download-check-end').click(); await app.flush();
+  assert.match(d.getElementById('download-check-result').textContent,/Difference: 0 bytes/);
 });
 
 test('both DNS mode requires a second zone and submits both routes together', async t => {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.7.1 — Fresh download baselines and consistent usage views
+
+- Refresh visible SSH, Xray, Traffic and account usage every five seconds through one polling loop. The legacy SSH view previously waited 30 seconds. Retain the slower polling rate for other administration views.
+- Show directional download bytes and their recorded time in SSH/Xray quota cells. Use exact decimal traffic values independently of quota units, with binary equivalents retained.
+- Automatically wait for five seconds of unchanged download bytes before saving either comparison reading. Reject continuing traffic, account replacement and resets; cancel a closed dialog without saving a stale result.
+- Extend real Dropbear acceptance with eight parallel HTTP Range downloads totalling 152,000,000 body bytes and exact response-header accounting. Preserve existing quota totals and integer counter baselines.
+
 ## 4.7.0 — Concurrent SSH and Xray DNS tunnels
 
 - Add SSH, Xray VLESS, and simultaneous modes to the existing DNSTT settings and CLI. Preserve legacy SSH zones and keys.

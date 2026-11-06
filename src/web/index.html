@@ -133,12 +133,13 @@
   <dialog id="qr-dialog"><div class="dialog-heading"><h2>Scan in your client</h2><button type="button" class="icon-button" data-close="qr-dialog" aria-label="Close dialog">×</button></div><div class="qr-frame"><img id="qr-image" alt="QR code containing the selected private connection link"></div><p class="small muted">Generated locally. No link is sent to an external QR service.</p></dialog>
   <dialog id="download-check-dialog" class="export-dialog">
     <div class="dialog-heading"><h2 id="download-check-title">Download check</h2><button type="button" class="icon-button" data-close="download-check-dialog" aria-label="Close dialog">×</button></div>
-    <p class="muted">Pause this account's downloads and wait five seconds before saving the starting counter. After your test download finishes, wait five seconds and compare.</p>
+    <p class="muted">Pause this account's downloads, then save its starting counter. Start the test download after the counter is saved. When it finishes, compare. Each reading waits for five seconds without a download-counter change.</p>
     <button type="button" id="download-check-start" class="btn primary">Save starting counter</button>
     <label>Completed file size · exact bytes<input id="download-check-bytes" inputmode="numeric" value="157286400"></label>
     <label>Or select the completed file<input id="download-check-file" type="file"></label>
     <p class="small muted">Only the local file size is read. 150 MiB = 157,286,400 bytes = 157.2864 MB.</p>
     <button type="button" id="download-check-end" class="btn" disabled>Compare download counter</button>
+    <p id="download-check-progress" class="small muted" role="status"></p>
     <div id="download-check-result" role="status"></div>
     <p class="small muted">The increase includes all download payload on this account during the measurement, including application headers. Quota totals are retained.</p>
   </dialog>
