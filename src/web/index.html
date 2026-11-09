@@ -51,6 +51,7 @@
 <div class="nav-group">
 <span class="nav-group-label">CONNECTIONS</span><button class="nav" data-view="ssh"><svg class="ui-icon" aria-hidden="true"><use href="#icon-terminal"></use></svg><span class="nav-title">SSH</span></button>
         <button class="nav" data-view="xray"><svg class="ui-icon" aria-hidden="true"><use href="#icon-shield"></use></svg><span class="nav-title">Xray</span><span class="nav-count" id="nav-profiles">0</span></button>
+        <button class="nav" data-view="xray-dns"><svg class="ui-icon" aria-hidden="true"><use href="#icon-route"></use></svg><span class="nav-title">Xray DNS</span></button>
         <button class="nav" data-view="transports"><svg class="ui-icon" aria-hidden="true"><use href="#icon-route"></use></svg><span class="nav-title">DNS tunnels</span></button>
         <button class="nav" data-view="network"><svg class="ui-icon" aria-hidden="true"><use href="#icon-globe"></use></svg><span class="nav-title">DNS &amp; SSL</span></button>
         <button class="nav" data-view="cloudfront"><svg class="ui-icon" aria-hidden="true"><use href="#icon-layers"></use></svg><span class="nav-title">CDN</span></button>
@@ -207,6 +208,17 @@
 <tbody id="xray-accounts"></tbody>
 </table></div></article></section>
 
+        <section id="view-xray-dns" class="view" hidden>
+          <div class="page-heading compact"><div><h1>Xray over DNS</h1><p class="muted">Separate VLESS-over-DNSTT exports for NetMod and compatible clients.</p></div><button id="create-xray-dns" class="btn primary">New DNS VLESS</button></div>
+          <article class="panel form-panel"><div class="panel-heading"><h2>DNS transport status</h2><span id="xray-dns-state" class="pill">Checking</span></div>
+            <p id="xray-dns-note" class="muted"></p>
+            <p class="small muted">Configured server Xray DNS: <strong id="xray-dns-resolver">Checking</strong>. The exported DNSTT client uses <strong>8.8.8.8:53</strong>; NetMod needs DNSTT running before importing local VLESS.</p>
+            <div class="action-row"><button id="xray-dns-google" class="btn primary">Apply Google DNS · 8.8.8.8</button><button class="btn" data-view="transports">Configure DNS tunnel</button><button class="btn" data-view="network">Server DNS settings</button></div>
+          </article>
+          <article class="panel actions-panel"><div class="panel-heading"><h2>VLESS DNS accounts</h2></div>
+            <div class="table-scroll actions-table"><table><thead><tr><th scope="col">PROFILE</th><th scope="col">STATUS</th><th scope="col">IP POLICY</th><th scope="col">DNS EXPORT</th></tr></thead><tbody id="xray-dns-accounts"></tbody></table></div>
+          </article>
+        </section>
         <section id="view-cloudfront" class="view" hidden>
           <div class="page-heading compact">
 <div><h1>CDN delivery</h1></div>
@@ -262,8 +274,8 @@
 <p class="muted">Used by Xray and included in generated client JSON files. Does not replace the VPS system resolver.</p>
 <p class="small muted">Accepts 1–4 IP addresses or HTTPS DoH URLs, such as https://cloudflare-dns.com/dns-query. No public recursive DNS listener is opened.</p>
 </div></details><form id="dns-form">
-<label>DNS servers · one per line<textarea id="dns-servers" name="servers" rows="4" required placeholder="1.1.1.1
-8.8.8.8"></textarea></label><label>IP strategy<select id="dns-strategy" name="strategy"><option value="UseIPv4">IPv4 only · recommended for IPv4 VPS</option>
+<label>DNS servers · one per line<textarea id="dns-servers" name="servers" rows="4" required placeholder="8.8.8.8
+8.8.4.4"></textarea></label><label>IP strategy<select id="dns-strategy" name="strategy"><option value="UseIPv4">IPv4 only · recommended for IPv4 VPS</option>
 <option value="UseIP">IPv4 + IPv6</option>
 <option value="UseIPv6">IPv6 only</option></select></label><button type="submit" class="btn primary">Apply resolvers →</button>
 </form></article>

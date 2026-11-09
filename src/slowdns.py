@@ -61,7 +61,7 @@ class Manager:
             local = 7000 if kind == "ssh" else 7001
             tunnels[kind] = {"zone": zone, "public_key": key, "local_port": local,
                 "upstream": "127.0.0.1:109" if kind == "ssh" else "127.0.0.1:10006",
-                "udp_command": f"dnstt-client -udp YOUR_DNS_RESOLVER:53 -pubkey {key} {zone} 127.0.0.1:{local}",
+                "udp_command": f"dnstt-client -udp 8.8.8.8:53 -pubkey {key} {zone} 127.0.0.1:{local}",
                 "doh_command": f"dnstt-client -doh https://dns.google/dns-query -pubkey {key} {zone} 127.0.0.1:{local}",
                 "dot_command": f"dnstt-client -dot dns.google:853 -pubkey {key} {zone} 127.0.0.1:{local}"}
         return {**config, "installed": BINARY.is_file(), "public_key": key, "tunnels": tunnels,
@@ -179,7 +179,7 @@ class Manager:
         delegated = bool(checks) and all(x["ok"] for x in checks)
         return {**data, "records": sorted(set(records)), "authoritative_checks": checks,
                 "nameserver_addresses": addresses, "dns_ok": delegated and bool(addresses),
-                "client_command": f"dnstt-client -udp YOUR_DNS_RESOLVER:53 -pubkey {data['public_key']} {data['zone']} 127.0.0.1:7000",
+                "client_command": f"dnstt-client -udp 8.8.8.8:53 -pubkey {data['public_key']} {data['zone']} 127.0.0.1:7000",
                 "ssh_command": "ssh -p 7000 YOUR_MANAGED_SSH_USER@127.0.0.1",
                 "hint": ("Parent NS delegation and nameserver address found. Compare its IP with this VPS and test a real client externally; UDP reachability is not proven." if delegated and addresses else
                          f"Set {data['ns_host']} A/AAAA to this VPS and delegate {data['zone']} with an NS record. Parent authorities must agree.")}
