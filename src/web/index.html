@@ -212,8 +212,8 @@
           <div class="page-heading compact"><div><h1>Xray over DNS</h1><p class="muted">Separate VLESS-over-DNSTT exports for NetMod and compatible clients.</p></div><button id="create-xray-dns" class="btn primary">New DNS VLESS</button></div>
           <article class="panel form-panel"><div class="panel-heading"><h2>DNS transport status</h2><span id="xray-dns-state" class="pill">Checking</span></div>
             <p id="xray-dns-note" class="muted"></p>
-            <p class="small muted">Resolver: <strong>8.8.8.8:53</strong> (Google), fallback 8.8.4.4. Server-side Xray resolvers are configured separately in DNS &amp; SSL. NetMod needs DNSTT running before importing local VLESS.</p>
-            <div class="action-row"><button class="btn" data-view="transports">Configure DNS tunnel</button><button class="btn" data-view="network">Server DNS settings</button></div>
+            <p class="small muted">Configured server Xray DNS: <strong id="xray-dns-resolver">Checking</strong>. The exported DNSTT client uses <strong>8.8.8.8:53</strong>; NetMod needs DNSTT running before importing local VLESS.</p>
+            <div class="action-row"><button id="xray-dns-google" class="btn primary">Apply Google DNS · 8.8.8.8</button><button class="btn" data-view="transports">Configure DNS tunnel</button><button class="btn" data-view="network">Server DNS settings</button></div>
           </article>
           <article class="panel actions-panel"><div class="panel-heading"><h2>VLESS DNS accounts</h2></div>
             <div class="table-scroll actions-table"><table><thead><tr><th scope="col">PROFILE</th><th scope="col">STATUS</th><th scope="col">IP POLICY</th><th scope="col">DNS EXPORT</th></tr></thead><tbody id="xray-dns-accounts"></tbody></table></div>
