@@ -67,7 +67,7 @@ function view(name) {
     const active = n.dataset.view === name; n.classList.toggle('active', active);
     if (active) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
   });
-  setText('breadcrumb', {accounts: 'Accounts', overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', network: 'DNS & SSL', cloudfront: 'CDN', diagnostics: 'Diagnostics', recovery: 'Backups', traffic: 'Traffic', transports: 'DNS tunnels', system: 'Tools', maintenance: 'Bot & updates'}[name]);
+  setText('breadcrumb', {accounts: 'Accounts', overview: 'Overview', ssh: 'SSH accounts', xray: 'Xray profiles', 'xray-dns': 'Xray DNS', network: 'DNS & SSL', cloudfront: 'CDN', diagnostics: 'Diagnostics', recovery: 'Backups', traffic: 'Traffic', transports: 'DNS tunnels', system: 'Tools', maintenance: 'Bot & updates'}[name]);
 }
 function setSidebar(open) {
   const toggle = $('menu-toggle');
@@ -195,7 +195,7 @@ function render() {
     detail.append(element('strong', '', endpoint.protocol.toUpperCase()), element('p', '', `${endpoint.transport.toUpperCase()}  /  ${endpoint.path}`));
     row.append(element('span', 'protocol-symbol', ['V', 'M', 'T', 'X'][i] || 'X'), detail, pill(s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'Ready' : 'Offline', s.network.enabled && s.services['abdulbasit-xray'] === 'active' ? 'good' : '')); protocols.append(row);
   }
-  profileRows('overview-profiles', s.accounts.slice(0, 4), false); renderProfiles(); renderTraffic();
+  profileRows('overview-profiles', s.accounts.slice(0, 4), false); renderProfiles(); renderXrayDNS(); renderTraffic();
   setText('ssh-note', (s.traffic?.ssh_available ? 'SSH channel payload metering is active. Quotas/IP checks are sampled every 5 seconds.' : 'Activate the metered Dropbear backend for SSH payload usage and finite GB quotas.') + ' Unknown sources cannot use an IP-limited account.');
   const users = $('ssh-users'); users.replaceChildren();
   if (!s.users.length) emptyRow(users, 5, 'No SSH accounts yet. Create an account to grant access.');
@@ -243,7 +243,15 @@ function openCreate(mode, trial = false) {
   $('xray-fields').hidden = mode === 'ssh'; $('trial-note').hidden = !trial;
   $('create-form').elements.days.disabled = trial;
   if (trial) { $('create-form').elements.days.value = 1; $('create-form').elements.xray_quota.value = '1'; }
-  setText('create-title', mode === 'ssh' ? 'New SSH account' : trial ? '24-hour Xray trial' : 'New VIP profile'); $('create-dialog').showModal();
+  const dns = mode === 'xray_dns';
+  $('create-form').elements.ips.readOnly = dns;
+  if (dns) {
+    $('create-form').elements.vless.checked = true;
+    $('create-form').elements.vmess.checked = false;
+    $('create-form').elements.trojan.checked = false;
+    $('create-form').elements.ips.value = '0';
+  }
+  setText('create-title', mode === 'ssh' ? 'New SSH account' : dns ? 'New Xray DNS VLESS' : trial ? '24-hour Xray trial' : 'New VIP profile'); $('create-dialog').showModal();
 }
 function openRenew(type, name) { renewTarget = {type, name}; setText('renew-name', name); $('renew-form').reset(); $('renew-dialog').showModal(); }
 function confirmAction(message) {
@@ -302,6 +310,10 @@ async function exportProfile(name, route = 'direct') {
     textFile.href = API + `export?name=${encodeURIComponent(name)}&route=${encodeURIComponent(route)}&format=link&protocol=${encodeURIComponent(protocol)}`;
     item.append(textFile, button('QR code', () => showQR(link), 'btn small')); container.append(item);
   });
+  if (route === 'dns' && result.files['netmod-setup.txt']) {
+    container.append(button('↓ NetMod DNS setup · 8.8.8.8', () =>
+      downloadText(result.files['netmod-setup.txt'], 'netmod-setup.txt'), 'btn small'));
+  }
   for (const [suffix, label] of [['singbox.json', 'sing-box JSON'], ['clash.yaml', 'Clash.Meta YAML']]) {
     const content = result.files[`${name}-${suffix}`];
     if (content) container.append(button(`↓ ${label}`, () => downloadText(content, `${name}-${suffix}`), 'btn small'));
@@ -340,6 +352,7 @@ function bindForm(id, handler) {
 document.querySelectorAll('[data-view]').forEach(btn => btn.addEventListener('click', () => view(btn.dataset.view)));
 document.querySelectorAll('[data-new]').forEach(btn => btn.addEventListener('click', () => openCreate(btn.dataset.new)));
 document.querySelectorAll('[data-trial]').forEach(btn => btn.addEventListener('click', () => openCreate('xray', true)));
+$('create-xray-dns').addEventListener('click', () => openCreate('xray_dns'));
 document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => $(btn.dataset.close).close()));
 $('confirm-dialog').addEventListener('close', () => { if (confirmResolve) { confirmResolve(false); confirmResolve = null; } });
 $('confirm-form').addEventListener('submit', event => { event.preventDefault(); const resolve = confirmResolve; confirmResolve = null; $('confirm-dialog').close(); if (resolve) resolve(true); });
@@ -380,9 +393,13 @@ bindForm('login-form', async data => {
 bindForm('create-form', async data => {
   const name = data.get('name'), days = trialMode ? 1 : Number(data.get('days'));
   const params = createMode === 'ssh' ? {username: name, days, password: data.get('password'), max_sessions: Number(data.get('sessions')), quota_gb: data.get('ssh_quota') || 'Unlimited', max_ips: Number(data.get('ips'))} : {name, days, trial: trialMode, quota_gb: data.get('xray_quota'), max_ips: Number(data.get('ips')), protocols: ['vless', 'vmess', 'trojan'].filter(p => data.has(p))};
+  if (createMode === 'xray_dns') { params.protocols = ['vless']; params.max_ips = 0; }
   await command(createMode === 'ssh' ? 'create_user' : 'xray_create', params, 'Account created'); $('create-dialog').close();
   if (createMode === 'ssh') await exportSSH(name);
-  if (createMode === 'xray') { view('xray'); await exportProfile(name); }
+  if (createMode === 'xray' || createMode === 'xray_dns') {
+    view(createMode === 'xray_dns' ? 'xray-dns' : 'xray');
+    await exportProfile(name, createMode === 'xray_dns' ? 'dns' : 'direct');
+  }
 });
 bindForm('renew-form', async data => {
   await command(renewTarget.type === 'ssh' ? 'renew_user' : 'xray_update', renewTarget.type === 'ssh' ? {username: renewTarget.name, days: Number(data.get('days'))} : {name: renewTarget.name, action: 'renew', days: Number(data.get('days'))}, 'Validity extended'); $('renew-dialog').close();
@@ -427,6 +444,31 @@ function renderProfiles() {
   if (!state) return;
   const search = $('profile-search').value.trim().toLowerCase(), filter = $('profile-filter').value;
   profileRows('xray-accounts', state.accounts.filter(row => row.name.includes(search) && (filter === 'all' || filter === 'active' && row.active || filter === 'locked' && row.enabled === false || filter === 'trial' && row.trial || filter === 'quota' && row.quota_exhausted)), true);
+}
+function renderXrayDNS() {
+  if (!state) return;
+  const tunnel = state.slowdns || {};
+  const ready = state.network.enabled && state.network.dns_tunnel_enabled &&
+    tunnel.enabled && (tunnel.mode === 'xray' || tunnel.mode === 'both') &&
+    state.services['abdulbasit-dnstt'] === 'active' && state.services['abdulbasit-xray'] === 'active';
+  setText('xray-dns-state', ready ? 'Local services ready' : 'Setup required');
+  setText('xray-dns-note', ready
+    ? 'Core and DNS services are active. Actual Jazz resolver reachability and working browsing still need a client transfer test.'
+    : 'Enable Xray, then Xray/both DNS mode under DNS tunnels; verify delegated NS records and public UDP 53 before exporting.');
+  const body = $('xray-dns-accounts'); body.replaceChildren();
+  const rows = state.accounts.filter(row => row.protocols.includes('vless'));
+  if (!rows.length) { emptyRow(body, 4, 'No VLESS accounts. Create a DNS VLESS profile above.'); return; }
+  rows.forEach(row => {
+    const allowed = row.active && !row.max_ips && !(row.blocked_ips || []).length;
+    const tr = element('tr');
+    tr.append(element('td', 'mono', row.name));
+    const status = element('td'); status.append(pill(profileStatus(row), row.active ? 'good' : 'warn'));
+    tr.append(status, element('td', 'small muted',
+      row.max_ips || (row.blocked_ips || []).length ? 'Remove IP cap / block list' : 'Unlimited · DNS compatible'));
+    const action = element('td'), exportButton = button('DNS link / ZIP ↗', () => exportProfile(row.name, 'dns'), 'btn small');
+    exportButton.disabled = !ready || !allowed;
+    action.append(exportButton); tr.append(action); body.append(tr);
+  });
 }
 function renderTraffic() {
   const rows = state.accounts, up = rows.reduce((n, r) => n + (r.upload_bytes || 0), 0), down = rows.reduce((n, r) => n + (r.download_bytes || 0), 0);
