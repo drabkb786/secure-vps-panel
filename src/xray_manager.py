@@ -50,7 +50,7 @@ BACKUP_DIR = BASE_DIR / "backups"
 DNS_PORT = 10006
 XHTTP_PORT, XHTTP_PATH = 10004, "/xhttp/"
 PROTOCOLS = {"vless": (10001, "/vless"), "vmess": (10002, "/vmess"), "trojan": (10003, "/trojan")}
-DEFAULT_DNS = {"servers": ["1.1.1.1", "8.8.8.8"], "query_strategy": "UseIPv4"}
+DEFAULT_DNS = {"servers": ["8.8.8.8", "8.8.4.4"], "query_strategy": "UseIPv4"}
 MAX_ACCOUNTS = 200
 
 
@@ -629,7 +629,9 @@ class Manager:
         info = tunnel["tunnels"]["xray"]
         if not info["public_key"]:
             raise ValidationError("DNSTT public key is missing")
+        # The exported client needs its own resolvers; server DNS settings are separate.
         client = {"log": {"loglevel": "warning"},
+            "dns": {"servers": ["8.8.8.8", "8.8.4.4"], "queryStrategy": "UseIPv4"},
             "inbounds": [{"listen": "127.0.0.1", "port": 10808, "protocol": "socks", "settings": {"auth": "noauth", "udp": True}}],
             "outbounds": [{"protocol": "vless", "settings": {"vnext": [{"address": "127.0.0.1", "port": 7001,
                 "users": [{"id": row["uuid"], "encryption": "none"}]}]}, "streamSettings": {"network": "raw", "security": "none"}}]}
@@ -637,12 +639,15 @@ class Manager:
         setup = (f"Tunnel zone: {info['zone']}\nPublic key: {info['public_key']}\n"
                  f"Start one DNSTT client (UDP / DoH / DoT):\n{info['udp_command']}\n{info['doh_command']}\n{info['dot_command']}\n\n"
                  "Keep the DNSTT client running, then import the local VLESS link/JSON. An ordinary VLESS app needs the separate DNSTT client.\n"
+                 "NetMod: select a DNSTT mode capable of carrying Xray/VLESS, resolver 8.8.8.8:53, and use the tunnel zone/public key above.\n"
+                 "The VLESS direct link points to 127.0.0.1:7001 on the DEVICE, not the VPS. Importing VLESS alone does not start DNSTT.\n"
+                 "Enable Android VPN/tunnel routing and configure 8.8.8.8 as primary DNS (8.8.4.4 fallback) so web browsing can resolve hosts.\n"
                  "Local ports: DNSTT 7001; Xray SOCKS 10808. SSH DNSTT can run separately on local port 7000.\n"
                  "Account byte quota, expiry and lock still apply. Viewer IP is unavailable. External resolver reachability needs a client test.\n")
         return {"name": name, "route": "dns", "links": {"vless": link},
-            "files": {f"{name}-vless-dns.json": json.dumps(client, indent=2) + "\n", "dnstt-client.txt": setup, "links.txt": link + "\n"},
+            "files": {f"{name}-vless-dns.json": json.dumps(client, indent=2) + "\n", "dnstt-client.txt": setup, "netmod-setup.txt": setup + "\nLocal VLESS import (only after DNSTT starts):\n" + link + "\n", "links.txt": link + "\n"},
             "dnstt": info, "readiness": {"core_ready": self.health_probe(), "public_reachability": "not_checked",
-                "warnings": ["Start the DNSTT client on 127.0.0.1:7001 before importing this VLESS profile. Download the ZIP for UDP/DoH/DoT commands."]}}
+                "warnings": ["Start DNSTT on 127.0.0.1:7001 with DNS resolver 8.8.8.8:53 before importing VLESS. The VLESS link is not a standalone DNS tunnel.", "Enable VPN DNS routing in NetMod; public Jazz reachability and actual browsing must be verified from a phone."]}}
 
     def subscription_rotate(self, params: dict) -> dict:
         name = validate_username(str(params.get("name", "")))
