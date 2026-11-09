@@ -353,6 +353,11 @@ document.querySelectorAll('[data-view]').forEach(btn => btn.addEventListener('cl
 document.querySelectorAll('[data-new]').forEach(btn => btn.addEventListener('click', () => openCreate(btn.dataset.new)));
 document.querySelectorAll('[data-trial]').forEach(btn => btn.addEventListener('click', () => openCreate('xray', true)));
 $('create-xray-dns').addEventListener('click', () => openCreate('xray_dns'));
+$('xray-dns-google').addEventListener('click', () => busy($('xray-dns-google'), async () => {
+  if (await confirmAction('Apply 8.8.8.8 and 8.8.4.4 to the SERVER Xray core? The core will restart, briefly reconnecting clients. This does not configure phone-side DNS or NS delegation.')) {
+    await command('dns_set', {servers: ['8.8.8.8', '8.8.4.4'], query_strategy: 'UseIPv4'}, 'Google DNS applied to Xray');
+  }
+}));
 document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => $(btn.dataset.close).close()));
 $('confirm-dialog').addEventListener('close', () => { if (confirmResolve) { confirmResolve(false); confirmResolve = null; } });
 $('confirm-form').addEventListener('submit', event => { event.preventDefault(); const resolve = confirmResolve; confirmResolve = null; $('confirm-dialog').close(); if (resolve) resolve(true); });
@@ -451,6 +456,10 @@ function renderXrayDNS() {
   const ready = state.network.enabled && state.network.dns_tunnel_enabled &&
     tunnel.enabled && (tunnel.mode === 'xray' || tunnel.mode === 'both') &&
     state.services['abdulbasit-dnstt'] === 'active' && state.services['abdulbasit-xray'] === 'active';
+  const resolvers = state.network.dns?.servers || [];
+  setText('xray-dns-resolver', resolvers.join(', ') || 'Not configured');
+  $('xray-dns-google').disabled = !state.network.enabled ||
+    (resolvers.length === 2 && resolvers[0] === '8.8.8.8' && resolvers[1] === '8.8.4.4');
   setText('xray-dns-state', ready ? 'Local services ready' : 'Setup required');
   setText('xray-dns-note', ready
     ? 'Core and DNS services are active. Actual Jazz resolver reachability and working browsing still need a client transfer test.'
