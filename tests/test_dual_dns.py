@@ -85,6 +85,7 @@ def test_both_mode_preserves_existing_key_and_saves_two_zones(dns_manager):
     assert result['tunnels']['ssh']['zone'] == 'tunnel.example.com'
     assert result['tunnels']['xray']['local_port'] == 7001
     assert 'https://dns.google/dns-query' in result['tunnels']['xray']['doh_command']
+    assert '-udp 8.8.8.8:53' in result['tunnels']['xray']['udp_command']
     assert slowdns.PRIVATE_KEY.read_text() == 'existing-key'
     with pytest.raises(ValidationError,match='distinct'):
         dns_manager.configure({'enabled':True,'mode':'both','zone':'tunnel.example.com','xray_zone':'x.tunnel.example.com','ns_host':'ns1.example.com'})
@@ -142,7 +143,10 @@ def test_dns_export_uses_managed_uuid_and_rejects_ip_limited_accounts(manager,dn
     assert result['dnstt']['zone']=='xdns.example.com'
     assert result['links']['vless'].startswith(f"vless://{row['uuid']}@127.0.0.1:7001?")
     profile=json.loads(result['files'][row['name']+'-vless-dns.json'])
+    assert profile['dns']['servers'] == ['8.8.8.8', '8.8.4.4']
     assert profile['outbounds'][0]['settings']['vnext'][0]['users'][0]['id']==row['uuid']
+    assert '8.8.8.8:53' in result['files']['netmod-setup.txt']
+    assert '127.0.0.1:7001' in result['files']['netmod-setup.txt']
     assert '-dot dns.google:853' in result['files']['dnstt-client.txt']
     row['max_ips']=1; atomic_write_json(xray.ACCOUNTS_FILE,[row])
     with pytest.raises(ValidationError,match='IP cap 0'):
